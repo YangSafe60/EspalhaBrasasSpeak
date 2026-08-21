@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { CATBOX_UPLOAD_HINT } from "../lib/uploadHints";
+import {
+  effectiveServerPerms,
+  hasPerm,
+  Perm,
+} from "../lib/serverPerms";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useAppStore } from "../store/appStore";
-import { Perm, ROLE_PERM_GROUPS } from "../types";
+import { ROLE_PERM_GROUPS } from "../types";
 
 type Tab = "branding" | "roles" | "invites" | "danger";
 
@@ -56,8 +61,29 @@ export function ServerSettingsModal() {
   const [deletingServer, setDeletingServer] = useState(false);
 
   const user = useAppStore((s) => s.user);
+  const membersByServer = useAppStore((s) => s.membersByServer);
   const server = servers.find((s) => s.id === activeServerId);
   const isOwner = Boolean(server && user && server.owner_id === user.id);
+  const members = activeServerId
+    ? membersByServer[activeServerId] || []
+    : [];
+  const me = members.find((m) => m.user.id === user?.id);
+  const myPerms = useMemo(
+    () => effectiveServerPerms(server, rolesByServer[activeServerId || ""] || [], me, user?.id),
+    [server, rolesByServer, activeServerId, me, user?.id],
+  );
+  const canManageServer = hasPerm(myPerms, Perm.MANAGE_SERVER);
+  const canManageRoles = hasPerm(myPerms, Perm.MANAGE_ROLES);
+  const canCreateInvite = hasPerm(myPerms, Perm.CREATE_INVITE);
+  const allowedTabs = useMemo(() => {
+    const tabs: Tab[] = [];
+    if (canManageServer) tabs.push("branding");
+    if (canManageRoles) tabs.push("roles");
+    if (canCreateInvite) tabs.push("invites");
+    if (isOwner) tabs.push("danger");
+    return tabs;
+  }, [canManageServer, canManageRoles, canCreateInvite, isOwner]);
+
   const roles = useMemo(() => {
     const list = activeServerId ? rolesByServer[activeServerId] || [] : [];
     return list.slice().sort((a, b) => b.position - a.position);
@@ -67,6 +93,10 @@ export function ServerSettingsModal() {
 
   useEffect(() => {
     if (modal !== "server-settings" || !server || !activeServerId) return;
+    if (allowedTabs.length === 0) {
+      setModal(null);
+      return;
+    }
     setName(server.name);
     setAccent(server.accent_color || "#d4a017");
     setIconUrl(server.icon_url || "");
@@ -79,6 +109,7 @@ export function ServerSettingsModal() {
     setRoleName("");
     setConfirmServerName("");
     setDeletingServer(false);
+    setTab(allowedTabs[0]);
     void (async () => {
       await loadRoles(activeServerId);
       const loaded = useAppStore.getState().rolesByServer[activeServerId] || [];
@@ -90,7 +121,13 @@ export function ServerSettingsModal() {
         setDraftRoleColor(everyone.color);
       }
     })();
-  }, [modal, server, activeServerId, loadRoles]);
+  }, [modal, server, activeServerId, loadRoles, allowedTabs, setModal]);
+
+  useEffect(() => {
+    if (!allowedTabs.includes(tab) && allowedTabs[0]) {
+      setTab(allowedTabs[0]);
+    }
+  }, [allowedTabs, tab]);
 
   useEffect(() => {
     if (!selectedRole) return;
@@ -99,9 +136,15 @@ export function ServerSettingsModal() {
     setDraftRoleColor(selectedRole.color);
     setMsg(null);
     setErr(null);
-  }, [selectedRole?.id, selectedRole?.permissions, selectedRole?.name, selectedRole?.color]);
+  }, [
+    selectedRole?.id,
+    selectedRole?.permissions,
+    selectedRole?.name,
+    selectedRole?.color,
+  ]);
 
   if (modal !== "server-settings" || !server || !activeServerId) return null;
+  if (allowedTabs.length === 0) return null;
 
   function togglePerm(bit: number) {
     setDraftPerms((prev) => (prev & bit ? prev & ~bit : prev | bit));
@@ -188,10 +231,57 @@ export function ServerSettingsModal() {
   }
 
   async function onUpload(file: File | null, kind: "icon" | "banner") {
-    if (!file) return;
-    const up = await uploadFile(file);
-    if (kind === "icon") setIconUrl(up.url);
-    else setBannerUrl(up.url);
+    if (!file || !server) return;
+    setBusy(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      const up = await uploadFile(file);
+      if (kind === "icon") {
+        setIconUrl(up.url);
+        await updateServer(server.id, { icon_url: up.url });
+      } else {
+        setBannerUrl(up.url);
+        await updateServer(server.id, { banner_url: up.url });
+      }
+      setMsg(kind === "icon" ? "Icon updated" : "Banner updated");
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : "Upload failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearIcon() {
+    if (!server) return;
+    setBusy(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      setIconUrl("");
+      await updateServer(server.id, { icon_url: null });
+      setMsg("Icon removed — using default");
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : "Could not remove icon");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearBanner() {
+    if (!server) return;
+    setBusy(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      setBannerUrl("");
+      await updateServer(server.id, { banner_url: null });
+      setMsg("Banner removed");
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : "Could not remove banner");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -208,14 +298,7 @@ export function ServerSettingsModal() {
         </header>
 
         <div className="tabs">
-          {(
-            [
-              "branding",
-              "roles",
-              "invites",
-              ...(isOwner ? (["danger"] as Tab[]) : []),
-            ] as Tab[]
-          ).map((t) => (
+          {allowedTabs.map((t) => (
             <button
               key={t}
               type="button"
@@ -268,7 +351,8 @@ export function ServerSettingsModal() {
                   <button
                     type="button"
                     className="btn"
-                    onClick={() => setIconUrl("")}
+                    disabled={busy}
+                    onClick={() => void clearIcon()}
                   >
                     Remove
                   </button>
@@ -299,7 +383,8 @@ export function ServerSettingsModal() {
                   <button
                     type="button"
                     className="btn"
-                    onClick={() => setBannerUrl("")}
+                    disabled={busy}
+                    onClick={() => void clearBanner()}
                   >
                     Remove
                   </button>

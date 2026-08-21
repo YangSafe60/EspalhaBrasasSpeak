@@ -256,6 +256,7 @@ export function VoicePanel({ voice }: Props) {
           void voice.publishElectronShare({
             sourceId: source.id,
             systemAudio: opts.systemAudio,
+            fps: opts.fps,
             replaceAll: shareMode === "replace",
           });
         }}

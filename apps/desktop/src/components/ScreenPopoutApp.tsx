@@ -13,6 +13,11 @@ export function ScreenPopoutApp() {
   const [hasFrame, setHasFrame] = useState(false);
 
   useEffect(() => {
+    document.documentElement.classList.add("is-screen-popout");
+    return () => document.documentElement.classList.remove("is-screen-popout");
+  }, []);
+
+  useEffect(() => {
     const trackSid = trackParam();
     if (!trackSid) {
       setError("Missing track parameter.");
@@ -58,17 +63,19 @@ export function ScreenPopoutApp() {
     };
   }, []);
 
+  const showChrome = !hasFrame || !!error;
+
   return (
-    <div className="screen-popout">
+    <div className={`screen-popout${showChrome ? " show-chrome" : ""}`}>
       <header className="popout-bar">
         <span className="popout-brand">
           <img src={logoMark} alt="" />
           Espalha Brasas
         </span>
-        <span className="muted">{status}</span>
+        <span className="muted">{error ? "Error" : status}</span>
       </header>
       {error ? (
-        <p className="form-error centered">{error}</p>
+        <p className="form-error centered popout-error">{error}</p>
       ) : (
         <img
           ref={imgRef}

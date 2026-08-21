@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { useVoice } from "../hooks/useVoice";
 import { openScreenPopout } from "../lib/popout";
 import { useAppStore } from "../store/appStore";
+import { useMemberContextMenu } from "./MemberUserMenu";
 
 type VoiceApi = ReturnType<typeof useVoice>;
 
@@ -27,6 +28,10 @@ export function VoiceLobbyView({ voice }: Props) {
   const authors = useAppStore((s) => s.authors);
   const user = useAppStore((s) => s.user);
   const [popoutBusy, setPopoutBusy] = useState<string | null>(null);
+  const { openForUserId, menuPortal } = useMemberContextMenu({
+    applyUserMic: voice.applyUserMic,
+    applyUserVideoHide: voice.applyUserVideoHide,
+  });
 
   const channel = useMemo(
     () =>
@@ -186,6 +191,11 @@ export function VoiceLobbyView({ voice }: Props) {
                 <div
                   key={u.user_id}
                   className={`voice-lobby-tile${u.streaming ? " live" : ""}${u.isSelf ? " self" : ""}${voice.speakingIds.includes(u.user_id) ? " speaking" : ""}`}
+                  onContextMenu={
+                    u.isSelf
+                      ? undefined
+                      : (e) => openForUserId(e, u.user_id, u.name)
+                  }
                 >
                   <div
                     className={`voice-lobby-tile-avatar${voice.speakingIds.includes(u.user_id) ? " speaking" : ""}`}
@@ -218,6 +228,7 @@ export function VoiceLobbyView({ voice }: Props) {
           )}
         </section>
       </div>
+      {menuPortal}
     </main>
   );
 }

@@ -5,6 +5,7 @@ members = [
     "crates/server",
 ]
 exclude = [
+    # Legacy Tauri crate (unused; desktop is Electron now)
     "apps/desktop/src-tauri",
 ]
 

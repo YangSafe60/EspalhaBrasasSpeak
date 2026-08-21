@@ -1,9 +1,11 @@
 mod auth_routes;
 mod channels;
+mod dms;
+pub(crate) mod friends;
 mod media;
 mod messages;
 mod servers;
-mod voice;
+pub(crate) mod voice;
 
 use crate::auth::{decode_token, AuthUser};
 use crate::error::{AppError, AppResult};
@@ -33,16 +35,60 @@ pub fn router(state: AppState) -> Router {
             get(auth_routes::me).patch(auth_routes::update_me),
         )
         .route("/api/users/me", patch(auth_routes::update_me))
+        .route(
+            "/api/users/by-username/{username}",
+            get(friends::user_by_username),
+        )
+        .route("/api/crypto/identity", put(friends::put_identity))
+        .route(
+            "/api/crypto/identity/{user_id}",
+            get(friends::get_identity),
+        )
+        .route("/api/friends", get(friends::list_friends))
+        .route("/api/friends/request", post(friends::request_friend))
+        .route(
+            "/api/friends/{id}/accept",
+            post(friends::accept_friend),
+        )
+        .route(
+            "/api/friends/{id}/decline",
+            post(friends::decline_friend),
+        )
+        .route("/api/friends/{id}", delete(friends::remove_friend))
+        .route("/api/friends/{id}/mute", post(friends::mute_friend))
+        .route("/api/friends/{id}/block", post(friends::block_friend))
+        .route("/api/dms", get(dms::list_dms))
+        .route(
+            "/api/dms/{id}/messages",
+            get(dms::list_messages).post(dms::create_message),
+        )
+        .route("/api/dms/{id}/close", post(dms::close_dm))
+        .route("/api/dms/{id}/open", post(dms::open_dm))
+        .route(
+            "/api/dms/by-friendship/{friendship_id}/open",
+            post(dms::open_dm_by_friendship),
+        )
+        .route(
+            "/api/dms/messages/{id}",
+            patch(dms::update_message).delete(dms::delete_message),
+        )
+        .route("/api/dms/{id}/typing", post(dms::typing))
         .route("/api/servers", get(servers::list).post(servers::create))
         .route(
             "/api/servers/{id}",
             get(servers::get).patch(servers::update).delete(servers::delete),
         )
         .route("/api/servers/{id}/members", get(servers::list_members))
+        .route("/api/servers/{id}/presence", get(servers::list_presence))
         .route(
             "/api/servers/{id}/members/{user_id}",
             delete(servers::kick_member),
         )
+        .route(
+            "/api/servers/{id}/members/{user_id}/voice",
+            put(servers::moderate_voice),
+        )
+        .route("/api/users/{user_id}/block", post(friends::block_user))
         .route("/api/servers/{id}/bans", get(servers::list_bans).post(servers::ban_member))
         .route(
             "/api/servers/{id}/bans/{user_id}",
@@ -134,7 +180,7 @@ async fn ws_upgrade(
         let members = crate::db::server_member_ids(&state.db, s.id).await?;
         state.hub.set_server_members(s.id, members);
     }
-    Ok(ws.on_upgrade(move |socket| ws::handle_socket(socket, user_id, state.hub.clone())))
+    Ok(ws.on_upgrade(move |socket| ws::handle_socket(socket, user_id, state)))
 }
 
 // silence unused AuthUser in this module

@@ -4,8 +4,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   isElectron: true,
   getInfo: () => ipcRenderer.invoke("desktop:info"),
   focusMain: () => ipcRenderer.invoke("window:focus-main"),
+  setBackgroundThrottling: (enabled) =>
+    ipcRenderer.invoke("window:set-background-throttling", enabled),
   listShareSources: (opts) => ipcRenderer.invoke("share:list-sources", opts),
   openPopout: (opts) => ipcRenderer.invoke("popout:open", opts),
+  closeAllPopouts: () => ipcRenderer.invoke("popout:close-all"),
   relaySignal: (payload) => ipcRenderer.invoke("relay:signal", payload),
   relayFrame: (payload) => ipcRenderer.invoke("relay:frame", payload),
   onSignal: (handler) => {

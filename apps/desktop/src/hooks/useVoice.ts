@@ -10,6 +10,7 @@ import {
   type Room,
 } from "../lib/livekit";
 import { api, getAccessToken, getApiBase } from "../api/client";
+import { getElectronAPI } from "../lib/desktop";
 import {
   inputGainFromSettings,
   loadMediaSettings,
@@ -18,8 +19,10 @@ import {
   type MediaSettings,
 } from "../lib/mediaSettings";
 import {
+  clearAllScreenBridge,
   registerScreenTrack,
   unregisterScreenTrack,
+  pruneScreenTracks,
   focusMainWindow,
 } from "../lib/screenBridge";
 import {
@@ -27,12 +30,14 @@ import {
   isShareCancelError,
   isDesktopApp,
 } from "../lib/screenShare";
+import { closeAllScreenPopouts } from "../lib/popout";
 import {
   playScreenShareStartSound,
   playScreenShareStopSound,
   playVoiceJoinSound,
   playVoiceLeaveSound,
 } from "../lib/voiceSounds";
+import { getUserVoicePref, type UserVoicePref } from "../lib/userVoicePrefs";
 import { useAppStore } from "../store/appStore";
 import type { VoiceTokenResponse } from "../types";
 
@@ -131,15 +136,20 @@ async function applyDevicesToRoom(room: Room, settings: MediaSettings) {
   });
 }
 
-function collectScreenTracks(room: Room): LocalTrack[] {
-  const tracks: LocalTrack[] = [];
+function collectScreenTracks(
+  room: Room,
+): { track: LocalTrack; name?: string }[] {
+  const tracks: { track: LocalTrack; name?: string }[] = [];
   room.localParticipant.trackPublications.forEach((pub) => {
     if (
       (pub.source === getLivekit().Track.Source.ScreenShare ||
         pub.source === getLivekit().Track.Source.ScreenShareAudio) &&
       pub.track
     ) {
-      tracks.push(pub.track);
+      tracks.push({
+        track: pub.track,
+        name: pub.trackName || undefined,
+      });
     }
   });
   return tracks;
@@ -162,6 +172,7 @@ export function useVoice() {
   const watchingScreensRef = useRef(new Set<string>());
   /** Hidden <audio> elements for remote playback (mic + screen share). */
   const remoteAudioElsRef = useRef(new Map<string, HTMLMediaElement>());
+  const remoteAudioTracksRef = useRef(new Map<string, RemoteTrack>());
   /** Per video trackSid: viewer volume/mute for that stream's share audio. */
   const shareAudioStateRef = useRef(
     new Map<string, ScreenShareAudioState>(),
@@ -182,6 +193,8 @@ export function useVoice() {
   const shareStopsRef = useRef<Map<string, () => Promise<void>>>(new Map());
   const activeShareIdsRef = useRef<string[]>([]);
   const [activeShareIds, setActiveShareIds] = useState<string[]>([]);
+  /** Last chosen screen-share frame rate (for lobby hops / republish). */
+  const shareFpsRef = useRef<30 | 60>(30);
 
   voiceChannelIdRef.current = voiceChannelId;
   mutedRef.current = muted;
@@ -216,6 +229,7 @@ export function useVoice() {
         s.label =
           found.length > 1 ? `Screen share ${i + 1}` : "Screen share 1";
       });
+      pruneScreenTracks(new Set(found.map((s) => s.trackSid)));
       setLocalScreens(found);
       setVoiceLocal({ streaming: found.length > 0 });
     },
@@ -236,6 +250,12 @@ export function useVoice() {
             pub.kind === getLivekit().Track.Kind.Audio ||
             !pub.trackSid
           ) {
+            return;
+          }
+          if (getUserVoicePref(p.identity).hideVideo) {
+            watchingScreensRef.current.delete(pub.trackSid);
+            if (pub.isSubscribed) pub.setSubscribed(false);
+            unregisterScreenTrack(pub.trackSid);
             return;
           }
           seen.add(pub.trackSid);
@@ -287,10 +307,26 @@ export function useVoice() {
 
   const detachRemoteAudio = useCallback((trackSid: string) => {
     const el = remoteAudioElsRef.current.get(trackSid);
-    if (el) {
-      el.remove();
-      remoteAudioElsRef.current.delete(trackSid);
+    const track = remoteAudioTracksRef.current.get(trackSid);
+    if (track && el) {
+      try {
+        track.detach(el);
+      } catch {
+        /* already detached */
+      }
     }
+    remoteAudioTracksRef.current.delete(trackSid);
+    if (!el) return;
+    try {
+      const media = el as HTMLMediaElement & { srcObject?: MediaStream | null };
+      media.srcObject = null;
+      media.removeAttribute("src");
+      media.load?.();
+    } catch {
+      /* ignore */
+    }
+    el.remove();
+    remoteAudioElsRef.current.delete(trackSid);
   }, []);
 
   const attachRemoteAudio = useCallback(
@@ -308,6 +344,7 @@ export function useVoice() {
       el.style.display = "none";
       document.body.appendChild(el);
       remoteAudioElsRef.current.set(pub.trackSid, el);
+      remoteAudioTracksRef.current.set(pub.trackSid, track);
       if ("setVolume" in track && typeof track.setVolume === "function") {
         track.setVolume(muted ? 0 : volume);
       }
@@ -435,7 +472,18 @@ export function useVoice() {
   );
 
   const joinRemoteScreen = useCallback(
-    (trackSid: string) => setRemoteScreenSubscribed(trackSid, true),
+    (trackSid: string) => {
+      const room = roomRef.current;
+      if (room) {
+        for (const p of room.remoteParticipants.values()) {
+          const match = [...p.trackPublications.values()].find(
+            (x) => x.trackSid === trackSid,
+          );
+          if (match && getUserVoicePref(p.identity).hideVideo) return;
+        }
+      }
+      setRemoteScreenSubscribed(trackSid, true);
+    },
     [setRemoteScreenSubscribed],
   );
 
@@ -534,9 +582,25 @@ export function useVoice() {
   );
 
   const republishScreenTracks = useCallback(
-    async (room: Room, tracks: LocalTrack[]) => {
-      for (const track of tracks) {
+    async (
+      room: Room,
+      tracks: { track: LocalTrack; name?: string }[],
+    ) => {
+      const fps = shareFpsRef.current;
+      const maxBitrate = fps === 60 ? 12_000_000 : 8_000_000;
+      for (const { track, name } of tracks) {
+        if (track.kind === getLivekit().Track.Kind.Video) {
+          const media = track.mediaStreamTrack;
+          if (media) {
+            try {
+              media.contentHint = "detail";
+            } catch {
+              /* optional */
+            }
+          }
+        }
         await room.localParticipant.publishTrack(track, {
+          name,
           source:
             track.kind === getLivekit().Track.Kind.Audio
               ? getLivekit().Track.Source.ScreenShareAudio
@@ -544,7 +608,7 @@ export function useVoice() {
           simulcast: false,
           videoEncoding:
             track.kind === getLivekit().Track.Kind.Video
-              ? { maxBitrate: 8_000_000, maxFramerate: 30 }
+              ? { maxBitrate, maxFramerate: fps }
               : undefined,
         });
       }
@@ -568,20 +632,67 @@ export function useVoice() {
     const room = roomRef.current;
     const wasInVoice = !!room;
     roomRef.current = null;
-    // Leaving the lobby entirely always ends the stream.
+
+    setPickerOpen(false);
+    setPickerBusy(false);
+    void closeAllScreenPopouts();
+
+    // Leaving the lobby entirely always ends the stream + capture.
     await endScreenShare(room, true);
+    clearAllScreenBridge();
+
     setConnected(false);
     setRemoteScreens([]);
+    setLocalScreens([]);
     setSpeakingIds([]);
     watchingScreensRef.current.clear();
+
     for (const sid of [...remoteAudioElsRef.current.keys()]) {
       detachRemoteAudio(sid);
     }
     shareAudioStateRef.current.clear();
     setShareAudioByTrack({});
+
     if (room) {
-      await room.disconnect(true);
+      try {
+        await room.localParticipant.setMicrophoneEnabled(false);
+      } catch {
+        /* already down */
+      }
+      try {
+        await room.localParticipant.setCameraEnabled(false);
+      } catch {
+        /* optional */
+      }
+      // Force-stop any leftover local media (mic / camera / share).
+      for (const pub of [
+        ...room.localParticipant.trackPublications.values(),
+      ] as LocalTrackPublication[]) {
+        const track = pub.track;
+        if (!track) continue;
+        try {
+          await room.localParticipant.unpublishTrack(track, true);
+        } catch {
+          try {
+            track.stop();
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+      try {
+        await room.disconnect(true);
+      } catch {
+        /* already disconnected */
+      }
+      try {
+        room.removeAllListeners();
+      } catch {
+        /* EventEmitter API */
+      }
     }
+
+    void getElectronAPI()?.setBackgroundThrottling?.(true);
     setVoiceLocal({ voiceChannelId: null, streaming: false });
     try {
       await api("/api/voice/state", {
@@ -609,7 +720,7 @@ export function useVoice() {
       const switching =
         !!roomRef.current && !!previousChannel && previousChannel !== channelId;
 
-      let preservedScreen: LocalTrack[] = [];
+      let preservedScreen: { track: LocalTrack; name?: string }[] = [];
 
       try {
         if (roomRef.current) {
@@ -618,13 +729,27 @@ export function useVoice() {
             // Moving between lobbies: keep the capture, just hop rooms.
             switchingRef.current = true;
             preservedScreen = collectScreenTracks(oldRoom);
-            for (const track of preservedScreen) {
+            for (const { track } of preservedScreen) {
               await oldRoom.localParticipant.unpublishTrack(track, false);
             }
             roomRef.current = null;
             setRemoteScreens([]);
             watchingScreensRef.current.clear();
+            for (const sid of [...remoteAudioElsRef.current.keys()]) {
+              detachRemoteAudio(sid);
+            }
+            shareAudioStateRef.current.clear();
+            setShareAudioByTrack({});
+            setSpeakingIds([]);
+            void closeAllScreenPopouts();
+            // Drop JPEG relays / remote bridge entries; local capture tracks stay alive.
+            clearAllScreenBridge();
             await oldRoom.disconnect(false);
+            try {
+              oldRoom.removeAllListeners();
+            } catch {
+              /* ignore */
+            }
           } else {
             // Replacing a stuck session — drop share.
             await endScreenShare(oldRoom, true);
@@ -632,7 +757,17 @@ export function useVoice() {
             setRemoteScreens([]);
             setLocalScreens([]);
             watchingScreensRef.current.clear();
+            clearAllScreenBridge();
+            void closeAllScreenPopouts();
+            for (const sid of [...remoteAudioElsRef.current.keys()]) {
+              detachRemoteAudio(sid);
+            }
             await oldRoom.disconnect(true);
+            try {
+              oldRoom.removeAllListeners();
+            } catch {
+              /* ignore */
+            }
           }
         }
 
@@ -672,8 +807,18 @@ export function useVoice() {
 
         const ensureScreenShareOptIn = (
           pub: RemoteTrackPublication,
-          participant?: { trackPublications: Map<string, RemoteTrackPublication> },
+          participant?: {
+            identity: string;
+            trackPublications: Map<string, RemoteTrackPublication>;
+          },
         ) => {
+          if (
+            participant &&
+            getUserVoicePref(participant.identity).hideVideo
+          ) {
+            pub.setSubscribed(false);
+            return true;
+          }
           if (pub.source === getLivekit().Track.Source.ScreenShareAudio) {
             const watchingVideo = participant
               ? [...participant.trackPublications.values()].some(
@@ -717,11 +862,12 @@ export function useVoice() {
           }
 
           const out = outputGainFromSettings(loadMediaSettings());
+          const pref = getUserVoicePref(participant.identity);
           attachRemoteAudio(
             track,
             pub,
-            out,
-            deafenedRef.current,
+            out * pref.volume,
+            pref.muted || deafenedRef.current,
           );
         });
         room.on(getLivekit().RoomEvent.TrackUnsubscribed, (track, pub) => {
@@ -812,6 +958,9 @@ export function useVoice() {
           setShareAudioByTrack({});
           if (!switchingRef.current) {
             setLocalScreens([]);
+            clearAllScreenBridge();
+            void closeAllScreenPopouts();
+            void getElectronAPI()?.setBackgroundThrottling?.(true);
           }
         });
 
@@ -852,6 +1001,7 @@ export function useVoice() {
         }
 
         setConnected(true);
+        void getElectronAPI()?.setBackgroundThrottling?.(false);
         setVoiceLocal({
           voiceChannelId: channelId,
           streaming: preservedScreen.length > 0,
@@ -861,7 +1011,7 @@ export function useVoice() {
           playVoiceJoinSound();
         }
       } catch (e) {
-        for (const track of preservedScreen) {
+        for (const { track } of preservedScreen) {
           try {
             track.stop();
           } catch {
@@ -906,7 +1056,16 @@ export function useVoice() {
           }
           return;
         }
-        pub.track.setMuted(deafened);
+        const pref = getUserVoicePref(p.identity);
+        const out = outputGainFromSettings(loadMediaSettings());
+        const mute = deafened || pref.muted;
+        pub.track.setMuted(mute);
+        if (
+          "setVolume" in pub.track &&
+          typeof pub.track.setVolume === "function"
+        ) {
+          pub.track.setVolume(mute ? 0 : out * pref.volume);
+        }
       });
     });
     void api("/api/voice/state", {
@@ -914,6 +1073,49 @@ export function useVoice() {
       body: { muted, deafened },
     }).catch(() => undefined);
   }, [muted, deafened, connected]);
+
+  const applyUserMic = useCallback((userId: string, pref: UserVoicePref) => {
+    const room = roomRef.current;
+    if (!room) return;
+    const p = room.remoteParticipants.get(userId);
+    if (!p) return;
+    const out = outputGainFromSettings(loadMediaSettings());
+    p.audioTrackPublications.forEach((pub) => {
+      if (!pub.track) return;
+      if (pub.source === getLivekit().Track.Source.ScreenShareAudio) return;
+      const mute = deafenedRef.current || pref.muted;
+      pub.track.setMuted(mute);
+      if (
+        "setVolume" in pub.track &&
+        typeof pub.track.setVolume === "function"
+      ) {
+        pub.track.setVolume(mute ? 0 : out * pref.volume);
+      }
+    });
+  }, []);
+
+  const applyUserVideoHide = useCallback(
+    (userId: string, hide: boolean) => {
+      const room = roomRef.current;
+      if (!room) return;
+      const p = room.remoteParticipants.get(userId);
+      if (!p) return;
+      p.trackPublications.forEach((pub) => {
+        const isVideo =
+          pub.source === getLivekit().Track.Source.Camera ||
+          pub.source === getLivekit().Track.Source.ScreenShare;
+        const isShareAudio =
+          pub.source === getLivekit().Track.Source.ScreenShareAudio;
+        if (!isVideo && !isShareAudio) return;
+        if (hide) {
+          if (pub.trackSid) watchingScreensRef.current.delete(pub.trackSid);
+          pub.setSubscribed(false);
+        }
+      });
+      refreshScreens(room);
+    },
+    [refreshScreens],
+  );
 
   useEffect(() => {
     return subscribeMediaSettings((settings) => {
@@ -930,11 +1132,17 @@ export function useVoice() {
   }, [muted, deafened]);
 
   const toggleMute = useCallback(async () => {
+    const state = useAppStore.getState();
+    const me = state.voiceStates.find((v) => v.user_id === state.user?.id);
+    if (me?.server_muted && muted) return;
     const next = !muted;
     setVoiceLocal({ muted: next });
   }, [muted, setVoiceLocal]);
 
   const toggleDeafen = useCallback(async () => {
+    const state = useAppStore.getState();
+    const me = state.voiceStates.find((v) => v.user_id === state.user?.id);
+    if (me?.server_deafened && deafened) return;
     const next = !deafened;
     // Deafen forces mute; undeafen clears both (Discord behavior).
     setVoiceLocal({
@@ -956,6 +1164,7 @@ export function useVoice() {
     async (opts: {
       sourceId: string;
       systemAudio?: boolean;
+      fps?: 30 | 60;
       replaceAll?: boolean;
     }) => {
       const room = roomRef.current;
@@ -963,6 +1172,10 @@ export function useVoice() {
       await loadLivekit();
       setPickerBusy(true);
       setError(null);
+      const fps = opts.fps === 60 ? 60 : 30;
+      shareFpsRef.current = fps;
+      // Discord-like screen encode budget (text stays sharp; 60 needs more bits).
+      const maxBitrate = fps === 60 ? 12_000_000 : 8_000_000;
       try {
         if (opts.replaceAll) {
           await endScreenShare(room, true);
@@ -972,7 +1185,7 @@ export function useVoice() {
           systemAudio: opts.systemAudio !== false,
           maxWidth: 1920,
           maxHeight: 1080,
-          maxFps: 60,
+          maxFps: fps,
         });
 
         shareStopsRef.current.set(opts.sourceId, captured.stop);
@@ -986,11 +1199,17 @@ export function useVoice() {
           );
         }
 
+        try {
+          captured.videoTrack.mediaStreamTrack.contentHint = "detail";
+        } catch {
+          /* optional */
+        }
+
         await room.localParticipant.publishTrack(captured.videoTrack, {
           name: `screen:${opts.sourceId}`,
           source: getLivekit().Track.Source.ScreenShare,
           simulcast: false,
-          videoEncoding: { maxBitrate: 12_000_000, maxFramerate: 60 },
+          videoEncoding: { maxBitrate, maxFramerate: fps },
         });
 
         if (captured.audioTrack) {
@@ -1041,7 +1260,7 @@ export function useVoice() {
             // @ts-expect-error experimental display-media field
             suppressLocalAudioPlayback: false,
           },
-          contentHint: "motion",
+          contentHint: "detail",
           resolution: { width: 1920, height: 1080, frameRate: 60 },
           systemAudio: "include",
           selfBrowserSurface: "exclude",
@@ -1057,12 +1276,13 @@ export function useVoice() {
         }
 
         const stamp = Date.now();
+        shareFpsRef.current = 60;
         for (const track of tracks) {
           if (track.kind === getLivekit().Track.Kind.Video) {
             const media = track.mediaStreamTrack;
             if (media) {
               try {
-                media.contentHint = "motion";
+                media.contentHint = "detail";
               } catch {
                 /* optional */
               }
@@ -1161,8 +1381,58 @@ export function useVoice() {
         const pubs = [
           ...room.localParticipant.trackPublications.values(),
         ] as LocalTrackPublication[];
-        for (const pub of pubs) {
-          if (pub.trackSid !== opts.trackSid) continue;
+        const target = pubs.find((pub) => pub.trackSid === opts.trackSid);
+        const name = target?.trackName || "";
+        const inferredSource = name.startsWith("screen:")
+          ? name.slice("screen:".length)
+          : name.startsWith("screen-audio:")
+            ? name.slice("screen-audio:".length)
+            : undefined;
+
+        if (inferredSource && shareStopsRef.current.has(inferredSource)) {
+          await stopOneShare(room, inferredSource);
+        } else {
+          for (const pub of pubs) {
+            if (pub.trackSid !== opts.trackSid) continue;
+            if (pub.trackSid) unregisterScreenTrack(pub.trackSid);
+            const existing = pub.track;
+            if (existing) {
+              try {
+                await room.localParticipant.unpublishTrack(existing, true);
+              } catch {
+                /* already unpublished */
+              }
+            }
+          }
+        }
+      }
+
+      const hasScreenVideo = [
+        ...room.localParticipant.trackPublications.values(),
+      ].some(
+        (pub) =>
+          pub.source === getLivekit().Track.Source.ScreenShare &&
+          pub.kind !== getLivekit().Track.Kind.Audio,
+      );
+
+      if (!hasScreenVideo) {
+        // Leftover capture stops / screen-audio after a channel switch.
+        const leftoverStops = [...shareStopsRef.current.entries()];
+        shareStopsRef.current.clear();
+        setActiveShareIds([]);
+        for (const [, stop] of leftoverStops) {
+          await stop().catch(() => undefined);
+        }
+        const leftoverPubs = [
+          ...room.localParticipant.trackPublications.values(),
+        ] as LocalTrackPublication[];
+        for (const pub of leftoverPubs) {
+          if (
+            pub.source !== getLivekit().Track.Source.ScreenShare &&
+            pub.source !== getLivekit().Track.Source.ScreenShareAudio
+          ) {
+            continue;
+          }
           if (pub.trackSid) unregisterScreenTrack(pub.trackSid);
           const existing = pub.track;
           if (existing) {
@@ -1173,22 +1443,15 @@ export function useVoice() {
             }
           }
         }
-      }
-
-      syncLocalScreen(room);
-      refreshScreens(room);
-      if (
-        shareStopsRef.current.size === 0 &&
-        ![...room.localParticipant.trackPublications.values()].some(
-          (pub) => pub.source === getLivekit().Track.Source.ScreenShare,
-        )
-      ) {
         await api("/api/voice/state", {
           method: "PUT",
           body: { streaming: false },
         }).catch(() => undefined);
         setVoiceLocal({ streaming: false });
       }
+
+      syncLocalScreen(room);
+      refreshScreens(room);
     },
     [refreshScreens, setVoiceLocal, stopOneShare, syncLocalScreen],
   );
@@ -1224,11 +1487,30 @@ export function useVoice() {
       const stops = [...shareStopsRef.current.values()];
       shareStopsRef.current.clear();
       for (const stop of stops) void stop();
-      if (room) {
-        void room.disconnect(true);
+      clearAllScreenBridge();
+      void closeAllScreenPopouts();
+      for (const sid of [...remoteAudioElsRef.current.keys()]) {
+        detachRemoteAudio(sid);
       }
+      remoteAudioElsRef.current.clear();
+      remoteAudioTracksRef.current.clear();
+      if (room) {
+        try {
+          void room.localParticipant.setMicrophoneEnabled(false);
+        } catch {
+          /* ignore */
+        }
+        void room.disconnect(true).then(() => {
+          try {
+            room.removeAllListeners();
+          } catch {
+            /* ignore */
+          }
+        });
+      }
+      void getElectronAPI()?.setBackgroundThrottling?.(true);
     };
-  }, []);
+  }, [detachRemoteAudio]);
 
   return {
     roomRef,
@@ -1261,5 +1543,7 @@ export function useVoice() {
     leaveRemoteScreen,
     setScreenShareVolume,
     setScreenShareMuted,
+    applyUserMic,
+    applyUserVideoHide,
   };
 }

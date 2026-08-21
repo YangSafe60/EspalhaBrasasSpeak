@@ -100,7 +100,8 @@ export async function captureElectronSource(
     throw new Error("No video track from desktop capture");
   }
   try {
-    mediaVideo.contentHint = "motion";
+    // Prefer sharp text/UI over motion blur for desktop shares.
+    mediaVideo.contentHint = "detail";
   } catch {
     /* optional */
   }

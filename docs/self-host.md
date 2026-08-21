@@ -13,7 +13,7 @@ curl -fsSL https://get.docker.com | sh
 sudo usermod -aG docker $USER
 ```
 
-## Deploy
+## Deploy (API + LiveKit + Caddy)
 
 ```bash
 git clone <your-repo> espalha-brasas && cd espalha-brasas/deploy
@@ -34,7 +34,30 @@ livekit.your.domain {
 }
 ```
 
-Build the desktop client with `VITE_API_BASE=https://your.domain`, and set `LIVEKIT_URL` to `wss://livekit.your.domain`.
+Set server env so tokens and URLs match the public host:
+
+- `PUBLIC_URL=https://your.domain`
+- `LIVEKIT_URL=wss://livekit.your.domain` (what the API embeds in voice tokens)
+
+## Desktop client (Electron)
+
+The desktop app is **not** served by Docker. Build it on a developer machine and distribute the installer, with the API base baked in at build time:
+
+```bash
+cd apps/desktop
+npm ci
+export VITE_API_BASE=https://your.domain
+npm run dist
+```
+
+Windows: NSIS installer under `apps/desktop/release/`.  
+macOS / Linux: corresponding targets from `electron-builder` (see `apps/desktop/electron-builder.yml`).
+
+For local testing against a remote API without packaging:
+
+```bash
+VITE_API_BASE=https://your.domain npm run desktop
+```
 
 ## Backups
 

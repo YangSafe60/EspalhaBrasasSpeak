@@ -55,7 +55,17 @@ pub async fn list(
     if !db::is_member(&state.db, id, user.id).await? {
         return Err(AppError::Forbidden);
     }
-    Ok(Json(db::server_channels(&state.db, id).await?))
+    let server = db::get_server(&state.db, id).await?;
+    let channels = db::server_channels(&state.db, id).await?;
+    let mut visible = Vec::with_capacity(channels.len());
+    for ch in channels {
+        let perms =
+            db::effective_permissions(&state.db, &server, Some(ch.id), user.id).await?;
+        if perms.has(Permissions::VIEW_CHANNEL) {
+            visible.push(ch);
+        }
+    }
+    Ok(Json(visible))
 }
 
 pub async fn create(
@@ -320,5 +330,29 @@ pub async fn set_overwrites(
         .execute(&state.db)
         .await?;
     }
-    Ok(Json(db::channel_overwrites(&state.db, id).await?))
+    let saved = db::channel_overwrites(&state.db, id).await?;
+    // Sync visibility: viewers get create/update, others lose the channel.
+    let members = db::server_member_ids(&state.db, channel.server_id).await?;
+    for uid in members {
+        let can = db::effective_permissions(&state.db, &server, Some(id), uid)
+            .await?
+            .has(Permissions::VIEW_CHANNEL);
+        if can {
+            state.hub.send_to_user(
+                uid,
+                &WsEvent::ChannelCreate {
+                    channel: channel.clone(),
+                },
+            );
+        } else {
+            state.hub.send_to_user(
+                uid,
+                &WsEvent::ChannelDelete {
+                    server_id: channel.server_id,
+                    channel_id: id,
+                },
+            );
+        }
+    }
+    Ok(Json(saved))
 }

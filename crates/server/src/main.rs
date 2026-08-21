@@ -24,8 +24,16 @@ async fn main() -> anyhow::Result<()> {
     let state = AppState::new(config.clone()).await?;
     let app = routes::router(state);
 
-    let listener = tokio::net::TcpListener::bind(&config.bind).await?;
+    let listener = tokio::net::TcpListener::bind(&config.bind).await.map_err(|e| {
+        anyhow::anyhow!(
+            "failed to bind {}: {e} (is another speakapp-server already running?)",
+            config.bind
+        )
+    })?;
     tracing::info!("Espalha Brasas server listening on {}", config.bind);
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .await
+        .map_err(|e| anyhow::anyhow!("server stopped: {e}"))?;
+    tracing::info!("Espalha Brasas server shut down cleanly");
     Ok(())
 }

@@ -8,7 +8,7 @@ use axum::{
 };
 use chrono::Utc;
 use serde::Deserialize;
-use speakapp_shared::{Message, Permissions, WsEvent};
+use speakapp_shared::{Message, Permissions, Server, WsEvent};
 use uuid::Uuid;
 
 #[derive(Deserialize)]
@@ -27,6 +27,23 @@ pub struct CreateMessageReq {
 #[derive(Deserialize)]
 pub struct UpdateMessageReq {
     pub content: String,
+}
+
+async fn broadcast_to_viewers(
+    state: &AppState,
+    server: &Server,
+    channel_id: Uuid,
+    event: &WsEvent,
+) -> AppResult<()> {
+    let viewers = db::members_with_channel_perm(
+        &state.db,
+        server,
+        channel_id,
+        Permissions::VIEW_CHANNEL,
+    )
+    .await?;
+    state.hub.broadcast_users(&viewers, event);
+    Ok(())
 }
 
 pub async fn list(
@@ -49,7 +66,7 @@ pub async fn list(
         &state.db,
         id,
         q.before,
-        q.limit.unwrap_or(50),
+        q.limit.unwrap_or(50).clamp(1, 100),
         user.id,
     )
     .await?;
@@ -63,13 +80,18 @@ pub async fn create(
     Json(body): Json<CreateMessageReq>,
 ) -> AppResult<Json<Message>> {
     let channel = db::get_channel(&state.db, id).await?;
-    if !matches!(
-        channel.channel_type,
-        speakapp_shared::ChannelType::Text
-    ) {
+    if channel.channel_type != speakapp_shared::ChannelType::Text {
         return Err(AppError::BadRequest("not a text channel".into()));
     }
     let server = db::get_server(&state.db, channel.server_id).await?;
+    db::require_perm(
+        &state.db,
+        &server,
+        Some(id),
+        user.id,
+        Permissions::VIEW_CHANNEL,
+    )
+    .await?;
     db::require_perm(
         &state.db,
         &server,
@@ -113,13 +135,16 @@ pub async fn create(
 
     let message = db::load_message(&state.db, msg_id, user.id).await?;
     let author = db::user_public(&state.db, user.id).await?;
-    state.hub.broadcast_server(
-        channel.server_id,
+    broadcast_to_viewers(
+        &state,
+        &server,
+        id,
         &WsEvent::MessageCreate {
             message: message.clone(),
             author,
         },
-    );
+    )
+    .await?;
     Ok(Json(message))
 }
 
@@ -141,9 +166,9 @@ pub async fn update(
         .ok_or(AppError::NotFound)?;
     let author_id = Uuid::parse_str(&row.author_id).unwrap();
     let channel_id = Uuid::parse_str(&row.channel_id).unwrap();
+    let channel = db::get_channel(&state.db, channel_id).await?;
+    let server = db::get_server(&state.db, channel.server_id).await?;
     if author_id != user.id {
-        let channel = db::get_channel(&state.db, channel_id).await?;
-        let server = db::get_server(&state.db, channel.server_id).await?;
         db::require_perm(
             &state.db,
             &server,
@@ -161,13 +186,15 @@ pub async fn update(
         .execute(&state.db)
         .await?;
     let message = db::load_message(&state.db, id, user.id).await?;
-    let channel = db::get_channel(&state.db, channel_id).await?;
-    state.hub.broadcast_server(
-        channel.server_id,
+    broadcast_to_viewers(
+        &state,
+        &server,
+        channel_id,
         &WsEvent::MessageUpdate {
             message: message.clone(),
         },
-    );
+    )
+    .await?;
     Ok(Json(message))
 }
 
@@ -188,9 +215,9 @@ pub async fn delete(
         .ok_or(AppError::NotFound)?;
     let author_id = Uuid::parse_str(&row.author_id).unwrap();
     let channel_id = Uuid::parse_str(&row.channel_id).unwrap();
+    let channel = db::get_channel(&state.db, channel_id).await?;
+    let server = db::get_server(&state.db, channel.server_id).await?;
     if author_id != user.id {
-        let channel = db::get_channel(&state.db, channel_id).await?;
-        let server = db::get_server(&state.db, channel.server_id).await?;
         db::require_perm(
             &state.db,
             &server,
@@ -204,14 +231,16 @@ pub async fn delete(
         .bind(id.to_string())
         .execute(&state.db)
         .await?;
-    let channel = db::get_channel(&state.db, channel_id).await?;
-    state.hub.broadcast_server(
-        channel.server_id,
+    broadcast_to_viewers(
+        &state,
+        &server,
+        channel_id,
         &WsEvent::MessageDelete {
             channel_id,
             message_id: id,
         },
-    );
+    )
+    .await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -228,6 +257,14 @@ pub async fn add_reaction(
         &server,
         Some(channel.id),
         user.id,
+        Permissions::VIEW_CHANNEL,
+    )
+    .await?;
+    db::require_perm(
+        &state.db,
+        &server,
+        Some(channel.id),
+        user.id,
         Permissions::ADD_REACTIONS,
     )
     .await?;
@@ -239,15 +276,18 @@ pub async fn add_reaction(
     .bind(&emoji)
     .execute(&state.db)
     .await?;
-    state.hub.broadcast_server(
-        channel.server_id,
+    broadcast_to_viewers(
+        &state,
+        &server,
+        channel.id,
         &WsEvent::ReactionAdd {
             channel_id: channel.id,
             message_id: id,
             emoji,
             user_id: user.id,
         },
-    );
+    )
+    .await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -258,21 +298,25 @@ pub async fn remove_reaction(
 ) -> AppResult<Json<serde_json::Value>> {
     let message = db::load_message(&state.db, id, user.id).await?;
     let channel = db::get_channel(&state.db, message.channel_id).await?;
+    let server = db::get_server(&state.db, channel.server_id).await?;
     sqlx::query("DELETE FROM reactions WHERE message_id = ? AND user_id = ? AND emoji = ?")
         .bind(id.to_string())
         .bind(user.id.to_string())
         .bind(&emoji)
         .execute(&state.db)
         .await?;
-    state.hub.broadcast_server(
-        channel.server_id,
+    broadcast_to_viewers(
+        &state,
+        &server,
+        channel.id,
         &WsEvent::ReactionRemove {
             channel_id: channel.id,
             message_id: id,
             emoji,
             user_id: user.id,
         },
-    );
+    )
+    .await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -282,17 +326,26 @@ pub async fn typing(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
     let channel = db::get_channel(&state.db, id).await?;
-    if !db::is_member(&state.db, channel.server_id, user.id).await? {
-        return Err(AppError::Forbidden);
-    }
+    let server = db::get_server(&state.db, channel.server_id).await?;
+    db::require_perm(
+        &state.db,
+        &server,
+        Some(id),
+        user.id,
+        Permissions::VIEW_CHANNEL,
+    )
+    .await?;
     let u = db::user_public(&state.db, user.id).await?;
-    state.hub.broadcast_server(
-        channel.server_id,
+    broadcast_to_viewers(
+        &state,
+        &server,
+        id,
         &WsEvent::TypingStart {
             channel_id: id,
             user_id: user.id,
             username: u.username,
         },
-    );
+    )
+    .await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }

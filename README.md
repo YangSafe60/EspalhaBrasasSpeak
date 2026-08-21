@@ -1,59 +1,47 @@
 # Espalha Brasas
 
-Lightweight Discord/TeamSpeak-style voice + text client (Tauri) with a self-hosted Rust API, optimized for ARM VPS (Oracle Cloud).
+Lightweight Discord/TeamSpeak-style voice + text client (**Electron**) with a self-hosted Rust API, optimized for ARM VPS (Oracle Cloud).
 
 ## Stack
 
 | Piece | Tech |
 |-------|------|
-| Desktop | Tauri 2 + React + Vite + Zustand + LiveKit JS |
+| Desktop | Electron + React + Vite + Zustand + LiveKit JS |
 | API | Rust / Axum + SQLite + WebSocket gateway |
-| Voice / screen | LiveKit SFU (multi screen share, source quality) |
+| Voice / screen | LiveKit SFU · native capture via Electron `desktopCapturer` (custom picker, system audio) |
 | Deploy | Docker Compose (api + livekit + caddy), multi-arch |
 
 ## Quick start (dev)
 
 ### Windows (PowerShell)
 
-`cargo` and `docker` must be available in **that** terminal. If `cargo` is missing, either reopen the terminal after installing Rust, or prepend PATH:
-
-```powershell
-$env:Path = "$env:USERPROFILE\.cargo\bin;C:\msys64\mingw64\bin;" + $env:Path
-```
-
-Then in **two** terminals from the repo root:
+`cargo` must be available to run the API. In **two** (or three) terminals from the repo root:
 
 ```powershell
 # Terminal 1 — API
 .\scripts\run-server.ps1
 
-# Terminal 2 — desktop
+# Terminal 2 — LiveKit (voice / screen share)
+.\scripts\run-livekit.ps1
+
+# Terminal 3 — desktop (Electron)
 .\scripts\run-desktop.ps1
 ```
 
 Or manually:
 
 ```powershell
-$env:Path = "$env:USERPROFILE\.cargo\bin;C:\msys64\mingw64\bin;" + $env:Path
+$env:Path = "$env:USERPROFILE\.cargo\bin;" + $env:Path
 mkdir data\media -Force | Out-Null
 $env:DATABASE_URL = "sqlite://data/speakapp.db?mode=rwc"
 cargo run -p speakapp-server
 ```
 
 ```powershell
-$env:Path = "$env:USERPROFILE\.cargo\bin;C:\msys64\mingw64\bin;" + $env:Path
 cd apps\desktop
 npm install
-npm run tauri dev
+npm run desktop
 ```
-
-**LiveKit / voice:** Docker is optional. On Windows, run LiveKit without Docker:
-
-```powershell
-.\scripts\run-livekit.ps1
-```
-
-Then keep the API + desktop running and rejoin the voice channel.
 
 ### Server (macOS / Linux)
 
@@ -68,25 +56,51 @@ API listens on `http://localhost:8080`.
 
 ### LiveKit (optional for voice)
 
+**Windows (no Docker):** `.\scripts\run-livekit.ps1`
+
+**Docker:**
+
 ```bash
 docker run --rm -p 7880:7880 -p 7881:7881 -p 50000-50100:50000-50100/udp \
   -v ${PWD}/deploy/livekit.yaml:/etc/livekit.yaml \
   livekit/livekit-server --config /etc/livekit.yaml
 ```
 
-### Desktop
+### Desktop notes
 
-```bash
-cd apps/desktop
-npm install
-npm run desktop      # native Tauri window (Espalha Brasas) — use this
-# npm run tauri dev  # same as above
+- Use the **Espalha Brasas** Electron window — do **not** open `http://127.0.0.1:1420` in Chrome (that URL is only Vite feeding Electron).
+- Default API base: `http://localhost:8080` (`VITE_API_BASE` to override).
+- Two accounts on one PC (separate profile):
+
+```powershell
+$env:ELECTRON_USER_DATA = "$env:TEMP\espalha-brasas-alt"
+$env:VITE_DEV_SERVER_URL = "http://127.0.0.1:1420"
+cd apps\desktop
+npx electron .
 ```
 
-Do **not** use `localhost:1420` in Chrome. That URL is only an internal feed for the
-desktop window. Screen share and pop-outs require the native shell.
+(Keep the first `npm run desktop` Vite server running.)
 
-Set `VITE_API_BASE=http://localhost:8080` if needed (default).
+## Desktop installer (Windows)
+
+```powershell
+cd apps\desktop
+npm install
+# Optional — bake production API URL into the build:
+#   $env:VITE_API_BASE = "https://your.domain"
+npm run dist
+```
+
+Or from the repo root: `npm run desktop:dist`
+
+| Output | Path |
+|--------|------|
+| NSIS installer | `apps/desktop/release/Espalha Brasas-0.1.0-Setup.exe` |
+| Unpacked app (no install) | `apps/desktop/release/win-unpacked/Espalha Brasas.exe` |
+
+Open the Setup `.exe` to install. Running a **newer** Setup again upgrades over the existing install (same `appId`) — close the app first. There is no auto-update in the background yet.
+
+See [docs/desktop.md](docs/desktop.md) for packaging details.
 
 ## Docker (ARM64 / Oracle)
 
@@ -98,23 +112,34 @@ docker compose build --platform linux/arm64
 docker compose up -d
 ```
 
-See [docs/self-host.md](docs/self-host.md) for Oracle sizing, TLS, and backups.
+See [docs/self-host.md](docs/self-host.md) for Oracle sizing, TLS, backups, and building the Electron client against your domain.
 
 ## Features (v1)
 
 - Servers, invites, bans, members
-- Text + voice channels, categories
+- Friends + 1:1 private DMs with pragmatic end-to-end encryption (X25519 + AES-GCM; server stores ciphertext only)
+- Text + voice channels, categories (create / edit / delete)
 - Messages, attachments, reactions, typing, presence events
-- Discord-class role bitflags + channel overwrites + server rules
-- Per-channel backgrounds (blur/dim/text color) + atmosphere presets
-- LiveKit voice (mute/deafen) and multi screen share with pop-out windows
+- Discord-style role bitflags + channel overwrites
+- Per-channel backgrounds (blur / dim / text color) + atmosphere presets
+- LiveKit voice (mute / deafen)
+- Multi screen share: in-app picker, opt-in watch, system audio, volume, pop-out / fullscreen
+
+### Private DM privacy (honest limits)
+
+- The API never sees DM plaintext — only ciphertext + metadata (who, when, size).
+- Identity private keys live on this device (`localStorage`). Clearing app data without a backup means you cannot decrypt old DMs.
+- Not Signal Protocol: no Double Ratchet / multi-device sync in v1. Compare fingerprints in the DM header to verify the peer.
 
 ## Repo layout
 
 ```
-apps/desktop/     Tauri + React client (Espalha Brasas)
+apps/desktop/     Electron + React client (Espalha Brasas)
+  electron/       Main process + preload
+  release/        Installers after `npm run dist` (gitignored)
 crates/server/    Axum API
 crates/shared/    Shared types + permissions
 deploy/           Compose + Dockerfile + Caddy + LiveKit
-docs/             Hosting + permission notes
+docs/             Hosting, desktop client, permission notes
+scripts/          Dev helpers (Windows)
 ```

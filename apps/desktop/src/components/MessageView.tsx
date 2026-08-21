@@ -1,10 +1,16 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import logoMark from "../assets/logo-mark.png";
+import { insertAtCursor } from "../lib/emojis";
+import {
+  effectiveServerPerms,
+  hasPerm,
+  Perm,
+} from "../lib/serverPerms";
 import { CATBOX_UPLOAD_HINT } from "../lib/uploadHints";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { EmojiPickerButton } from "./EmojiPickerButton";
 import { useAppStore } from "../store/appStore";
-import type { Channel, Message } from "../types";
-import { ATMOSPHERE_PRESETS, type Atmosphere } from "../types";
+import type { Atmosphere, Channel, Message } from "../types";
 
 const QUICK_EMOJIS = ["👍", "🔥", "😂", "❤️", "👀"];
 /** Discord-like: group consecutive messages from the same author within this window. */
@@ -50,6 +56,9 @@ export function MessageView() {
   const toggleReaction = useAppStore((s) => s.toggleReaction);
   const uploadFile = useAppStore((s) => s.uploadFile);
   const setModal = useAppStore((s) => s.setModal);
+  const servers = useAppStore((s) => s.servers);
+  const membersByServer = useAppStore((s) => s.membersByServer);
+  const rolesByServer = useAppStore((s) => s.rolesByServer);
 
   const [draft, setDraft] = useState("");
   const [pendingFiles, setPendingFiles] = useState<
@@ -63,6 +72,7 @@ export function MessageView() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const typingTimer = useRef<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const draftRef = useRef<HTMLTextAreaElement>(null);
 
   const channel: Channel | undefined = Object.values(channelsByServer)
     .flat()
@@ -75,6 +85,18 @@ export function MessageView() {
   const typers = (activeChannelId ? typing[activeChannelId] || [] : [])
     .filter((t) => t.expires > Date.now() && t.username !== user?.username)
     .map((t) => t.username);
+
+  const server = channel
+    ? servers.find((s) => s.id === channel.server_id)
+    : undefined;
+  const members = channel ? membersByServer[channel.server_id] || [] : [];
+  const roles = channel ? rolesByServer[channel.server_id] || [] : [];
+  const me = members.find((m) => m.user.id === user?.id);
+  const myPerms = useMemo(
+    () => effectiveServerPerms(server, roles, me, user?.id),
+    [server, roles, me, user?.id],
+  );
+  const canManageChannels = hasPerm(myPerms, Perm.MANAGE_CHANNELS);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -99,11 +121,7 @@ export function MessageView() {
   }
 
   const atmosphere = (channel.atmosphere || "") as Atmosphere;
-  const preset = ATMOSPHERE_PRESETS[atmosphere];
-  const hasBg = Boolean(channel.background_url);
-  const blur = hasBg ? (channel.background_blur ?? preset?.blur ?? 0) : 0;
-  const dim = hasBg ? (channel.background_dim ?? preset?.dim ?? 0.45) : 0;
-  const textColor = hasBg ? channel.text_color || undefined : undefined;
+  const textColor = channel.text_color || undefined;
 
   async function onSubmit(e?: FormEvent) {
     e?.preventDefault();
@@ -133,6 +151,18 @@ export function MessageView() {
         typingTimer.current = null;
       }, 2500);
     }
+  }
+
+  function insertEmoji(emoji: string) {
+    const el = draftRef.current;
+    const start = el?.selectionStart ?? draft.length;
+    const end = el?.selectionEnd ?? draft.length;
+    const { next, caret } = insertAtCursor(draft, emoji, start, end);
+    setDraft(next);
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(caret, caret);
+    });
   }
 
   async function onPickFile(file: File | null) {
@@ -182,21 +212,10 @@ export function MessageView() {
 
   return (
     <main
-      className={`message-view${hasBg ? ` atmosphere-${atmosphere || "none"}` : ""}`}
+      className={`message-view${atmosphere ? ` atmosphere-${atmosphere}` : ""}`}
       style={textColor ? { color: textColor } : undefined}
     >
-      {hasBg && channel.background_url && (
-        <>
-          <div
-            className="channel-bg"
-            style={{
-              backgroundImage: `url(${channel.background_url})`,
-              filter: `blur(${blur}px)`,
-            }}
-          />
-          <div className="channel-dim" style={{ opacity: dim }} />
-        </>
-      )}
+      {atmosphere === "gaming" && <div className="channel-dim" />}
 
       <header className="message-header">
         <div>
@@ -205,13 +224,15 @@ export function MessageView() {
           </h2>
           {channel.topic && <p className="topic">{channel.topic}</p>}
         </div>
-        <button
-          type="button"
-          className="btn ghost sm"
-          onClick={() => setModal("channel-settings", channel.id)}
-        >
-          Channel settings
-        </button>
+        {canManageChannels && (
+          <button
+            type="button"
+            className="btn ghost sm"
+            onClick={() => setModal("channel-settings", channel.id)}
+          >
+            Channel settings
+          </button>
+        )}
       </header>
 
       <div className="message-list">
@@ -412,7 +433,9 @@ export function MessageView() {
             hidden
             onChange={(e) => void onPickFile(e.target.files?.[0] || null)}
           />
+          <EmojiPickerButton onPick={insertEmoji} />
           <textarea
+            ref={draftRef}
             rows={1}
             placeholder={`Message #${channel.name}`}
             value={draft}

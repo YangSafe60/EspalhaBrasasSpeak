@@ -18,6 +18,10 @@ Cargo.lock.bak
 # Node
 node_modules/
 apps/desktop/dist/
+apps/desktop/release/
+apps/desktop/.vite/
+
+# Legacy Tauri leftovers (safe to delete apps/desktop/src-tauri)
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/
 

@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { CATBOX_UPLOAD_HINT } from "../lib/uploadHints";
 import { useAppStore } from "../store/appStore";
 import {
-  ATMOSPHERE_PRESETS,
+  effectiveServerPerms,
+  hasPerm,
   Perm,
+} from "../lib/serverPerms";
+import {
+  ATMOSPHERE_PRESETS,
   type Atmosphere,
   type PermissionOverwrite,
   type Role,
@@ -53,13 +56,16 @@ export function ChannelSettingsModal() {
   const loadRoles = useAppStore((s) => s.loadRoles);
   const updateChannel = useAppStore((s) => s.updateChannel);
   const deleteChannel = useAppStore((s) => s.deleteChannel);
-  const uploadFile = useAppStore((s) => s.uploadFile);
   const loadChannelOverwrites = useAppStore((s) => s.loadChannelOverwrites);
   const saveChannelOverwrites = useAppStore((s) => s.saveChannelOverwrites);
 
   const channel = Object.values(channelsByServer)
     .flat()
     .find((c) => c.id === settingsChannelId);
+
+  const user = useAppStore((s) => s.user);
+  const servers = useAppStore((s) => s.servers);
+  const membersByServer = useAppStore((s) => s.membersByServer);
 
   const roles = useMemo(() => {
     if (!channel) return [] as Role[];
@@ -68,12 +74,20 @@ export function ChannelSettingsModal() {
       .sort((a, b) => a.position - b.position);
   }, [channel, rolesByServer]);
 
+  const server = channel
+    ? servers.find((s) => s.id === channel.server_id)
+    : undefined;
+  const members = channel ? membersByServer[channel.server_id] || [] : [];
+  const me = members.find((m) => m.user.id === user?.id);
+  const myPerms = useMemo(
+    () => effectiveServerPerms(server, roles, me, user?.id),
+    [server, roles, me, user?.id],
+  );
+  const canManageChannels = hasPerm(myPerms, Perm.MANAGE_CHANNELS);
+
   const [tab, setTab] = useState<Tab>("overview");
   const [name, setName] = useState("");
   const [topic, setTopic] = useState("");
-  const [backgroundUrl, setBackgroundUrl] = useState("");
-  const [blur, setBlur] = useState(0);
-  const [dim, setDim] = useState(0.45);
   const [textColor, setTextColor] = useState("#e8eef2");
   const [atmosphere, setAtmosphere] = useState<Atmosphere | "">("");
   const [userLimit, setUserLimit] = useState(0);
@@ -86,15 +100,18 @@ export function ChannelSettingsModal() {
   const [draftAllow, setDraftAllow] = useState(0);
   const [draftDeny, setDraftDeny] = useState(0);
   const [confirmName, setConfirmName] = useState("");
+  const [privateLocked, setPrivateLocked] = useState(false);
+  const [accessRoleIds, setAccessRoleIds] = useState<string[]>([]);
 
   useEffect(() => {
     if (modal !== "channel-settings" || !channel) return;
+    if (!canManageChannels) {
+      setModal(null);
+      return;
+    }
     setTab("overview");
     setName(channel.name);
     setTopic(channel.topic || "");
-    setBackgroundUrl(channel.background_url || "");
-    setBlur(channel.background_blur ?? 0);
-    setDim(channel.background_dim ?? 0.45);
     setTextColor(channel.text_color || "#e8eef2");
     setAtmosphere((channel.atmosphere as Atmosphere) || "");
     setUserLimit(channel.user_limit ?? 0);
@@ -102,17 +119,59 @@ export function ChannelSettingsModal() {
     setMsg(null);
     setErr(null);
     setConfirmName("");
-    void loadRoles(channel.server_id);
-    void loadChannelOverwrites(channel.id).then((ows) => {
+    setPrivateLocked(false);
+    setAccessRoleIds([]);
+    setOverwrites([]);
+
+    let cancelled = false;
+    const serverId = channel.server_id;
+    const channelId = channel.id;
+
+    void (async () => {
+      await loadRoles(serverId);
+      if (cancelled) return;
+      const rolesNow =
+        useAppStore.getState().rolesByServer[serverId] ?? [];
+      const everyone = rolesNow.find((r) => r.is_everyone);
+      const ows = await loadChannelOverwrites(channelId);
+      if (cancelled) return;
       setOverwrites(ows);
-      const everyone = rolesByServer[channel.server_id]?.find((r) => r.is_everyone);
       const first =
         ows.find((o) => o.target_type === "role")?.target_id ||
         everyone?.id ||
         null;
       setSelectedRoleId(first);
-    });
-  }, [modal, channel?.id]);
+      const everyoneOw = everyone
+        ? ows.find(
+            (o) => o.target_type === "role" && o.target_id === everyone.id,
+          )
+        : undefined;
+      const deny = Number(everyoneOw?.deny ?? 0);
+      const locked = Boolean(
+        everyoneOw && (deny & Perm.VIEW_CHANNEL) === Perm.VIEW_CHANNEL,
+      );
+      setPrivateLocked(locked);
+      if (locked) {
+        setAccessRoleIds(
+          ows
+            .filter((o) => {
+              if (o.target_type !== "role") return false;
+              if (o.target_id === everyone?.id) return false;
+              return (
+                (Number(o.allow) & Perm.VIEW_CHANNEL) === Perm.VIEW_CHANNEL
+              );
+            })
+            .map((o) => o.target_id),
+        );
+      } else {
+        setAccessRoleIds([]);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [modal, channel?.id, loadRoles, loadChannelOverwrites, canManageChannels, setModal]);
 
   useEffect(() => {
     if (!selectedRoleId) {
@@ -127,7 +186,7 @@ export function ChannelSettingsModal() {
     setDraftDeny(ow?.deny ?? 0);
   }, [selectedRoleId, overwrites]);
 
-  if (modal !== "channel-settings" || !channel) return null;
+  if (modal !== "channel-settings" || !channel || !canManageChannels) return null;
 
   const isVoice = channel.channel_type === "voice";
   const isText = channel.channel_type === "text";
@@ -149,10 +208,14 @@ export function ChannelSettingsModal() {
   });
 
   function applyPreset(key: Atmosphere) {
-    const p = ATMOSPHERE_PRESETS[key];
     setAtmosphere(key);
-    setBlur(p.blur);
-    setDim(p.dim);
+    const text =
+      key === "focus"
+        ? "#f4f7fb"
+        : key === "chill"
+          ? "#e8fff6"
+          : "#ffe8f0";
+    setTextColor(text);
   }
 
   async function onSaveOverview(e: FormEvent) {
@@ -164,28 +227,14 @@ export function ChannelSettingsModal() {
       await updateChannel(channel!.id, {
         name: name.trim(),
         topic: isText ? topic || null : undefined,
-        background_url: isText ? backgroundUrl || null : undefined,
-        // No image → clear atmosphere extras so the chat returns to the default look.
-        background_blur: isText ? (backgroundUrl ? blur : 0) : undefined,
-        background_dim: isText ? (backgroundUrl ? dim : 0) : undefined,
-        text_color: isText
-          ? backgroundUrl
-            ? textColor || null
-            : null
-          : undefined,
-        atmosphere: isText
-          ? backgroundUrl
-            ? atmosphere || null
-            : null
-          : undefined,
+        // Background images removed from UI — clear any legacy image.
+        background_url: isText ? null : undefined,
+        background_blur: isText ? 0 : undefined,
+        background_dim: isText ? 0 : undefined,
+        text_color: isText ? textColor || null : undefined,
+        atmosphere: isText ? atmosphere || null : undefined,
         user_limit: isVoice ? Math.max(0, Math.floor(userLimit)) : undefined,
       });
-      if (isText && !backgroundUrl) {
-        setAtmosphere("");
-        setBlur(0);
-        setDim(0);
-        setTextColor("#e8eef2");
-      }
       setMsg("Changes saved.");
     } catch (error) {
       setErr(error instanceof Error ? error.message : "Update failed");
@@ -226,6 +275,107 @@ export function ChannelSettingsModal() {
       setMsg("Permissions saved.");
     } catch (error) {
       setErr(error instanceof Error ? error.message : "Failed to save permissions");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onSavePrivateLock() {
+    if (!channel) return;
+    const everyone = roles.find((r) => r.is_everyone);
+    if (!everyone) {
+      setErr("Missing @everyone role.");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      const accessBits =
+        channel.channel_type === "voice"
+          ? Perm.VIEW_CHANNEL | Perm.CONNECT
+          : Perm.VIEW_CHANNEL;
+
+      let next: PermissionOverwrite[];
+
+      if (privateLocked) {
+        next = overwrites.filter((o) => {
+          if (o.target_type !== "role") return true;
+          if (o.target_id === everyone.id) return false;
+          if (accessRoleIds.includes(o.target_id)) return false;
+          return true;
+        });
+        next.push({
+          id: "everyone-lock",
+          channel_id: channel.id,
+          target_type: "role",
+          target_id: everyone.id,
+          allow: 0,
+          deny: accessBits,
+        });
+        for (const roleId of accessRoleIds) {
+          const prev = overwrites.find(
+            (o) => o.target_type === "role" && o.target_id === roleId,
+          );
+          const allow = ((prev?.allow ?? 0) & ~accessBits) | accessBits;
+          const deny = (prev?.deny ?? 0) & ~accessBits;
+          next.push({
+            id: `access-${roleId}`,
+            channel_id: channel.id,
+            target_type: "role",
+            target_id: roleId,
+            allow,
+            deny,
+          });
+        }
+      } else {
+        // Unlock: clear access bits from all role overwrites.
+        next = overwrites
+          .map((o) => {
+            if (o.target_type !== "role") return o;
+            return {
+              ...o,
+              allow: o.allow & ~accessBits,
+              deny: o.deny & ~accessBits,
+            };
+          })
+          .filter((o) => o.allow !== 0 || o.deny !== 0);
+      }
+
+      const saved = await saveChannelOverwrites(
+        channel.id,
+        next.map((o) => ({
+          target_type: o.target_type,
+          target_id: o.target_id,
+          allow: o.allow,
+          deny: o.deny,
+        })),
+      );
+      setOverwrites(saved);
+      if (privateLocked) {
+        setAccessRoleIds(
+          saved
+            .filter((o) => {
+              if (o.target_type !== "role") return false;
+              if (o.target_id === everyone.id) return false;
+              return (
+                (Number(o.allow) & Perm.VIEW_CHANNEL) === Perm.VIEW_CHANNEL
+              );
+            })
+            .map((o) => o.target_id),
+        );
+        setPrivateLocked(true);
+      } else {
+        setAccessRoleIds([]);
+        setPrivateLocked(false);
+      }
+      setMsg(
+        privateLocked
+          ? "Channel locked — only selected roles can see it."
+          : "Channel unlocked for @everyone.",
+      );
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : "Failed to update lock");
     } finally {
       setBusy(false);
     }
@@ -342,76 +492,19 @@ export function ChannelSettingsModal() {
                     />
                   </label>
                   <div className="settings-section">
-                    <h4>Atmosphere</h4>
-                    <div className="row gap-sm" style={{ alignItems: "center" }}>
-                      {backgroundUrl ? (
-                        <div
-                          className="banner-preview"
-                          style={{ backgroundImage: `url(${backgroundUrl})` }}
-                        />
-                      ) : (
-                        <p className="muted tiny">No background image.</p>
-                      )}
-                      <label className="btn">
-                        Upload
-                        <input
-                          type="file"
-                          accept="image/*"
-                          hidden
-                          onChange={async (e) => {
-                            const file = e.target.files?.[0];
-                            if (!file) return;
-                            const up = await uploadFile(file);
-                            setBackgroundUrl(up.url);
-                            e.target.value = "";
-                          }}
-                        />
-                      </label>
-                      {backgroundUrl && (
-                        <button
-                          type="button"
-                          className="btn"
-                          onClick={() => {
-                            setBackgroundUrl("");
-                            setAtmosphere("");
-                            setBlur(0);
-                            setDim(0);
-                            setTextColor("#e8eef2");
-                          }}
-                        >
-                          Remove
-                        </button>
-                      )}
-                    </div>
-                    <p className="muted tiny">{CATBOX_UPLOAD_HINT}</p>
-                    <label>
-                      Blur ({blur}px)
-                      <input
-                        type="range"
-                        min={0}
-                        max={24}
-                        step={1}
-                        value={blur}
-                        onChange={(e) => setBlur(Number(e.target.value))}
-                      />
-                    </label>
-                    <label>
-                      Dim ({dim.toFixed(2)})
-                      <input
-                        type="range"
-                        min={0}
-                        max={0.9}
-                        step={0.01}
-                        value={dim}
-                        onChange={(e) => setDim(Number(e.target.value))}
-                      />
-                    </label>
+                    <h4>Color scheme</h4>
+                    <p className="muted tiny">
+                      Pick a preset look for this channel, or set a custom text color.
+                    </p>
                     <label>
                       Text color
                       <input
                         type="color"
                         value={textColor}
-                        onChange={(e) => setTextColor(e.target.value)}
+                        onChange={(e) => {
+                          setTextColor(e.target.value);
+                          setAtmosphere("");
+                        }}
                       />
                     </label>
                     <div className="preset-row">
@@ -427,10 +520,13 @@ export function ChannelSettingsModal() {
                       ))}
                       <button
                         type="button"
-                        className="btn sm ghost"
-                        onClick={() => setAtmosphere("")}
+                        className={`btn sm ${!atmosphere ? "primary" : "ghost"}`}
+                        onClick={() => {
+                          setAtmosphere("");
+                          setTextColor("#e8eef2");
+                        }}
                       >
-                        Custom
+                        Default
                       </button>
                     </div>
                   </div>
@@ -531,6 +627,66 @@ export function ChannelSettingsModal() {
                 ))}
               </aside>
               <div className="perm-editor stack">
+                {!isCategory && (
+                  <div className="settings-section private-lock-card">
+                    <h4>Private channel</h4>
+                    <p className="muted tiny">
+                      Lock this channel so only chosen roles can see and open it.
+                      Server owners always retain access.
+                    </p>
+                    <label className="check-row">
+                      <input
+                        type="checkbox"
+                        checked={privateLocked}
+                        onChange={(e) => {
+                          setPrivateLocked(e.target.checked);
+                          if (!e.target.checked) setAccessRoleIds([]);
+                        }}
+                      />
+                      <span>Make private / locked</span>
+                    </label>
+                    {privateLocked && (
+                      <div className="private-role-list">
+                        <p className="muted tiny">Who can access:</p>
+                        {roles
+                          .filter((r) => !r.is_everyone)
+                          .map((role) => (
+                            <label key={role.id} className="check-row">
+                              <input
+                                type="checkbox"
+                                checked={accessRoleIds.includes(role.id)}
+                                onChange={(e) => {
+                                  setAccessRoleIds((ids) =>
+                                    e.target.checked
+                                      ? [...ids, role.id]
+                                      : ids.filter((id) => id !== role.id),
+                                  );
+                                }}
+                              />
+                              <span
+                                className="role-dot"
+                                style={{ background: role.color }}
+                              />
+                              <span>{role.name}</span>
+                            </label>
+                          ))}
+                        {roles.filter((r) => !r.is_everyone).length === 0 && (
+                          <p className="muted tiny">
+                            Create a role first, then grant it access here.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      className="btn primary sm"
+                      disabled={busy || (privateLocked && accessRoleIds.length === 0)}
+                      onClick={() => void onSavePrivateLock()}
+                    >
+                      {busy ? "Saving…" : "Save lock settings"}
+                    </button>
+                  </div>
+                )}
                 {!selectedRoleId ? (
                   <p className="muted">Select a role to edit overwrites.</p>
                 ) : (
@@ -540,7 +696,7 @@ export function ChannelSettingsModal() {
                       <strong>
                         {roles.find((r) => r.id === selectedRoleId)?.name || "role"}
                       </strong>
-                      . Deny wins over allow.
+                      . Role allows can restore what @everyone denied.
                     </p>
                     <div className="perm-table">
                       {permRows.map((p) => {

@@ -13,6 +13,7 @@ export type ElectronAPI = {
     versions: { electron: string; chrome: string; node: string };
   }>;
   focusMain: () => Promise<boolean>;
+  setBackgroundThrottling: (enabled: boolean) => Promise<boolean>;
   listShareSources: (opts?: {
     types?: Array<"screen" | "window">;
   }) => Promise<DesktopShareSource[]>;
@@ -21,6 +22,7 @@ export type ElectronAPI = {
     trackSid: string;
     url: string;
   }) => Promise<{ ok: boolean; reused?: boolean }>;
+  closeAllPopouts: () => Promise<boolean>;
   relaySignal: (payload: unknown) => Promise<boolean>;
   relayFrame: (payload: unknown) => Promise<boolean>;
   onSignal: (handler: (payload: unknown) => void) => () => void;

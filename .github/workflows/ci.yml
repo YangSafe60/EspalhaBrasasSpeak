@@ -24,8 +24,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
       - run: npm ci
-      - run: npm run build
+      - name: Typecheck + Vite build
+        run: npm run build
+      - name: Verify Electron entrypoints
+        run: |
+          test -f electron/main.mjs
+          test -f electron/preload.cjs
+          test -f electron-builder.yml
 
   docker-arm64:
     runs-on: ubuntu-latest

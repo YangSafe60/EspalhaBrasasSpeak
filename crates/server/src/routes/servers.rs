@@ -7,7 +7,7 @@ use axum::{
     Json,
 };
 use chrono::{Duration, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use speakapp_shared::{
     Invite, Member, Permissions, Role, Server, ServerRule, WsEvent,
 };
@@ -21,10 +21,24 @@ pub struct CreateServerReq {
 #[derive(Deserialize)]
 pub struct UpdateServerReq {
     pub name: Option<String>,
-    pub icon_url: Option<String>,
-    pub banner_url: Option<String>,
+    /// Absent = leave unchanged; JSON `null` = clear; string = set.
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub icon_url: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub banner_url: Option<Option<String>>,
     pub accent_color: Option<String>,
-    pub invite_splash_url: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub invite_splash_url: Option<Option<String>>,
+}
+
+/// Makes JSON `null` mean “clear” (`Some(None)`), not “omit” (`None`).
+fn deserialize_optional_string<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(Some(Option::<String>::deserialize(deserializer)?))
 }
 
 #[derive(Deserialize)]
@@ -208,14 +222,14 @@ pub async fn update(
     }
     if let Some(v) = body.icon_url {
         sqlx::query("UPDATE servers SET icon_url = ? WHERE id = ?")
-            .bind(v)
+            .bind(v.as_deref())
             .bind(id.to_string())
             .execute(&state.db)
             .await?;
     }
     if let Some(v) = body.banner_url {
         sqlx::query("UPDATE servers SET banner_url = ? WHERE id = ?")
-            .bind(v)
+            .bind(v.as_deref())
             .bind(id.to_string())
             .execute(&state.db)
             .await?;
@@ -229,7 +243,7 @@ pub async fn update(
     }
     if let Some(v) = body.invite_splash_url {
         sqlx::query("UPDATE servers SET invite_splash_url = ? WHERE id = ?")
-            .bind(v)
+            .bind(v.as_deref())
             .bind(id.to_string())
             .execute(&state.db)
             .await?;
@@ -274,6 +288,39 @@ pub async fn list_members(
     Ok(Json(out))
 }
 
+#[derive(serde::Serialize)]
+pub struct PresenceView {
+    pub user_id: Uuid,
+    pub status: speakapp_shared::PresenceStatus,
+}
+
+pub async fn list_presence(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<Vec<PresenceView>>> {
+    if !db::is_member(&state.db, id, user.id).await? {
+        return Err(AppError::Forbidden);
+    }
+    let ids = db::server_member_ids(&state.db, id).await?;
+    // Refresh hub membership cache so presence fanout stays accurate.
+    state.hub.set_server_members(id, ids.clone());
+    let online = state.hub.online_among(&ids);
+    let online_set: std::collections::HashSet<Uuid> = online.into_iter().collect();
+    let out = ids
+        .into_iter()
+        .map(|user_id| PresenceView {
+            user_id,
+            status: if online_set.contains(&user_id) {
+                speakapp_shared::PresenceStatus::Online
+            } else {
+                speakapp_shared::PresenceStatus::Offline
+            },
+        })
+        .collect();
+    Ok(Json(out))
+}
+
 pub async fn kick_member(
     State(state): State<AppState>,
     user: AuthUser,
@@ -290,6 +337,14 @@ pub async fn kick_member(
         .bind(user_id.to_string())
         .execute(&state.db)
         .await?;
+    let now = Utc::now().to_rfc3339();
+    let _ = sqlx::query(
+        "UPDATE voice_states SET channel_id = NULL, streaming = 0, updated_at = ? WHERE user_id = ?",
+    )
+    .bind(&now)
+    .bind(user_id.to_string())
+    .execute(&state.db)
+    .await;
     state.hub.remove_server_member(id, user_id);
     state.hub.broadcast_server(
         id,
@@ -298,7 +353,44 @@ pub async fn kick_member(
             user_id,
         },
     );
+    state.hub.broadcast_server(
+        id,
+        &WsEvent::VoiceStateUpdate {
+            channel_id: None,
+            user_id,
+            muted: false,
+            deafened: false,
+            streaming: false,
+            server_muted: false,
+            server_deafened: false,
+        },
+    );
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct ModVoiceReq {
+    pub server_muted: Option<bool>,
+    pub server_deafened: Option<bool>,
+}
+
+/// Owner / MUTE_MEMBERS: force mute or deafen a member in voice.
+pub async fn moderate_voice(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path((id, user_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<ModVoiceReq>,
+) -> AppResult<Json<crate::routes::voice::VoiceStateView>> {
+    let server = db::get_server(&state.db, id).await?;
+    db::require_perm(&state.db, &server, None, user.id, Permissions::MUTE_MEMBERS)
+        .await?;
+    if user_id == server.owner_id && user.id != server.owner_id {
+        return Err(AppError::Forbidden);
+    }
+    if !db::is_member(&state.db, id, user_id).await? {
+        return Err(AppError::NotFound);
+    }
+    crate::routes::voice::moderator_set_voice(&state, id, user_id, body.server_muted, body.server_deafened).await
 }
 
 pub async fn ban_member(
@@ -330,6 +422,31 @@ pub async fn ban_member(
         .execute(&state.db)
         .await?;
     state.hub.remove_server_member(id, body.user_id);
+    // Drop voice presence if they were in a lobby.
+    let _ = sqlx::query("UPDATE voice_states SET channel_id = NULL, streaming = 0, updated_at = ? WHERE user_id = ?")
+        .bind(&now)
+        .bind(body.user_id.to_string())
+        .execute(&state.db)
+        .await;
+    state.hub.broadcast_server(
+        id,
+        &WsEvent::MemberLeave {
+            server_id: id,
+            user_id: body.user_id,
+        },
+    );
+    state.hub.broadcast_server(
+        id,
+        &WsEvent::VoiceStateUpdate {
+            channel_id: None,
+            user_id: body.user_id,
+            muted: false,
+            deafened: false,
+            streaming: false,
+            server_muted: false,
+            server_deafened: false,
+        },
+    );
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 

@@ -12,9 +12,7 @@ if (process.env.ELECTRON_USER_DATA) {
 }
 
 /** Performance-oriented Chromium flags (voice + screen share). */
-app.commandLine.appendSwitch("disable-renderer-backgrounding");
-app.commandLine.appendSwitch("disable-background-timer-throttling");
-app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
+// Prefer normal Chromium memory reclaim; voice join toggles throttling via IPC.
 // Keep GPU / HW decode for video (do not call disableHardwareAcceleration).
 
 let mainWindow = null;
@@ -42,7 +40,7 @@ function createMainWindow() {
       nodeIntegration: false,
       sandbox: true,
       spellcheck: false,
-      backgroundThrottling: false,
+      backgroundThrottling: true,
       v8CacheOptions: "code",
     },
   });
@@ -92,14 +90,6 @@ function installSessionHandlers() {
   );
 }
 
-function broadcast(channel, payload) {
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) {
-      win.webContents.send(channel, payload);
-    }
-  }
-}
-
 function registerIpc() {
   ipcMain.handle("desktop:info", () => ({
     isElectron: true,
@@ -123,8 +113,8 @@ function registerIpc() {
     const types = opts.types || ["screen", "window"];
     const sources = await desktopCapturer.getSources({
       types,
-      thumbnailSize: { width: 480, height: 270 },
-      fetchWindowIcons: true,
+      thumbnailSize: { width: 160, height: 90 },
+      fetchWindowIcons: false,
     });
     return sources.map((s) => ({
       id: s.id,
@@ -158,7 +148,7 @@ function registerIpc() {
         nodeIntegration: false,
         sandbox: true,
         spellcheck: false,
-        backgroundThrottling: false,
+        backgroundThrottling: true,
         v8CacheOptions: "code",
       },
     });
@@ -177,13 +167,37 @@ function registerIpc() {
     return { ok: true, reused: false };
   });
 
+  ipcMain.handle("popout:close-all", () => {
+    for (const win of popouts.values()) {
+      if (!win.isDestroyed()) win.close();
+    }
+    popouts.clear();
+    return true;
+  });
+
+  ipcMain.handle("window:set-background-throttling", (_evt, enabled) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.setBackgroundThrottling(Boolean(enabled));
+    }
+    return true;
+  });
+
   ipcMain.handle("relay:signal", (_evt, payload) => {
-    broadcast("relay:signal", payload);
+    // Host (main window) owns MediaStreamTracks — only it needs request/stop.
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("relay:signal", payload);
+    }
     return true;
   });
 
   ipcMain.handle("relay:frame", (_evt, payload) => {
-    broadcast("relay:frame", payload);
+    // Don't fan JPEG frames into every window — only the matching popout.
+    const sid = payload?.trackSid;
+    if (!sid) return true;
+    const win = popouts.get(`screen-${sid}`);
+    if (win && !win.isDestroyed()) {
+      win.webContents.send("relay:frame", payload);
+    }
     return true;
   });
 }

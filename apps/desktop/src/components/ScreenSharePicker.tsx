@@ -17,7 +17,10 @@ type Props = {
   mode?: "new" | "add" | "replace";
   activeSourceIds?: string[];
   onClose: () => void;
-  onPickSource: (source: ShareSource, opts: { systemAudio: boolean }) => void;
+  onPickSource: (
+    source: ShareSource,
+    opts: { systemAudio: boolean; fps: 30 | 60 },
+  ) => void;
 };
 
 export function ScreenSharePicker({
@@ -32,6 +35,7 @@ export function ScreenSharePicker({
   const [sources, setSources] = useState<ShareSource[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [systemAudio, setSystemAudio] = useState(true);
+  const [fps, setFps] = useState<30 | 60>(30);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -43,6 +47,7 @@ export function ScreenSharePicker({
     setError(null);
     setTab("screen");
     setSystemAudio(true);
+    setFps(30);
     setSources([]);
     setLoading(true);
 
@@ -86,7 +91,7 @@ export function ScreenSharePicker({
   function confirm() {
     const src = sources.find((s) => s.id === selected);
     if (!src || busy) return;
-    onPickSource(src, { systemAudio });
+    onPickSource(src, { systemAudio, fps });
   }
 
   return createPortal(
@@ -157,7 +162,7 @@ export function ScreenSharePicker({
                   onDoubleClick={() => {
                     if (busy) return;
                     setSelected(s.id);
-                    onPickSource(s, { systemAudio });
+                    onPickSource(s, { systemAudio, fps });
                   }}
                 >
                   <div className="share-thumb">
@@ -178,15 +183,38 @@ export function ScreenSharePicker({
           </div>
         )}
 
-        <label className="share-audio-toggle">
-          <span>Share system audio</span>
-          <input
-            type="checkbox"
-            checked={systemAudio}
-            onChange={(e) => setSystemAudio(e.target.checked)}
-            disabled={busy}
-          />
-        </label>
+        <div className="share-options">
+          <div className="share-fps" role="group" aria-label="Frame rate">
+            <span className="share-options-label">Frame rate</span>
+            <div className="share-fps-toggle">
+              <button
+                type="button"
+                className={fps === 30 ? "active" : ""}
+                disabled={busy}
+                onClick={() => setFps(30)}
+              >
+                30 FPS
+              </button>
+              <button
+                type="button"
+                className={fps === 60 ? "active" : ""}
+                disabled={busy}
+                onClick={() => setFps(60)}
+              >
+                60 FPS
+              </button>
+            </div>
+          </div>
+          <label className="share-audio-toggle">
+            <span>Share system audio</span>
+            <input
+              type="checkbox"
+              checked={systemAudio}
+              onChange={(e) => setSystemAudio(e.target.checked)}
+              disabled={busy}
+            />
+          </label>
+        </div>
 
         <footer className="share-picker-footer">
           <button

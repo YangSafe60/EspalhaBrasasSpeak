@@ -110,6 +110,63 @@ export interface Member {
   accepted_rules: boolean;
 }
 
+export type FriendshipStatus = "pending" | "accepted" | "declined";
+
+export interface Friendship {
+  id: string;
+  status: FriendshipStatus;
+  requested_by: string;
+  peer: UserPublic;
+  muted: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FriendsList {
+  friends: Friendship[];
+  inbound: Friendship[];
+  outbound: Friendship[];
+}
+
+export interface UserIdentityKey {
+  user_id: string;
+  public_key: string;
+  created_at: string;
+}
+
+export interface DmChannel {
+  id: string;
+  friendship_id: string | null;
+  peer: UserPublic;
+  created_at: string;
+}
+
+/** Wire ciphertext from the server. */
+export interface DmMessageWire {
+  id: string;
+  dm_channel_id: string;
+  author_id: string;
+  ciphertext: string;
+  nonce: string;
+  reply_to_id: string | null;
+  edited_at: string | null;
+  created_at: string;
+}
+
+/** Client-side DM after decrypt. */
+export interface DmMessage {
+  id: string;
+  dm_channel_id: string;
+  author_id: string;
+  content: string;
+  ciphertext: string;
+  nonce: string;
+  reply_to_id: string | null;
+  edited_at: string | null;
+  created_at: string;
+  decrypt_failed?: boolean;
+}
+
 export interface BanInfo {
   user_id: string;
   reason: string | null;
@@ -135,6 +192,8 @@ export interface VoiceStateView {
   muted: boolean;
   deafened: boolean;
   streaming: boolean;
+  server_muted?: boolean;
+  server_deafened?: boolean;
 }
 
 export interface UploadResponse {
@@ -159,6 +218,8 @@ export type WsEvent =
       muted: boolean;
       deafened: boolean;
       streaming: boolean;
+      server_muted?: boolean;
+      server_deafened?: boolean;
     }
   | { type: "channel_create"; channel: Channel }
   | { type: "channel_update"; channel: Channel }
@@ -179,6 +240,19 @@ export type WsEvent =
       message_id: string;
       emoji: string;
       user_id: string;
+    }
+  | { type: "friend_request"; friendship: Friendship }
+  | { type: "friend_update"; friendship: Friendship }
+  | { type: "friend_removed"; friendship_id: string }
+  | { type: "dm_channel_create"; channel: DmChannel }
+  | { type: "dm_message_create"; message: DmMessageWire; author: UserPublic }
+  | { type: "dm_message_update"; message: DmMessageWire }
+  | { type: "dm_message_delete"; dm_channel_id: string; message_id: string }
+  | {
+      type: "dm_typing_start";
+      dm_channel_id: string;
+      user_id: string;
+      username: string;
     };
 
 export const Perm = {

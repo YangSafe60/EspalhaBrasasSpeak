@@ -8,11 +8,21 @@ import {
   type MouseEvent,
 } from "react";
 import { useAppStore } from "../store/appStore";
+import {
+  effectiveServerPerms,
+  hasPerm,
+  Perm,
+} from "../lib/serverPerms";
 import type { Channel } from "../types";
+import {
+  useMemberContextMenu,
+  type MemberVoiceHandlers,
+} from "./MemberUserMenu";
 
 type Props = {
   onJoinVoice: (channelId: string) => void;
   speakingIds?: string[];
+  voiceHandlers?: MemberVoiceHandlers;
 };
 
 type CreateDraft = {
@@ -106,19 +116,26 @@ function moveChannel(
   return all.map((c) => byId.get(c.id) || c);
 }
 
-export function ChannelSidebar({ onJoinVoice, speakingIds = [] }: Props) {
+export function ChannelSidebar({
+  onJoinVoice,
+  speakingIds = [],
+  voiceHandlers,
+}: Props) {
   const activeServerId = useAppStore((s) => s.activeServerId);
   const servers = useAppStore((s) => s.servers);
   const channelsByServer = useAppStore((s) => s.channelsByServer);
   const voiceStates = useAppStore((s) => s.voiceStates);
   const membersByServer = useAppStore((s) => s.membersByServer);
+  const rolesByServer = useAppStore((s) => s.rolesByServer);
   const authors = useAppStore((s) => s.authors);
+  const user = useAppStore((s) => s.user);
   const activeChannelId = useAppStore((s) => s.activeChannelId);
   const voiceChannelId = useAppStore((s) => s.voiceChannelId);
   const selectChannel = useAppStore((s) => s.selectChannel);
   const setModal = useAppStore((s) => s.setModal);
   const createChannel = useAppStore((s) => s.createChannel);
   const applyChannelOrder = useAppStore((s) => s.applyChannelOrder);
+  const { openForUserId, menuPortal } = useMemberContextMenu(voiceHandlers);
 
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [draft, setDraft] = useState<CreateDraft | null>(null);
@@ -135,6 +152,20 @@ export function ChannelSidebar({ onJoinVoice, speakingIds = [] }: Props) {
   const reorderBusyRef = useRef(false);
 
   const server = servers.find((s) => s.id === activeServerId);
+  const members = activeServerId
+    ? membersByServer[activeServerId] || []
+    : [];
+  const roles = activeServerId ? rolesByServer[activeServerId] || [] : [];
+  const me = members.find((m) => m.user.id === user?.id);
+  const myPerms = useMemo(
+    () => effectiveServerPerms(server, roles, me, user?.id),
+    [server, roles, me, user?.id],
+  );
+  const canManageChannels = hasPerm(myPerms, Perm.MANAGE_CHANNELS);
+  const canOpenServerSettings =
+    hasPerm(myPerms, Perm.MANAGE_SERVER) ||
+    hasPerm(myPerms, Perm.MANAGE_ROLES) ||
+    hasPerm(myPerms, Perm.CREATE_INVITE);
   const channels = useMemo(
     () =>
       (activeServerId ? channelsByServer[activeServerId] || [] : [])
@@ -181,6 +212,7 @@ export function ChannelSidebar({ onJoinVoice, speakingIds = [] }: Props) {
   }
 
   function openCreateChannel(categoryId: string | null) {
+    if (!canManageChannels) return;
     setDraft({ mode: "channel", categoryId });
     setChannelType("text");
     setName("");
@@ -188,6 +220,7 @@ export function ChannelSidebar({ onJoinVoice, speakingIds = [] }: Props) {
   }
 
   function openCreateCategory() {
+    if (!canManageChannels) return;
     setDraft({ mode: "category", categoryId: null });
     setName("");
     setError(null);
@@ -195,6 +228,7 @@ export function ChannelSidebar({ onJoinVoice, speakingIds = [] }: Props) {
 
   async function submitCreate(e: FormEvent) {
     e.preventDefault();
+    if (!canManageChannels) return;
     if (!activeServerId || !draft || !name.trim() || creatingRef.current) return;
     creatingRef.current = true;
     setBusy(true);
@@ -226,6 +260,7 @@ export function ChannelSidebar({ onJoinVoice, speakingIds = [] }: Props) {
   function openSettings(e: MouseEvent, channelId: string) {
     e.preventDefault();
     e.stopPropagation();
+    if (!canManageChannels) return;
     setModal("channel-settings", channelId);
   }
 
@@ -234,6 +269,10 @@ export function ChannelSidebar({ onJoinVoice, speakingIds = [] }: Props) {
   }
 
   function onDragStart(kind: DragPayload["kind"], id: string, e: DragEvent) {
+    if (!canManageChannels) {
+      e.preventDefault();
+      return;
+    }
     const target = e.target as HTMLElement;
     if (target.closest("button.category-add, button.channel-gear")) {
       e.preventDefault();
@@ -285,6 +324,7 @@ export function ChannelSidebar({ onJoinVoice, speakingIds = [] }: Props) {
     setDropHint(null);
     setDragging(null);
     dragPayloadRef.current = null;
+    if (!canManageChannels) return;
     if (!payload || !activeServerId || reorderBusyRef.current) return;
 
     let next = channels;
@@ -366,7 +406,7 @@ export function ChannelSidebar({ onJoinVoice, speakingIds = [] }: Props) {
     const row = (
       <div
         className={`channel-row ${inVoice ? "connected" : ""} ${active ? "active" : ""} ${isDragOver ? "drop-before" : ""} ${isDraggingSelf ? "is-dragging" : ""}`}
-        draggable
+        draggable={canManageChannels}
         onDragStart={(e) => onDragStart("channel", ch.id, e)}
         onDragEnd={onDragEnd}
         onDragOver={(e) =>
@@ -401,14 +441,16 @@ export function ChannelSidebar({ onJoinVoice, speakingIds = [] }: Props) {
             {limitLabel}
           </span>
         </button>
-        <button
-          type="button"
-          className="channel-gear"
-          title="Edit channel"
-          onClick={(e) => openSettings(e, ch.id)}
-        >
-          ⚙
-        </button>
+        {canManageChannels && (
+          <button
+            type="button"
+            className="channel-gear"
+            title="Edit channel"
+            onClick={(e) => openSettings(e, ch.id)}
+          >
+            ⚙
+          </button>
+        )}
       </div>
     );
 
@@ -431,6 +473,7 @@ export function ChannelSidebar({ onJoinVoice, speakingIds = [] }: Props) {
                   <li
                     key={u.user_id}
                     className={`${u.streaming ? "live" : ""}${speakingIds.includes(u.user_id) ? " speaking" : ""}`}
+                    onContextMenu={(e) => openForUserId(e, u.user_id, u.name)}
                   >
                     <span
                       className={`voice-user-avatar${speakingIds.includes(u.user_id) ? " speaking" : ""}`}
@@ -511,13 +554,13 @@ export function ChannelSidebar({ onJoinVoice, speakingIds = [] }: Props) {
     return (
       <div
         className={`category-header ${beforeHint ? "drop-before" : ""} ${intoHint || uncatHint ? "drop-into" : ""} ${isDraggingSelf ? "is-dragging" : ""}`}
-        draggable={isReal}
+        draggable={isReal && canManageChannels}
         onDragStart={
-          isReal
+          isReal && canManageChannels
             ? (e) => onDragStart("category", categoryId, e)
             : undefined
         }
-        onDragEnd={isReal ? onDragEnd : undefined}
+        onDragEnd={isReal && canManageChannels ? onDragEnd : undefined}
         onDragOver={(e) => {
           if (isReal) {
             const payload = currentPayload(e);
@@ -567,42 +610,44 @@ export function ChannelSidebar({ onJoinVoice, speakingIds = [] }: Props) {
           </span>
           <span className="category-label-text">{label}</span>
         </button>
-        <div className="category-actions">
-          {opts?.showCreateCategory && (
+        {canManageChannels && (
+          <div className="category-actions">
+            {opts?.showCreateCategory && (
+              <button
+                type="button"
+                className="category-add"
+                title="Create category"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openCreateCategory();
+                }}
+              >
+                ▤
+              </button>
+            )}
             <button
               type="button"
               className="category-add"
-              title="Create category"
+              title="Create channel"
               onClick={(e) => {
                 e.stopPropagation();
-                openCreateCategory();
+                openCreateChannel(categoryId);
               }}
             >
-              ▤
+              +
             </button>
-          )}
-          <button
-            type="button"
-            className="category-add"
-            title="Create channel"
-            onClick={(e) => {
-              e.stopPropagation();
-              openCreateChannel(categoryId);
-            }}
-          >
-            +
-          </button>
-          {categoryId && (
-            <button
-              type="button"
-              className="category-add"
-              title="Edit category"
-              onClick={(e) => openSettings(e, categoryId)}
-            >
-              ⚙
-            </button>
-          )}
-        </div>
+            {categoryId && (
+              <button
+                type="button"
+                className="category-add"
+                title="Edit category"
+                onClick={(e) => openSettings(e, categoryId)}
+              >
+                ⚙
+              </button>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -623,30 +668,36 @@ export function ChannelSidebar({ onJoinVoice, speakingIds = [] }: Props) {
       <header className="sidebar-header">
         <h2>{server.name}</h2>
         <div className="sidebar-header-actions">
-          <button
-            type="button"
-            className="icon-btn"
-            title="Create category"
-            onClick={openCreateCategory}
-          >
-            ▤
-          </button>
-          <button
-            type="button"
-            className="icon-btn"
-            title="Create channel"
-            onClick={() => openCreateChannel(null)}
-          >
-            +
-          </button>
-          <button
-            type="button"
-            className="icon-btn"
-            title="Server settings"
-            onClick={() => setModal("server-settings")}
-          >
-            ⚙
-          </button>
+          {canManageChannels && (
+            <>
+              <button
+                type="button"
+                className="icon-btn"
+                title="Create category"
+                onClick={openCreateCategory}
+              >
+                ▤
+              </button>
+              <button
+                type="button"
+                className="icon-btn"
+                title="Create channel"
+                onClick={() => openCreateChannel(null)}
+              >
+                +
+              </button>
+            </>
+          )}
+          {canOpenServerSettings && (
+            <button
+              type="button"
+              className="icon-btn"
+              title="Server settings"
+              onClick={() => setModal("server-settings")}
+            >
+              ⚙
+            </button>
+          )}
         </div>
       </header>
 
@@ -798,6 +849,7 @@ export function ChannelSidebar({ onJoinVoice, speakingIds = [] }: Props) {
           </div>
         </div>
       )}
+      {menuPortal}
     </aside>
   );
 }

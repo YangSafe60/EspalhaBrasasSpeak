@@ -319,6 +319,26 @@ pub async fn require_perm(
     }
 }
 
+/// Members of `server` who currently have `need` on `channel_id`.
+pub async fn members_with_channel_perm(
+    db: &SqlitePool,
+    server: &Server,
+    channel_id: Uuid,
+    need: Permissions,
+) -> AppResult<Vec<Uuid>> {
+    let ids = server_member_ids(db, server.id).await?;
+    let mut out = Vec::with_capacity(ids.len());
+    for uid in ids {
+        if effective_permissions(db, server, Some(channel_id), uid)
+            .await?
+            .has(need)
+        {
+            out.push(uid);
+        }
+    }
+    Ok(out)
+}
+
 pub async fn get_member(db: &SqlitePool, server_id: Uuid, user_id: Uuid) -> AppResult<Member> {
     #[derive(sqlx::FromRow)]
     struct MRow {

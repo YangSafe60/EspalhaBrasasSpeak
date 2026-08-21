@@ -3,9 +3,10 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "desktop": "npm --prefix apps/desktop run tauri",
-    "desktop:dev": "npm --prefix apps/desktop run tauri -- dev",
+    "desktop": "npm --prefix apps/desktop run desktop",
+    "desktop:dev": "npm --prefix apps/desktop run desktop",
     "desktop:build": "npm --prefix apps/desktop run build",
+    "desktop:dist": "npm --prefix apps/desktop run dist",
     "server": "cargo run -p speakapp-server",
     "server:release": "cargo build -p speakapp-server --release"
   }

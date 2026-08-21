@@ -181,6 +181,60 @@ pub struct Member {
     pub accepted_rules: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FriendshipStatus {
+    Pending,
+    Accepted,
+    Declined,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Friendship {
+    pub id: Uuid,
+    pub status: FriendshipStatus,
+    pub requested_by: Uuid,
+    pub peer: UserPublic,
+    pub muted: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FriendsList {
+    pub friends: Vec<Friendship>,
+    pub inbound: Vec<Friendship>,
+    pub outbound: Vec<Friendship>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserIdentityKey {
+    pub user_id: Uuid,
+    pub public_key: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DmChannel {
+    pub id: Uuid,
+    pub friendship_id: Option<Uuid>,
+    pub peer: UserPublic,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Wire format for E2E DMs — ciphertext only; plaintext never leaves the client.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DmMessage {
+    pub id: Uuid,
+    pub dm_channel_id: Uuid,
+    pub author_id: Uuid,
+    pub ciphertext: String,
+    pub nonce: String,
+    pub reply_to_id: Option<Uuid>,
+    pub edited_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WsEvent {
@@ -214,6 +268,10 @@ pub enum WsEvent {
         muted: bool,
         deafened: bool,
         streaming: bool,
+        #[serde(default)]
+        server_muted: bool,
+        #[serde(default)]
+        server_deafened: bool,
     },
     ChannelCreate {
         channel: Channel,
@@ -247,6 +305,34 @@ pub enum WsEvent {
         emoji: String,
         user_id: Uuid,
     },
+    FriendRequest {
+        friendship: Friendship,
+    },
+    FriendUpdate {
+        friendship: Friendship,
+    },
+    FriendRemoved {
+        friendship_id: Uuid,
+    },
+    DmChannelCreate {
+        channel: DmChannel,
+    },
+    DmMessageCreate {
+        message: DmMessage,
+        author: UserPublic,
+    },
+    DmMessageUpdate {
+        message: DmMessage,
+    },
+    DmMessageDelete {
+        dm_channel_id: Uuid,
+        message_id: Uuid,
+    },
+    DmTypingStart {
+        dm_channel_id: Uuid,
+        user_id: Uuid,
+        username: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -258,7 +344,12 @@ pub enum PresenceStatus {
     Offline,
 }
 
-/// Resolve effective permissions for a member in a channel.
+/// Resolve effective permissions for a member in a channel (Discord order).
+///
+/// 1. OR role permissions (including @everyone)
+/// 2. Apply @everyone channel overwrite
+/// 3. Batch other role overwrites (OR denies, OR allows, then apply — allows restore)
+/// 4. Apply member overwrite
 pub fn resolve_permissions(
     roles: &[Role],
     member_role_ids: &[Uuid],
@@ -270,56 +361,51 @@ pub fn resolve_permissions(
         return Permissions::all();
     }
 
-    let mut base = Permissions::empty();
+    let mut perms = Permissions::empty();
     let mut sorted: Vec<&Role> = roles
         .iter()
         .filter(|r| r.is_everyone || member_role_ids.contains(&r.id))
         .collect();
     sorted.sort_by_key(|r| r.position);
 
-    for role in sorted {
-        base |= role.permissions;
+    for role in &sorted {
+        perms |= role.permissions;
     }
 
-    if base.contains(Permissions::ADMINISTRATOR) {
+    if perms.contains(Permissions::ADMINISTRATOR) {
         return Permissions::all();
     }
 
-    let mut allow = Permissions::empty();
-    let mut deny = Permissions::empty();
+    let everyone_id = roles.iter().find(|r| r.is_everyone).map(|r| r.id);
 
-    let mut role_ows: Vec<&PermissionOverwrite> = overwrites
-        .iter()
-        .filter(|o| {
-            o.target_type == OverwriteTarget::Role
-                && (member_role_ids.contains(&o.target_id)
-                    || roles.iter().any(|r| r.is_everyone && r.id == o.target_id))
-        })
-        .collect();
-    role_ows.sort_by_key(|o| {
-        roles
-            .iter()
-            .find(|r| r.id == o.target_id)
-            .map(|r| r.position)
-            .unwrap_or(0)
-    });
-
-    for o in role_ows {
-        allow |= o.allow;
-        deny |= o.deny;
-        allow &= !o.deny;
+    if let Some(eid) = everyone_id {
+        if let Some(ow) = overwrites.iter().find(|o| {
+            o.target_type == OverwriteTarget::Role && o.target_id == eid
+        }) {
+            perms = (perms & !ow.deny) | ow.allow;
+        }
     }
+
+    let mut role_allow = Permissions::empty();
+    let mut role_deny = Permissions::empty();
+    for o in overwrites.iter().filter(|o| {
+        o.target_type == OverwriteTarget::Role
+            && Some(o.target_id) != everyone_id
+            && member_role_ids.contains(&o.target_id)
+    }) {
+        role_allow |= o.allow;
+        role_deny |= o.deny;
+    }
+    perms = (perms & !role_deny) | role_allow;
 
     if let Some(member_ow) = overwrites
         .iter()
         .find(|o| o.target_type == OverwriteTarget::Member && o.target_id == member_id)
     {
-        allow |= member_ow.allow;
-        deny |= member_ow.deny;
-        allow &= !member_ow.deny;
+        perms = (perms & !member_ow.deny) | member_ow.allow;
     }
 
-    (base | allow) & !deny
+    perms
 }
 
 #[cfg(test)]
@@ -384,5 +470,70 @@ mod tests {
         let perms = resolve_permissions(&[everyone], &[everyone_id], false, &[ow], member);
         assert!(perms.has(Permissions::VIEW_CHANNEL));
         assert!(!perms.has(Permissions::SEND_MESSAGES));
+    }
+
+    #[test]
+    fn role_allow_overrides_everyone_deny_view() {
+        let server_id = Uuid::new_v4();
+        let everyone_id = Uuid::new_v4();
+        let staff_id = Uuid::new_v4();
+        let everyone = Role {
+            id: everyone_id,
+            server_id,
+            name: "@everyone".into(),
+            color: "#fff".into(),
+            gradient: None,
+            position: 0,
+            permissions: Permissions::EVERYONE_DEFAULT,
+            is_everyone: true,
+        };
+        let staff = Role {
+            id: staff_id,
+            server_id,
+            name: "Staff".into(),
+            color: "#0f0".into(),
+            gradient: None,
+            position: 1,
+            permissions: Permissions::EVERYONE_DEFAULT,
+            is_everyone: false,
+        };
+        let channel_id = Uuid::new_v4();
+        let overwrites = vec![
+            PermissionOverwrite {
+                id: Uuid::new_v4(),
+                channel_id,
+                target_type: OverwriteTarget::Role,
+                target_id: everyone_id,
+                allow: Permissions::empty(),
+                deny: Permissions::VIEW_CHANNEL,
+            },
+            PermissionOverwrite {
+                id: Uuid::new_v4(),
+                channel_id,
+                target_type: OverwriteTarget::Role,
+                target_id: staff_id,
+                allow: Permissions::VIEW_CHANNEL,
+                deny: Permissions::empty(),
+            },
+        ];
+        let staff_member = Uuid::new_v4();
+        let staff_perms = resolve_permissions(
+            &[everyone.clone(), staff.clone()],
+            &[everyone_id, staff_id],
+            false,
+            &overwrites,
+            staff_member,
+        );
+        assert!(staff_perms.has(Permissions::VIEW_CHANNEL));
+
+        let regular = Uuid::new_v4();
+        let regular_perms = resolve_permissions(
+            &[everyone, staff],
+            &[everyone_id],
+            false,
+            &overwrites,
+            regular,
+        );
+        assert!(!regular_perms.has(Permissions::VIEW_CHANNEL));
     }
 }

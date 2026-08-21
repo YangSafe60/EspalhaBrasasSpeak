@@ -18,6 +18,11 @@ const relays = new Map<
   { stop: () => void; viewers: number }
 >();
 
+/** Cap popout relay cost without looking too soft. */
+const MAX_RELAY_WIDTH = 1920;
+const JPEG_QUALITY = 0.82;
+const FRAME_INTERVAL_MS = 66; // ~15 fps
+
 let hostReady: Promise<void> | null = null;
 
 async function publishSignal(msg: Signal) {
@@ -123,7 +128,7 @@ function startRelay(trackSid: string, track: MediaStreamTrack) {
   void video.play().catch(() => undefined);
 
   const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
+  const ctx = canvas.getContext("2d", { alpha: false });
   let timer: number | null = null;
   let stopped = false;
 
@@ -132,19 +137,22 @@ function startRelay(trackSid: string, track: MediaStreamTrack) {
     const w = video.videoWidth;
     const h = video.videoHeight;
     if (w > 0 && h > 0) {
-      if (canvas.width !== w || canvas.height !== h) {
-        canvas.width = w;
-        canvas.height = h;
+      const scale = w > MAX_RELAY_WIDTH ? MAX_RELAY_WIDTH / w : 1;
+      const tw = Math.max(1, Math.round(w * scale));
+      const th = Math.max(1, Math.round(h * scale));
+      if (canvas.width !== tw || canvas.height !== th) {
+        canvas.width = tw;
+        canvas.height = th;
       }
-      ctx.drawImage(video, 0, 0, w, h);
+      ctx.drawImage(video, 0, 0, tw, th);
       try {
-        const frame = canvas.toDataURL("image/jpeg", 0.72);
+        const frame = canvas.toDataURL("image/jpeg", JPEG_QUALITY);
         void publishFrame({ trackSid, frame });
       } catch {
         /* canvas tainted / empty */
       }
     }
-    timer = window.setTimeout(tick, 66);
+    timer = window.setTimeout(tick, FRAME_INTERVAL_MS);
   };
 
   timer = window.setTimeout(tick, 50);
@@ -155,12 +163,14 @@ function startRelay(trackSid: string, track: MediaStreamTrack) {
       stopped = true;
       if (timer != null) window.clearTimeout(timer);
       try {
-        cloned.stop();
+        if (cloned !== track) cloned.stop();
       } catch {
         /* ignore */
       }
       video.srcObject = null;
       video.remove();
+      canvas.width = 0;
+      canvas.height = 0;
       relays.delete(trackSid);
     },
   });
@@ -203,6 +213,22 @@ export function unregisterScreenTrack(trackSid: string) {
   if (entry) entry.stop();
 }
 
+/** Drop any registered tracks whose sids are not in `keep`. */
+export function pruneScreenTracks(keep: Set<string>) {
+  for (const sid of [...tracks.keys()]) {
+    if (!keep.has(sid)) unregisterScreenTrack(sid);
+  }
+}
+
+/** Tear down every relay + registered track (call when leaving voice). */
+export function clearAllScreenBridge() {
+  for (const sid of [...relays.keys()]) {
+    relays.get(sid)?.stop();
+  }
+  relays.clear();
+  tracks.clear();
+}
+
 /** Attach a live screen share into a pop-out <img>. */
 export async function consumeScreenInPopout(
   trackSid: string,
@@ -216,12 +242,13 @@ export async function consumeScreenInPopout(
   void publishSignal({ type: "request", trackSid });
   const retry = window.setInterval(() => {
     void publishSignal({ type: "request", trackSid });
-  }, 1000);
+  }, 2000);
 
   return () => {
     window.clearInterval(retry);
     unsub();
     void publishSignal({ type: "stop", trackSid });
+    target.removeAttribute("src");
   };
 }
 

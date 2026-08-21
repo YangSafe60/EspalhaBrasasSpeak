@@ -33,3 +33,11 @@ export async function openScreenPopout(params: PopoutParams): Promise<void> {
     window.open(url, label, "popup=yes,width=960,height=540");
   }
 }
+
+/** Close every screen pop-out (leave voice / lobby hop). */
+export async function closeAllScreenPopouts(): Promise<void> {
+  const electron = getElectronAPI();
+  if (electron?.closeAllPopouts) {
+    await electron.closeAllPopouts();
+  }
+}

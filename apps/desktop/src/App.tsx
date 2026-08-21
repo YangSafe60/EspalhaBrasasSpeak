@@ -1,6 +1,9 @@
 import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { BrowserPreviewGate } from "./components/BrowserPreviewGate";
 import { ChannelSidebar } from "./components/ChannelSidebar";
+import { DmMessageView } from "./components/DmMessageView";
+import { FriendsSidebar } from "./components/FriendsSidebar";
+import { MemberList } from "./components/MemberList";
 import { MessageView } from "./components/MessageView";
 import {
   MicConsentModal,
@@ -68,11 +71,20 @@ function isPopout(): boolean {
 }
 
 function MainColumn({ voice }: { voice: ReturnType<typeof useVoice> }) {
+  const friendsHome = useAppStore((s) => s.friendsHome);
   const activeChannelId = useAppStore((s) => s.activeChannelId);
   const channelsByServer = useAppStore((s) => s.channelsByServer);
   const channel = Object.values(channelsByServer)
     .flat()
     .find((c) => c.id === activeChannelId);
+
+  if (friendsHome) {
+    return (
+      <div className="main-column">
+        <DmMessageView />
+      </div>
+    );
+  }
 
   return (
     <div className="main-column">
@@ -88,6 +100,7 @@ function MainColumn({ voice }: { voice: ReturnType<typeof useVoice> }) {
 function MainApp() {
   const user = useAppStore((s) => s.user);
   const bootstrapped = useAppStore((s) => s.bootstrapped);
+  const friendsHome = useAppStore((s) => s.friendsHome);
   const bootstrap = useAppStore((s) => s.bootstrap);
   const selectChannel = useAppStore((s) => s.selectChannel);
   const voiceChannelId = useAppStore((s) => s.voiceChannelId);
@@ -138,28 +151,51 @@ function MainApp() {
   }
 
   return (
-    <div className="app-shell">
-      <ServerRail />
-      <div className="sidebar-column">
-        <ChannelSidebar speakingIds={voice.speakingIds} onJoinVoice={onJoinVoice} />
-        <VoicePanel voice={voice} />
+    <div className="app-root">
+      <div className={`app-shell${friendsHome ? " friends-layout" : ""}`}>
+        <ServerRail />
+        <div className="sidebar-column">
+          {friendsHome ? (
+            <FriendsSidebar />
+          ) : (
+            <ChannelSidebar
+              speakingIds={voice.speakingIds}
+              onJoinVoice={onJoinVoice}
+              voiceHandlers={{
+                applyUserMic: voice.applyUserMic,
+                applyUserVideoHide: voice.applyUserVideoHide,
+              }}
+            />
+          )}
+          <VoicePanel voice={voice} />
+        </div>
+        <MainColumn voice={voice} />
+        {!friendsHome && (
+          <MemberList
+            voice={{
+              applyUserMic: voice.applyUserMic,
+              applyUserVideoHide: voice.applyUserVideoHide,
+            }}
+          />
+        )}
       </div>
-      <MainColumn voice={voice} />
-      <SoftSuspense>
-        <CreateServerModal />
-        <JoinInviteModal />
-        <ServerSettingsModal />
-        <ChannelSettingsModal />
-        <UserSettingsModal />
-      </SoftSuspense>
-      <MicConsentModal
-        open={pendingVoiceId != null}
-        busy={micBusy}
-        onCancel={() => setPendingVoiceId(null)}
-        onContinue={() => {
-          if (pendingVoiceId) void joinVoice(pendingVoiceId);
-        }}
-      />
+      <div className="app-overlays">
+        <SoftSuspense>
+          <CreateServerModal />
+          <JoinInviteModal />
+          <ServerSettingsModal />
+          <ChannelSettingsModal />
+          <UserSettingsModal />
+        </SoftSuspense>
+        <MicConsentModal
+          open={pendingVoiceId != null}
+          busy={micBusy}
+          onCancel={() => setPendingVoiceId(null)}
+          onContinue={() => {
+            if (pendingVoiceId) void joinVoice(pendingVoiceId);
+          }}
+        />
+      </div>
     </div>
   );
 }

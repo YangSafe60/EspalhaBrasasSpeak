@@ -1,12 +1,15 @@
 # Local Windows LiveKit (no Docker)
 port: 7880
+# Bind all interfaces so WebView2/Tauri can complete ICE against 127.0.0.1.
 bind_addresses:
-  - 127.0.0.1
+  - 0.0.0.0
 rtc:
   tcp_port: 7881
   port_range_start: 50000
   port_range_end: 50100
   use_external_ip: false
+  # Critical for local desktop clients — wrong/container IPs cause
+  # "could not establish pc connection" in Tauri WebView2.
   node_ip: 127.0.0.1
 keys:
   # Must match LIVEKIT_API_KEY / LIVEKIT_API_SECRET (secret >= 32 chars)
