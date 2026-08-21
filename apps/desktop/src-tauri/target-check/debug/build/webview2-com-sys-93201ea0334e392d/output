@@ -1,0 +1,2 @@
+cargo:rustc-link-search=native=D:\VSCode\RandomThings\SpeakApp\apps\desktop\src-tauri\target-check\debug\build\webview2-com-sys-93201ea0334e392d\out\x64
+cargo:rustc-link-lib=advapi32

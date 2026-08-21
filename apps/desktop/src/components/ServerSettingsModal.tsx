@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { CATBOX_UPLOAD_HINT } from "../lib/uploadHints";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useAppStore } from "../store/appStore";
 import { Perm, ROLE_PERM_GROUPS } from "../types";
 
-type Tab = "branding" | "roles" | "invites";
+type Tab = "branding" | "roles" | "invites" | "danger";
 
 const DEFAULT_NEW_ROLE_PERMS =
   Perm.VIEW_CHANNEL |
@@ -22,6 +23,7 @@ export function ServerSettingsModal() {
   const servers = useAppStore((s) => s.servers);
   const rolesByServer = useAppStore((s) => s.rolesByServer);
   const updateServer = useAppStore((s) => s.updateServer);
+  const deleteServer = useAppStore((s) => s.deleteServer);
   const createRole = useAppStore((s) => s.createRole);
   const updateRole = useAppStore((s) => s.updateRole);
   const deleteRole = useAppStore((s) => s.deleteRole);
@@ -50,8 +52,12 @@ export function ServerSettingsModal() {
     name: string;
   } | null>(null);
   const [deletingRole, setDeletingRole] = useState(false);
+  const [confirmServerName, setConfirmServerName] = useState("");
+  const [deletingServer, setDeletingServer] = useState(false);
 
+  const user = useAppStore((s) => s.user);
   const server = servers.find((s) => s.id === activeServerId);
+  const isOwner = Boolean(server && user && server.owner_id === user.id);
   const roles = useMemo(() => {
     const list = activeServerId ? rolesByServer[activeServerId] || [] : [];
     return list.slice().sort((a, b) => b.position - a.position);
@@ -68,15 +74,18 @@ export function ServerSettingsModal() {
     setInviteCode(null);
     setMsg(null);
     setErr(null);
+    setBusy(false);
     setSelectedRoleId(null);
     setRoleName("");
+    setConfirmServerName("");
+    setDeletingServer(false);
     void (async () => {
       await loadRoles(activeServerId);
       const loaded = useAppStore.getState().rolesByServer[activeServerId] || [];
       const everyone = loaded.find((r) => r.is_everyone) || loaded[0];
       if (everyone) {
         setSelectedRoleId(everyone.id);
-        setDraftPerms(everyone.permissions);
+        setDraftPerms(Number(everyone.permissions) || 0);
         setDraftRoleName(everyone.name);
         setDraftRoleColor(everyone.color);
       }
@@ -85,7 +94,7 @@ export function ServerSettingsModal() {
 
   useEffect(() => {
     if (!selectedRole) return;
-    setDraftPerms(selectedRole.permissions);
+    setDraftPerms(Number(selectedRole.permissions) || 0);
     setDraftRoleName(selectedRole.name);
     setDraftRoleColor(selectedRole.color);
     setMsg(null);
@@ -142,6 +151,22 @@ export function ServerSettingsModal() {
     }
   }
 
+  async function onDeleteServer() {
+    if (!server || !isOwner) return;
+    if (confirmServerName !== server.name) {
+      setErr("Type the server name to confirm.");
+      return;
+    }
+    setDeletingServer(true);
+    setErr(null);
+    try {
+      await deleteServer(server.id);
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : "Failed to delete server");
+      setDeletingServer(false);
+    }
+  }
+
   async function saveBranding(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -183,18 +208,25 @@ export function ServerSettingsModal() {
         </header>
 
         <div className="tabs">
-          {(["branding", "roles", "invites"] as Tab[]).map((t) => (
+          {(
+            [
+              "branding",
+              "roles",
+              "invites",
+              ...(isOwner ? (["danger"] as Tab[]) : []),
+            ] as Tab[]
+          ).map((t) => (
             <button
               key={t}
               type="button"
-              className={tab === t ? "active" : ""}
+              className={`${tab === t ? "active" : ""}${t === "danger" ? " danger-tab" : ""}`}
               onClick={() => {
                 setTab(t);
                 setMsg(null);
                 setErr(null);
               }}
             >
-              {t}
+              {t === "danger" ? "Delete server" : t}
             </button>
           ))}
         </div>
@@ -209,24 +241,72 @@ export function ServerSettingsModal() {
               Accent color
               <input type="color" value={accent} onChange={(e) => setAccent(e.target.value)} />
             </label>
-            <label>
-              Icon URL
-              <input value={iconUrl} onChange={(e) => setIconUrl(e.target.value)} />
-            </label>
-            <input
-              type="file"
-              accept="image/*"
-              onChange={(e) => void onUpload(e.target.files?.[0] || null, "icon")}
-            />
-            <label>
-              Banner URL
-              <input value={bannerUrl} onChange={(e) => setBannerUrl(e.target.value)} />
-            </label>
-            <input
-              type="file"
-              accept="image/*"
-              onChange={(e) => void onUpload(e.target.files?.[0] || null, "banner")}
-            />
+            <div className="settings-section">
+              <h4>Server icon</h4>
+              <div className="row gap-sm" style={{ alignItems: "center" }}>
+                <div
+                  className="avatar-edit"
+                  style={
+                    iconUrl
+                      ? { backgroundImage: `url(${iconUrl})`, pointerEvents: "none" }
+                      : { pointerEvents: "none" }
+                  }
+                  aria-hidden
+                >
+                  {!iconUrl && (name.charAt(0) || "?").toUpperCase()}
+                </div>
+                <label className="btn">
+                  Upload
+                  <input
+                    type="file"
+                    accept="image/*"
+                    hidden
+                    onChange={(e) => void onUpload(e.target.files?.[0] || null, "icon")}
+                  />
+                </label>
+                {iconUrl && (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => setIconUrl("")}
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="settings-section">
+              <h4>Banner</h4>
+              <div className="row gap-sm" style={{ alignItems: "center" }}>
+                {bannerUrl ? (
+                  <div
+                    className="banner-preview"
+                    style={{ backgroundImage: `url(${bannerUrl})` }}
+                  />
+                ) : (
+                  <p className="muted tiny">No banner yet.</p>
+                )}
+                <label className="btn">
+                  Upload
+                  <input
+                    type="file"
+                    accept="image/*"
+                    hidden
+                    onChange={(e) => void onUpload(e.target.files?.[0] || null, "banner")}
+                  />
+                </label>
+                {bannerUrl && (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => setBannerUrl("")}
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+            </div>
+            <p className="muted tiny">{CATBOX_UPLOAD_HINT}</p>
             <button type="submit" className="btn primary" disabled={busy}>
               Save branding
             </button>
@@ -324,21 +404,30 @@ export function ServerSettingsModal() {
                   {ROLE_PERM_GROUPS.map((group) => (
                     <section key={group.title} className="role-perm-group">
                       <h4>{group.title}</h4>
-                      <div className="perm-table">
+                      <div className="role-perm-list">
                         {group.perms.map((p) => {
                           const on = (draftPerms & p.bit) !== 0;
                           return (
-                            <label key={p.bit} className="perm-toggle-row">
-                              <div>
-                                <strong>{p.label}</strong>
-                                <span className="muted tiny">{p.description}</span>
+                            <button
+                              key={p.bit}
+                              type="button"
+                              role="switch"
+                              aria-checked={on}
+                              className={`role-perm-item${on ? " is-on" : ""}`}
+                              onClick={() => togglePerm(p.bit)}
+                            >
+                              <div className="role-perm-copy">
+                                <div className="role-perm-head">
+                                  <strong>{p.label}</strong>
+                                  <span
+                                    className={`perm-switch${on ? " on" : ""}`}
+                                    role="presentation"
+                                    aria-hidden
+                                  />
+                                </div>
+                                <p>{p.description}</p>
                               </div>
-                              <input
-                                type="checkbox"
-                                checked={on}
-                                onChange={() => togglePerm(p.bit)}
-                              />
-                            </label>
+                            </button>
                           );
                         })}
                       </div>
@@ -381,8 +470,43 @@ export function ServerSettingsModal() {
           </div>
         )}
 
+        {tab === "danger" && isOwner && (
+          <div className="stack settings-form danger-zone">
+            <div className="danger-card">
+              <div className="confirm-icon" aria-hidden>
+                !
+              </div>
+              <h4>Delete Server</h4>
+              <p className="muted">
+                Are you sure you want to delete <strong>{server?.name}</strong>? Channels,
+                messages, roles, and members will be permanently removed. This cannot be
+                undone.
+              </p>
+              <label>
+                Type <strong>{server?.name}</strong> to confirm
+                <input
+                  value={confirmServerName}
+                  onChange={(e) => setConfirmServerName(e.target.value)}
+                  placeholder={server?.name}
+                />
+              </label>
+              {err && <p className="form-error">{err}</p>}
+              <button
+                type="button"
+                className="btn danger"
+                disabled={
+                  deletingServer || !server || confirmServerName !== server.name
+                }
+                onClick={() => void onDeleteServer()}
+              >
+                {deletingServer ? "Deleting…" : "Delete Server"}
+              </button>
+            </div>
+          </div>
+        )}
+
         {msg && <p className="form-hint">{msg}</p>}
-        {err && <p className="form-error">{err}</p>}
+        {err && tab !== "danger" && <p className="form-error">{err}</p>}
       </div>
 
       <ConfirmDialog

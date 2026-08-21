@@ -212,7 +212,8 @@ export const ROLE_PERM_GROUPS: {
       {
         bit: Perm.VIEW_CHANNEL,
         label: "View Channels",
-        description: "Allow members to view channels by default (unless a channel denies it).",
+        description:
+          "Allows members to view channels by default (excluding private channels).",
       },
       {
         bit: Perm.MANAGE_CHANNELS,

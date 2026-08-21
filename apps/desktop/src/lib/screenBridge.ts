@@ -1,12 +1,10 @@
 /**
  * Cross-window screen pop-out bridge.
- *
- * Tauri webviews don't share BroadcastChannel, and WebRTC between them is
- * flaky — so we relay JPEG frames from the main window via the Rust backend.
+ * Electron: IPC relay between BrowserWindows.
+ * Fallback: BroadcastChannel (same process / browser).
  */
 
-const TAURI_SIGNAL = "speakapp://screen-signal";
-const TAURI_FRAME = "speakapp://popout-frame";
+import { getElectronAPI } from "./desktop";
 
 type Signal =
   | { type: "request"; trackSid: string }
@@ -22,46 +20,24 @@ const relays = new Map<
 
 let hostReady: Promise<void> | null = null;
 
-function isTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
-
 async function publishSignal(msg: Signal) {
-  if (isTauri()) {
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("relay_screen_signal", { payload: msg });
-      return;
-    } catch {
-      /* fall through */
-    }
-    try {
-      const { emit } = await import("@tauri-apps/api/event");
-      await emit(TAURI_SIGNAL, msg);
-    } catch {
-      /* ignore */
-    }
-  } else if (typeof BroadcastChannel !== "undefined") {
+  const electron = getElectronAPI();
+  if (electron) {
+    await electron.relaySignal(msg);
+    return;
+  }
+  if (typeof BroadcastChannel !== "undefined") {
     new BroadcastChannel("speakapp-screen-bridge").postMessage(msg);
   }
 }
 
 async function publishFrame(payload: FramePayload) {
-  if (isTauri()) {
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("relay_popout_frame", { payload });
-      return;
-    } catch {
-      /* fall through */
-    }
-    try {
-      const { emit } = await import("@tauri-apps/api/event");
-      await emit(TAURI_FRAME, payload);
-    } catch {
-      /* ignore */
-    }
-  } else if (typeof BroadcastChannel !== "undefined") {
+  const electron = getElectronAPI();
+  if (electron) {
+    await electron.relayFrame(payload);
+    return;
+  }
+  if (typeof BroadcastChannel !== "undefined") {
     new BroadcastChannel("speakapp-screen-bridge").postMessage({
       type: "frame",
       ...payload,
@@ -74,14 +50,14 @@ type Unlisten = () => void;
 async function subscribeSignals(handler: (msg: Signal) => void): Promise<Unlisten> {
   const cleanups: Unlisten[] = [];
 
-  if (isTauri()) {
-    try {
-      const { listen } = await import("@tauri-apps/api/event");
-      const un = await listen<Signal>(TAURI_SIGNAL, (e) => handler(e.payload));
-      cleanups.push(un);
-    } catch {
-      /* ignore */
-    }
+  const electron = getElectronAPI();
+  if (electron) {
+    cleanups.push(
+      electron.onSignal((payload) => {
+        const msg = payload as Signal;
+        if (msg?.type === "request" || msg?.type === "stop") handler(msg);
+      }),
+    );
   }
 
   if (typeof BroadcastChannel !== "undefined") {
@@ -101,14 +77,14 @@ async function subscribeFrames(
 ): Promise<Unlisten> {
   const cleanups: Unlisten[] = [];
 
-  if (isTauri()) {
-    try {
-      const { listen } = await import("@tauri-apps/api/event");
-      const un = await listen<FramePayload>(TAURI_FRAME, (e) => handler(e.payload));
-      cleanups.push(un);
-    } catch {
-      /* ignore */
-    }
+  const electron = getElectronAPI();
+  if (electron) {
+    cleanups.push(
+      electron.onFrame((payload) => {
+        const msg = payload as FramePayload;
+        if (msg?.trackSid && msg.frame) handler(msg);
+      }),
+    );
   }
 
   if (typeof BroadcastChannel !== "undefined") {
@@ -249,16 +225,12 @@ export async function consumeScreenInPopout(
   };
 }
 
-/** Keep Espalha Brasas focused after picking a share target (Discord-like). */
+/** Keep Espalha Brasas focused after picking a share target. */
 export async function focusMainWindow() {
-  if (!isTauri()) {
-    window.focus();
+  const electron = getElectronAPI();
+  if (electron) {
+    await electron.focusMain();
     return;
   }
-  try {
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    await getCurrentWindow().setFocus();
-  } catch {
-    window.focus();
-  }
+  window.focus();
 }

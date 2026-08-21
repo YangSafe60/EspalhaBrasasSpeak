@@ -1,0 +1,9 @@
+D:\VSCode\RandomThings\SpeakApp\apps\desktop\src-tauri\target-check\debug\deps\tokio_rustls-abd2c238a33c3c83.d: C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-rustls-0.26.4\src\lib.rs C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-rustls-0.26.4\src\client.rs C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-rustls-0.26.4\src\common\mod.rs C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-rustls-0.26.4\src\common\handshake.rs C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-rustls-0.26.4\src\server.rs
+
+D:\VSCode\RandomThings\SpeakApp\apps\desktop\src-tauri\target-check\debug\deps\libtokio_rustls-abd2c238a33c3c83.rmeta: C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-rustls-0.26.4\src\lib.rs C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-rustls-0.26.4\src\client.rs C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-rustls-0.26.4\src\common\mod.rs C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-rustls-0.26.4\src\common\handshake.rs C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-rustls-0.26.4\src\server.rs
+
+C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-rustls-0.26.4\src\lib.rs:
+C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-rustls-0.26.4\src\client.rs:
+C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-rustls-0.26.4\src\common\mod.rs:
+C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-rustls-0.26.4\src\common\handshake.rs:
+C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-rustls-0.26.4\src\server.rs:

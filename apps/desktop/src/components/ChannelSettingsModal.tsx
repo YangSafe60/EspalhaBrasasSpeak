@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { CATBOX_UPLOAD_HINT } from "../lib/uploadHints";
 import { useAppStore } from "../store/appStore";
 import {
   ATMOSPHERE_PRESETS,
@@ -97,6 +98,7 @@ export function ChannelSettingsModal() {
     setTextColor(channel.text_color || "#e8eef2");
     setAtmosphere((channel.atmosphere as Atmosphere) || "");
     setUserLimit(channel.user_limit ?? 0);
+    setBusy(false);
     setMsg(null);
     setErr(null);
     setConfirmName("");
@@ -163,12 +165,27 @@ export function ChannelSettingsModal() {
         name: name.trim(),
         topic: isText ? topic || null : undefined,
         background_url: isText ? backgroundUrl || null : undefined,
-        background_blur: isText ? blur : undefined,
-        background_dim: isText ? dim : undefined,
-        text_color: isText ? textColor || null : undefined,
-        atmosphere: isText ? atmosphere || null : undefined,
+        // No image → clear atmosphere extras so the chat returns to the default look.
+        background_blur: isText ? (backgroundUrl ? blur : 0) : undefined,
+        background_dim: isText ? (backgroundUrl ? dim : 0) : undefined,
+        text_color: isText
+          ? backgroundUrl
+            ? textColor || null
+            : null
+          : undefined,
+        atmosphere: isText
+          ? backgroundUrl
+            ? atmosphere || null
+            : null
+          : undefined,
         user_limit: isVoice ? Math.max(0, Math.floor(userLimit)) : undefined,
       });
+      if (isText && !backgroundUrl) {
+        setAtmosphere("");
+        setBlur(0);
+        setDim(0);
+        setTextColor("#e8eef2");
+      }
       setMsg("Changes saved.");
     } catch (error) {
       setErr(error instanceof Error ? error.message : "Update failed");
@@ -221,8 +238,10 @@ export function ChannelSettingsModal() {
       return;
     }
     setBusy(true);
+    setErr(null);
     try {
       await deleteChannel(channel.id);
+      setBusy(false);
       setModal(null);
     } catch (error) {
       setErr(error instanceof Error ? error.message : "Delete failed");
@@ -324,23 +343,47 @@ export function ChannelSettingsModal() {
                   </label>
                   <div className="settings-section">
                     <h4>Atmosphere</h4>
-                    <label>
-                      Background image URL
-                      <input
-                        value={backgroundUrl}
-                        onChange={(e) => setBackgroundUrl(e.target.value)}
-                      />
-                    </label>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={async (e) => {
-                        const file = e.target.files?.[0];
-                        if (!file) return;
-                        const up = await uploadFile(file);
-                        setBackgroundUrl(up.url);
-                      }}
-                    />
+                    <div className="row gap-sm" style={{ alignItems: "center" }}>
+                      {backgroundUrl ? (
+                        <div
+                          className="banner-preview"
+                          style={{ backgroundImage: `url(${backgroundUrl})` }}
+                        />
+                      ) : (
+                        <p className="muted tiny">No background image.</p>
+                      )}
+                      <label className="btn">
+                        Upload
+                        <input
+                          type="file"
+                          accept="image/*"
+                          hidden
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            const up = await uploadFile(file);
+                            setBackgroundUrl(up.url);
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
+                      {backgroundUrl && (
+                        <button
+                          type="button"
+                          className="btn"
+                          onClick={() => {
+                            setBackgroundUrl("");
+                            setAtmosphere("");
+                            setBlur(0);
+                            setDim(0);
+                            setTextColor("#e8eef2");
+                          }}
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                    <p className="muted tiny">{CATBOX_UPLOAD_HINT}</p>
                     <label>
                       Blur ({blur}px)
                       <input
@@ -400,15 +443,63 @@ export function ChannelSettingsModal() {
                   <p className="muted tiny">
                     Limit how many users can join this voice channel. 0 means unlimited.
                   </p>
-                  <label>
+                  <label className="number-field">
                     User Limit
-                    <input
-                      type="number"
-                      min={0}
-                      max={99}
-                      value={userLimit}
-                      onChange={(e) => setUserLimit(Number(e.target.value) || 0)}
-                    />
+                    <div className="number-stepper">
+                      <input
+                        type="number"
+                        min={0}
+                        max={99}
+                        value={userLimit}
+                        onChange={(e) =>
+                          setUserLimit(
+                            Math.min(99, Math.max(0, Number(e.target.value) || 0)),
+                          )
+                        }
+                      />
+                      <div className="number-stepper-btns">
+                        <button
+                          type="button"
+                          className="number-step"
+                          aria-label="Increase user limit"
+                          disabled={busy || userLimit >= 99}
+                          onClick={() =>
+                            setUserLimit((v) => Math.min(99, v + 1))
+                          }
+                        >
+                          <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden>
+                            <path
+                              d="M2 8l4-4 4 4"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.6"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                        </button>
+                        <button
+                          type="button"
+                          className="number-step"
+                          aria-label="Decrease user limit"
+                          disabled={busy || userLimit <= 0}
+                          onClick={() =>
+                            setUserLimit((v) => Math.max(0, v - 1))
+                          }
+                        >
+                          <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden>
+                            <path
+                              d="M2 4l4 4 4-4"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.6"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
                   </label>
                 </div>
               )}

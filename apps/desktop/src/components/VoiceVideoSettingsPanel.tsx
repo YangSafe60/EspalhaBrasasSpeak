@@ -7,6 +7,11 @@ import {
   saveMediaSettings,
   type MediaSettings,
 } from "../lib/mediaSettings";
+import {
+  playVoiceJoinSound,
+  setVoiceSoundsEnabled,
+  voiceSoundsEnabled,
+} from "../lib/voiceSounds";
 import { useAppStore } from "../store/appStore";
 
 function MicMeter({
@@ -160,6 +165,7 @@ export function VoiceVideoSettingsPanel() {
   const [videoInputs, setVideoInputs] = useState<MediaDeviceInfo[]>([]);
   const [permError, setPermError] = useState<string | null>(null);
   const [testingOutput, setTestingOutput] = useState(false);
+  const [joinSounds, setJoinSounds] = useState(() => voiceSoundsEnabled());
 
   const refreshDevices = useCallback(async () => {
     const ok = await ensureMediaPermissions();
@@ -381,6 +387,19 @@ export function VoiceVideoSettingsPanel() {
                 muted: e.target.checked,
               })
             }
+          />
+        </label>
+        <label className="toggle-row">
+          <span>Join / leave / share sounds</span>
+          <input
+            type="checkbox"
+            checked={joinSounds}
+            onChange={(e) => {
+              const on = e.target.checked;
+              setJoinSounds(on);
+              setVoiceSoundsEnabled(on);
+              if (on) playVoiceJoinSound();
+            }}
           />
         </label>
         <button type="button" className="btn ghost sm" onClick={() => void refreshDevices()}>

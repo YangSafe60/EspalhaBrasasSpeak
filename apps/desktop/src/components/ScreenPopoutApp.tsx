@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import logoMark from "../assets/logo-mark-square.png";
+import logoMark from "../assets/logo-mark.png";
 import { consumeScreenInPopout } from "../lib/screenBridge";
 
 function trackParam(): string {

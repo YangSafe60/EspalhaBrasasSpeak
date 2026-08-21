@@ -87,6 +87,7 @@ interface AppState {
   createServer: (name: string) => Promise<Server>;
   joinInvite: (code: string) => Promise<Server>;
   updateServer: (id: string, body: Partial<Server>) => Promise<void>;
+  deleteServer: (id: string) => Promise<void>;
   loadRoles: (serverId: string) => Promise<void>;
   loadRules: (serverId: string) => Promise<void>;
   createRole: (
@@ -203,6 +204,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const user = await api<UserPublic>("/api/auth/me");
       set({ user });
+      // Hard quit leaves a stale voice_states row; we are never in LiveKit on cold start.
+      try {
+        await api("/api/voice/state", {
+          method: "PUT",
+          body: { channel_id: null, streaming: false },
+        });
+      } catch {
+        /* best effort */
+      }
+      set({
+        voiceChannelId: null,
+        streaming: false,
+        voiceStates: get().voiceStates.filter((v) => v.user_id !== user.id),
+      });
       await get().loadServers();
     } catch {
       clearTokens();
@@ -352,10 +367,56 @@ export const useAppStore = create<AppState>((set, get) => ({
     }));
   },
 
+  deleteServer: async (id) => {
+    await api(`/api/servers/${id}`, { method: "DELETE" });
+    const state = get();
+    const servers = state.servers.filter((s) => s.id !== id);
+    const voiceInDeleted = (state.channelsByServer[id] || []).some(
+      (c) => c.id === state.voiceChannelId,
+    );
+    const {
+      [id]: _channels,
+      ...channelsByServer
+    } = state.channelsByServer;
+    const { [id]: _members, ...membersByServer } = state.membersByServer;
+    const { [id]: _roles, ...rolesByServer } = state.rolesByServer;
+    const { [id]: _rules, ...rulesByServer } = state.rulesByServer;
+    void _channels;
+    void _members;
+    void _roles;
+    void _rules;
+
+    const switchingAway = state.activeServerId === id;
+    const nextServerId = switchingAway ? servers[0]?.id ?? null : state.activeServerId;
+
+    set({
+      servers,
+      channelsByServer,
+      membersByServer,
+      rolesByServer,
+      rulesByServer,
+      activeServerId: nextServerId,
+      activeChannelId: switchingAway ? null : state.activeChannelId,
+      voiceChannelId: voiceInDeleted ? null : state.voiceChannelId,
+      modal: null,
+      settingsChannelId: null,
+    });
+
+    if (nextServerId) {
+      await get().selectServer(nextServerId);
+    }
+  },
+
   loadRoles: async (serverId) => {
     const roles = await api<Role[]>(`/api/servers/${serverId}/roles`);
     set((s) => ({
-      rolesByServer: { ...s.rolesByServer, [serverId]: roles },
+      rolesByServer: {
+        ...s.rolesByServer,
+        [serverId]: roles.map((role) => ({
+          ...role,
+          permissions: Number(role.permissions) || 0,
+        })),
+      },
     }));
   },
 
@@ -732,15 +793,26 @@ export const useAppStore = create<AppState>((set, get) => ({
                 },
               ]
             : others;
-          const local =
-            s.user?.id === event.user_id
-              ? {
-                  voiceChannelId: event.channel_id,
-                  muted: event.muted,
-                  deafened: event.deafened,
-                  streaming: event.streaming,
-                }
-              : {};
+          // LiveKit join/leave owns local voiceChannelId. WS only syncs flags while
+          // already connected, or clears membership when the server says we left.
+          let local: Partial<AppState> = {};
+          if (s.user?.id === event.user_id) {
+            if (!event.channel_id) {
+              local = {
+                voiceChannelId: null,
+                streaming: false,
+                muted: event.muted,
+                deafened: event.deafened,
+              };
+            } else if (s.voiceChannelId) {
+              local = {
+                voiceChannelId: event.channel_id,
+                muted: event.muted,
+                deafened: event.deafened,
+                streaming: event.streaming,
+              };
+            }
+          }
           return { voiceStates: next, ...local };
         });
         break;

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { CATBOX_UPLOAD_HINT } from "../lib/uploadHints";
 import { useAppStore } from "../store/appStore";
 import { VoiceVideoSettingsPanel } from "./VoiceVideoSettingsPanel";
 
@@ -23,7 +24,7 @@ export function UserSettingsModal() {
 
   const [tab, setTab] = useState<Tab>("account");
   const [displayName, setDisplayName] = useState("");
-  const [avatarUrl, setAvatarUrl] = useState("");
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [compact, setCompact] = useState(() => readBool(STORAGE_COMPACT, false));
   const [notifySound, setNotifySound] = useState(() =>
     readBool(STORAGE_NOTIFY, true),
@@ -36,7 +37,7 @@ export function UserSettingsModal() {
   useEffect(() => {
     if (modal !== "user-settings" || !user) return;
     setDisplayName(user.display_name || "");
-    setAvatarUrl(user.avatar_url || "");
+    setAvatarUrl(user.avatar_url || null);
     setTab("account");
     setMsg(null);
     setErr(null);
@@ -62,7 +63,6 @@ export function UserSettingsModal() {
     try {
       await updateProfile({
         display_name: displayName.trim() || user.display_name,
-        avatar_url: avatarUrl.trim() || null,
       });
       setMsg("Profile saved.");
     } catch (error) {
@@ -83,6 +83,21 @@ export function UserSettingsModal() {
       setMsg("Avatar updated.");
     } catch (error) {
       setErr(error instanceof Error ? error.message : "Upload failed");
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  async function removeAvatar() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await updateProfile({ avatar_url: null });
+      setAvatarUrl(null);
+      setMsg("Avatar removed.");
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : "Failed to remove avatar");
     } finally {
       setBusy(false);
     }
@@ -159,6 +174,7 @@ export function UserSettingsModal() {
                   }
                   onClick={() => fileRef.current?.click()}
                   title="Change avatar"
+                  disabled={busy}
                 >
                   {!avatarUrl &&
                     (displayName.charAt(0) || user.username.charAt(0) || "?").toUpperCase()}
@@ -166,6 +182,29 @@ export function UserSettingsModal() {
                 <div>
                   <strong>{user.display_name}</strong>
                   <p className="muted">@{user.username}</p>
+                  <div className="row gap-sm" style={{ marginTop: 8 }}>
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={busy}
+                      onClick={() => fileRef.current?.click()}
+                    >
+                      Change avatar
+                    </button>
+                    {avatarUrl && (
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={busy}
+                        onClick={() => void removeAvatar()}
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  <p className="muted tiny" style={{ marginTop: 8, maxWidth: 280 }}>
+                    {CATBOX_UPLOAD_HINT}
+                  </p>
                 </div>
                 <input
                   ref={fileRef}
@@ -183,14 +222,6 @@ export function UserSettingsModal() {
                   onChange={(e) => setDisplayName(e.target.value)}
                   maxLength={64}
                   required
-                />
-              </label>
-              <label>
-                Avatar URL
-                <input
-                  value={avatarUrl}
-                  onChange={(e) => setAvatarUrl(e.target.value)}
-                  placeholder="Upload above or paste a URL"
                 />
               </label>
               <p className="muted tiny">Username can’t be changed yet.</p>

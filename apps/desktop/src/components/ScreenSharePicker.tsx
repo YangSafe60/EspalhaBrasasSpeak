@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
+import { listDesktopShareSources } from "../lib/screenShare";
 
 export type ShareSource = {
   id: string;
@@ -12,46 +14,49 @@ type Tab = "screen" | "window";
 type Props = {
   open: boolean;
   busy?: boolean;
+  mode?: "new" | "add" | "replace";
+  activeSourceIds?: string[];
   onClose: () => void;
-  onPickSource: (source: ShareSource) => void;
+  onPickSource: (source: ShareSource, opts: { systemAudio: boolean }) => void;
 };
 
 export function ScreenSharePicker({
   open,
   busy,
+  mode = "new",
+  activeSourceIds = [],
   onClose,
   onPickSource,
 }: Props) {
   const [tab, setTab] = useState<Tab>("screen");
   const [sources, setSources] = useState<ShareSource[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const [systemAudio, setSystemAudio] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const activeSet = useMemo(() => new Set(activeSourceIds), [activeSourceIds]);
 
   useEffect(() => {
     if (!open) return;
     setSelected(null);
     setError(null);
     setTab("screen");
+    setSystemAudio(true);
     setSources([]);
     setLoading(true);
 
     let cancelled = false;
     void (async () => {
       try {
-        const { invoke } = await import("@tauri-apps/api/core");
-        const list = await invoke<ShareSource[]>("list_share_sources");
+        const list = await listDesktopShareSources({
+          types: ["screen", "window"],
+        });
         if (cancelled) return;
         setSources(Array.isArray(list) ? list : []);
       } catch (e) {
         if (cancelled) return;
-        const msg =
-          e instanceof Error
-            ? e.message
-            : typeof e === "string"
-              ? e
-              : "Could not list screens. Restart the desktop app (not the browser).";
-        setError(msg);
+        setError(e instanceof Error ? e.message : "Could not list screens");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -61,6 +66,15 @@ export function ScreenSharePicker({
       cancelled = true;
     };
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !busy) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, busy, onClose]);
 
   const filtered = useMemo(
     () => sources.filter((s) => s.kind === tab),
@@ -72,23 +86,34 @@ export function ScreenSharePicker({
   function confirm() {
     const src = sources.find((s) => s.id === selected);
     if (!src || busy) return;
-    onPickSource(src);
+    onPickSource(src, { systemAudio });
   }
 
-  return (
+  return createPortal(
     <div className="modal-backdrop share-picker-backdrop" onClick={onClose}>
       <div
         className="modal share-picker-modal"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
+        aria-modal="true"
         aria-label="Share your screen"
       >
         <header className="modal-header">
           <div>
-            <h3>Share Your Screen</h3>
-            <p className="muted tiny">Pick a screen or window to go live</p>
+            <h3>
+              {mode === "replace"
+                ? "Change Screen Share"
+                : mode === "add"
+                  ? "Share Another Screen"
+                  : "Share Your Screen"}
+            </h3>
           </div>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={onClose}
+            aria-label="Close"
+          >
             ✕
           </button>
         </header>
@@ -113,13 +138,7 @@ export function ScreenSharePicker({
         {loading ? (
           <p className="muted share-loading">Scanning displays…</p>
         ) : error ? (
-          <div className="stack share-browser-fallback">
-            <p className="form-error">{error}</p>
-            <p className="muted tiny">
-              Close any <code>localhost</code> browser tab. Use the native window
-              titled <strong>Espalha Brasas</strong> from <code>npm run desktop</code>.
-            </p>
-          </div>
+          <p className="form-error">{error}</p>
         ) : (
           <div className="share-grid">
             {filtered.length === 0 && (
@@ -127,35 +146,55 @@ export function ScreenSharePicker({
                 No {tab === "screen" ? "screens" : "windows"} found.
               </p>
             )}
-            {filtered.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                className={`share-card${selected === s.id ? " selected" : ""}`}
-                onClick={() => setSelected(s.id)}
-                onDoubleClick={() => {
-                  if (busy) return;
-                  setSelected(s.id);
-                  onPickSource(s);
-                }}
-              >
-                <div className="share-thumb">
-                  {s.thumbnail ? (
-                    <img src={s.thumbnail} alt="" />
-                  ) : (
-                    <span className="share-thumb-fallback">
-                      {s.kind === "screen" ? "Screen" : "Window"}
-                    </span>
-                  )}
-                </div>
-                <span className="share-card-name">{s.name}</span>
-              </button>
-            ))}
+            {filtered.map((s) => {
+              const live = activeSet.has(s.id);
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  className={`share-card${selected === s.id ? " selected" : ""}${live ? " is-live" : ""}`}
+                  onClick={() => setSelected(s.id)}
+                  onDoubleClick={() => {
+                    if (busy) return;
+                    setSelected(s.id);
+                    onPickSource(s, { systemAudio });
+                  }}
+                >
+                  <div className="share-thumb">
+                    {s.thumbnail ? (
+                      <img src={s.thumbnail} alt="" draggable={false} />
+                    ) : (
+                      <span className="share-thumb-fallback">No preview</span>
+                    )}
+                    {live && <span className="share-live-badge">Live</span>}
+                  </div>
+                  <span className="share-card-name" title={s.name}>
+                    {s.name}
+                    {live ? " (restart)" : ""}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         )}
 
+        <label className="share-audio-toggle">
+          <span>Share system audio</span>
+          <input
+            type="checkbox"
+            checked={systemAudio}
+            onChange={(e) => setSystemAudio(e.target.checked)}
+            disabled={busy}
+          />
+        </label>
+
         <footer className="share-picker-footer">
-          <button type="button" className="btn ghost" onClick={onClose} disabled={busy}>
+          <button
+            type="button"
+            className="btn ghost"
+            onClick={onClose}
+            disabled={busy}
+          >
             Cancel
           </button>
           <button
@@ -164,10 +203,19 @@ export function ScreenSharePicker({
             disabled={busy || !selected}
             onClick={confirm}
           >
-            {busy ? "Starting…" : "Go Live"}
+            {busy
+              ? "Starting…"
+              : selected && activeSet.has(selected)
+                ? "Restart"
+                : mode === "replace"
+                  ? "Switch"
+                  : mode === "add"
+                    ? "Add share"
+                    : "Go Live"}
           </button>
         </footer>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

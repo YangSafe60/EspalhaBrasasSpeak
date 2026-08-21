@@ -621,10 +621,7 @@ export function ChannelSidebar({ onJoinVoice, speakingIds = [] }: Props) {
   return (
     <aside className="channel-sidebar">
       <header className="sidebar-header">
-        <div>
-          <h2>{server.name}</h2>
-          <p className="muted">Drag to reorder · hover for settings</p>
-        </div>
+        <h2>{server.name}</h2>
         <div className="sidebar-header-actions">
           <button
             type="button"

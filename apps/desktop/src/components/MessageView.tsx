@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import logoMark from "../assets/logo-mark-square.png";
+import logoMark from "../assets/logo-mark.png";
+import { CATBOX_UPLOAD_HINT } from "../lib/uploadHints";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useAppStore } from "../store/appStore";
 import type { Channel, Message } from "../types";
@@ -99,9 +100,10 @@ export function MessageView() {
 
   const atmosphere = (channel.atmosphere || "") as Atmosphere;
   const preset = ATMOSPHERE_PRESETS[atmosphere];
-  const blur = channel.background_blur ?? preset?.blur ?? 0;
-  const dim = channel.background_dim ?? preset?.dim ?? 0.45;
-  const textColor = channel.text_color || undefined;
+  const hasBg = Boolean(channel.background_url);
+  const blur = hasBg ? (channel.background_blur ?? preset?.blur ?? 0) : 0;
+  const dim = hasBg ? (channel.background_dim ?? preset?.dim ?? 0.45) : 0;
+  const textColor = hasBg ? channel.text_color || undefined : undefined;
 
   async function onSubmit(e?: FormEvent) {
     e?.preventDefault();
@@ -180,19 +182,21 @@ export function MessageView() {
 
   return (
     <main
-      className={`message-view atmosphere-${atmosphere || "none"}`}
-      style={{ color: textColor }}
+      className={`message-view${hasBg ? ` atmosphere-${atmosphere || "none"}` : ""}`}
+      style={textColor ? { color: textColor } : undefined}
     >
-      {channel.background_url && (
-        <div
-          className="channel-bg"
-          style={{
-            backgroundImage: `url(${channel.background_url})`,
-            filter: `blur(${blur}px)`,
-          }}
-        />
+      {hasBg && channel.background_url && (
+        <>
+          <div
+            className="channel-bg"
+            style={{
+              backgroundImage: `url(${channel.background_url})`,
+              filter: `blur(${blur}px)`,
+            }}
+          />
+          <div className="channel-dim" style={{ opacity: dim }} />
+        </>
       )}
-      <div className="channel-dim" style={{ opacity: dim }} />
 
       <header className="message-header">
         <div>
@@ -390,13 +394,14 @@ export function MessageView() {
             {pendingFiles.map((f) => (
               <span key={f.id}>{f.name}</span>
             ))}
+            <p className="muted tiny pending-upload-hint">{CATBOX_UPLOAD_HINT}</p>
           </div>
         )}
         <form className="composer" onSubmit={(e) => void onSubmit(e)}>
           <button
             type="button"
             className="icon-btn"
-            title="Attach file"
+            title={`Attach file — ${CATBOX_UPLOAD_HINT}`}
             onClick={() => fileRef.current?.click()}
           >
             +

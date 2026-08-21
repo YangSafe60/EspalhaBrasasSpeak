@@ -1,0 +1,37 @@
+appId: com.espalhabrasas.desktop
+productName: Espalha Brasas
+copyright: Copyright © Espalha Brasas
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**/*
+  - electron/**/*
+  - package.json
+asar: true
+compression: maximum
+extraMetadata:
+  main: electron/main.mjs
+icon: build/icon.png
+win:
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: ${productName}-${version}-Setup.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+mac:
+  icon: build/icon.png
+  target:
+    - dmg
+  category: public.app-category.social-networking
+linux:
+  icon: build/icon.png
+  target:
+    - AppImage
+  category: Network

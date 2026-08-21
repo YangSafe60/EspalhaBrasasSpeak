@@ -1,4 +1,6 @@
 mod capture;
+#[cfg(windows)]
+mod win_media_permissions;
 
 use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -53,6 +55,8 @@ pub fn run() {
                         .build(),
                 )?;
             }
+            #[cfg(windows)]
+            win_media_permissions::install(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

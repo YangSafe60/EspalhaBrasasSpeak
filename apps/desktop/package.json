@@ -2,26 +2,30 @@
   "name": "espalha-brasas-desktop",
   "private": true,
   "version": "0.1.0",
+  "description": "Espalha Brasas desktop client",
+  "author": "Espalha Brasas",
   "type": "module",
+  "main": "electron/main.mjs",
   "scripts": {
-    "start": "tauri dev",
-    "desktop": "tauri dev",
+    "start": "node ./scripts/electron-dev.mjs",
+    "desktop": "node ./scripts/electron-dev.mjs",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "electron": "electron .",
+    "dist": "npm run build && electron-builder --config electron-builder.yml",
+    "dist:dir": "npm run build && electron-builder --config electron-builder.yml --dir"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.11.4",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.1.0",
+    "electron": "^37.2.6",
+    "electron-builder": "^26.15.3",
     "typescript": "~6.0.2",
     "vite": "^8.2.0"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.11.1",
-    "@tauri-apps/plugin-shell": "^2.3.5",
     "livekit-client": "^2.22.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

@@ -1,0 +1,1 @@
+cargo:rustc-env=MIME_TYPES_GENERATED_PATH=D:\VSCode\RandomThings\SpeakApp\apps\desktop\src-tauri\target-check\debug\build\mime_guess-fa28ea6cec6080e7\out\mime_types_generated.rs

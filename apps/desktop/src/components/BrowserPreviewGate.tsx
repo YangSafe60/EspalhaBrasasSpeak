@@ -1,13 +1,13 @@
 import type { ReactNode } from "react";
-import { isTauriApp } from "../lib/screenShare";
+import { isDesktopApp } from "../lib/desktop";
 import logoFull from "../assets/logo-full.png";
 
 /**
- * Vite serves the UI at localhost for Tauri to load — opening that URL in
- * Chrome/Edge has no native APIs (screen share, pop-outs, etc.).
+ * Vite serves the UI at localhost for Electron to load — opening that URL in
+ * Chrome/Edge has no native APIs (desktopCapturer, pop-outs, etc.).
  */
 export function BrowserPreviewGate({ children }: { children: ReactNode }) {
-  if (isTauriApp()) return <>{children}</>;
+  if (isDesktopApp()) return <>{children}</>;
 
   return (
     <div className="browser-gate">
@@ -22,7 +22,6 @@ export function BrowserPreviewGate({ children }: { children: ReactNode }) {
         <li>
           From <code>apps/desktop</code> run:
           <pre>npm run desktop</pre>
-          or <code>npm run tauri dev</code>
         </li>
         <li>
           Use the native window titled <strong>Espalha Brasas</strong> (not

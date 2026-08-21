@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Room,
-  RoomEvent,
-  Track,
+  getLivekit,
+  loadLivekit,
   type LocalTrack,
   type LocalTrackPublication,
+  type LocalVideoTrack,
   type RemoteTrack,
   type RemoteTrackPublication,
-  type LocalVideoTrack,
-} from "livekit-client";
-import { api } from "../api/client";
+  type Room,
+} from "../lib/livekit";
+import { api, getAccessToken, getApiBase } from "../api/client";
 import {
   inputGainFromSettings,
   loadMediaSettings,
@@ -23,24 +23,69 @@ import {
   focusMainWindow,
 } from "../lib/screenBridge";
 import {
+  captureElectronSource,
   isShareCancelError,
-  isTauriApp,
-  startTauriScreenTrack,
+  isDesktopApp,
 } from "../lib/screenShare";
+import {
+  playScreenShareStartSound,
+  playScreenShareStopSound,
+  playVoiceJoinSound,
+  playVoiceLeaveSound,
+} from "../lib/voiceSounds";
 import { useAppStore } from "../store/appStore";
 import type { VoiceTokenResponse } from "../types";
-import type { ShareSource } from "../components/ScreenSharePicker";
+
+/** WebView2 often breaks ICE when the URL host is `localhost` (IPv6 ::1). */
+function normalizeLivekitUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    if (u.hostname === "localhost") {
+      u.hostname = "127.0.0.1";
+    }
+    return u.toString().replace(/\/$/, "");
+  } catch {
+    return url.replace(/\/\/localhost(?=[:/]|$)/i, "//127.0.0.1");
+  }
+}
+
+/** WebView2 can block PeerConnection until getUserMedia has been granted. */
+async function ensureMicPermission(): Promise<void> {
+  if (!navigator.mediaDevices?.getUserMedia) return;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: true,
+      video: false,
+    });
+    stream.getTracks().forEach((t) => t.stop());
+  } catch {
+    // User denied or no device — still attempt join (listen-only may work).
+  }
+}
 
 export type RemoteScreen = {
   trackSid: string;
   participantIdentity: string;
   participantName: string;
-  track: RemoteTrack;
+  /** Present only after the viewer opts in (Join stream). */
+  track: RemoteTrack | null;
+  subscribed: boolean;
+  /** Screen-share system/tab audio from the same participant, if any. */
+  hasAudio: boolean;
+  audioTrackSid: string | null;
+};
+
+export type ScreenShareAudioState = {
+  volume: number;
+  muted: boolean;
 };
 
 export type LocalScreen = {
   trackSid: string;
   track: LocalVideoTrack;
+  /** Native share source id when known (`monitor:0`, `window:123`, …). */
+  sourceId?: string;
+  label: string;
 };
 
 async function applyDevicesToRoom(room: Room, settings: MediaSettings) {
@@ -77,6 +122,7 @@ async function applyDevicesToRoom(room: Room, settings: MediaSettings) {
   const out = outputGainFromSettings(settings);
   room.remoteParticipants.forEach((p) => {
     p.audioTrackPublications.forEach((pub) => {
+      if (pub.source === getLivekit().Track.Source.ScreenShareAudio) return;
       const track = pub.track;
       if (track && "setVolume" in track && typeof track.setVolume === "function") {
         track.setVolume(out);
@@ -89,8 +135,8 @@ function collectScreenTracks(room: Room): LocalTrack[] {
   const tracks: LocalTrack[] = [];
   room.localParticipant.trackPublications.forEach((pub) => {
     if (
-      (pub.source === Track.Source.ScreenShare ||
-        pub.source === Track.Source.ScreenShareAudio) &&
+      (pub.source === getLivekit().Track.Source.ScreenShare ||
+        pub.source === getLivekit().Track.Source.ScreenShareAudio) &&
       pub.track
     ) {
       tracks.push(pub.track);
@@ -110,41 +156,68 @@ export function useVoice() {
   const mutedRef = useRef(muted);
   const deafenedRef = useRef(deafened);
   const switchingRef = useRef(false);
+  /** Suppress share start/stop chirps while replacing a share slot. */
+  const replacingShareRef = useRef(false);
+  /** Remote screen trackSids the local user opted into watching. */
+  const watchingScreensRef = useRef(new Set<string>());
+  /** Hidden <audio> elements for remote playback (mic + screen share). */
+  const remoteAudioElsRef = useRef(new Map<string, HTMLMediaElement>());
+  /** Per video trackSid: viewer volume/mute for that stream's share audio. */
+  const shareAudioStateRef = useRef(
+    new Map<string, ScreenShareAudioState>(),
+  );
+  const [shareAudioByTrack, setShareAudioByTrack] = useState<
+    Record<string, ScreenShareAudioState>
+  >({});
 
   const [connected, setConnected] = useState(false);
   const [remoteScreens, setRemoteScreens] = useState<RemoteScreen[]>([]);
-  const [localScreen, setLocalScreen] = useState<LocalScreen | null>(null);
+  const [localScreens, setLocalScreens] = useState<LocalScreen[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerBusy, setPickerBusy] = useState(false);
   const [speakingIds, setSpeakingIds] = useState<string[]>([]);
-  const tauriShareStopRef = useRef<(() => Promise<void>) | null>(null);
+  /** sourceId -> stop() for each active Tauri capture */
+  const shareStopsRef = useRef<Map<string, () => Promise<void>>>(new Map());
+  const activeShareIdsRef = useRef<string[]>([]);
+  const [activeShareIds, setActiveShareIds] = useState<string[]>([]);
 
   voiceChannelIdRef.current = voiceChannelId;
   mutedRef.current = muted;
   deafenedRef.current = deafened;
+  activeShareIdsRef.current = activeShareIds;
 
   const syncLocalScreen = useCallback(
     (room: Room) => {
-      let found: LocalScreen | null = null;
+      const found: LocalScreen[] = [];
       room.localParticipant.trackPublications.forEach((pub) => {
         if (
-          pub.source === Track.Source.ScreenShare &&
+          pub.source === getLivekit().Track.Source.ScreenShare &&
           pub.track &&
-          pub.track.kind === Track.Kind.Video &&
+          pub.track.kind === getLivekit().Track.Kind.Video &&
           pub.trackSid
         ) {
           const media = pub.track.mediaStreamTrack;
           if (media) registerScreenTrack(pub.trackSid, media);
-          found = {
+          const name = pub.trackName || "";
+          const sourceId = name.startsWith("screen:")
+            ? name.slice("screen:".length)
+            : undefined;
+          found.push({
             trackSid: pub.trackSid,
             track: pub.track as LocalVideoTrack,
-          };
+            sourceId,
+            label: "Screen share",
+          });
         }
       });
-      setLocalScreen(found);
-      setVoiceLocal({ streaming: !!found });
+      found.forEach((s, i) => {
+        s.label =
+          found.length > 1 ? `Screen share ${i + 1}` : "Screen share 1";
+      });
+      setLocalScreens(found);
+      setVoiceLocal({ streaming: found.length > 0 });
     },
     [setVoiceLocal],
   );
@@ -154,45 +227,268 @@ export function useVoice() {
       const screens: RemoteScreen[] = [];
       const seen = new Set<string>();
       room.remoteParticipants.forEach((p) => {
+        const audioPub = [...p.trackPublications.values()].find(
+          (pub) => pub.source === getLivekit().Track.Source.ScreenShareAudio,
+        );
         p.trackPublications.forEach((pub) => {
           if (
-            pub.source === Track.Source.ScreenShare &&
-            pub.track &&
-            pub.trackSid
+            pub.source !== getLivekit().Track.Source.ScreenShare ||
+            pub.kind === getLivekit().Track.Kind.Audio ||
+            !pub.trackSid
           ) {
-            seen.add(pub.trackSid);
-            const media = pub.track.mediaStreamTrack;
-            if (media) registerScreenTrack(pub.trackSid, media);
-            screens.push({
-              trackSid: pub.trackSid,
-              participantIdentity: p.identity,
-              participantName: p.name || p.identity,
-              track: pub.track,
-            });
+            return;
           }
+          seen.add(pub.trackSid);
+          const optedIn = watchingScreensRef.current.has(pub.trackSid);
+          if (!optedIn && pub.isSubscribed) {
+            pub.setSubscribed(false);
+          }
+          const subscribed = optedIn && pub.isSubscribed && !!pub.track;
+          if (subscribed) {
+            const media = pub.track!.mediaStreamTrack;
+            if (media) registerScreenTrack(pub.trackSid, media);
+          } else {
+            unregisterScreenTrack(pub.trackSid);
+          }
+          screens.push({
+            trackSid: pub.trackSid,
+            participantIdentity: p.identity,
+            participantName: p.name || p.identity,
+            track: subscribed ? (pub.track ?? null) : null,
+            subscribed,
+            hasAudio: Boolean(audioPub),
+            audioTrackSid: audioPub?.trackSid ?? null,
+          });
         });
       });
       setRemoteScreens((prev) => {
         for (const old of prev) {
-          if (!seen.has(old.trackSid)) unregisterScreenTrack(old.trackSid);
+          if (!seen.has(old.trackSid)) {
+            unregisterScreenTrack(old.trackSid);
+            shareAudioStateRef.current.delete(old.trackSid);
+          }
         }
         return screens;
+      });
+      setShareAudioByTrack((prev) => {
+        const next: Record<string, ScreenShareAudioState> = {};
+        for (const s of screens) {
+          next[s.trackSid] =
+            shareAudioStateRef.current.get(s.trackSid) ??
+            prev[s.trackSid] ?? { volume: 1, muted: false };
+          shareAudioStateRef.current.set(s.trackSid, next[s.trackSid]);
+        }
+        return next;
       });
       syncLocalScreen(room);
     },
     [syncLocalScreen],
   );
 
-  /** Stop screen share and optionally halt the underlying capture tracks. */
+  const detachRemoteAudio = useCallback((trackSid: string) => {
+    const el = remoteAudioElsRef.current.get(trackSid);
+    if (el) {
+      el.remove();
+      remoteAudioElsRef.current.delete(trackSid);
+    }
+  }, []);
+
+  const attachRemoteAudio = useCallback(
+    (
+      track: RemoteTrack,
+      pub: RemoteTrackPublication,
+      volume = 1,
+      muted = false,
+    ) => {
+      if (track.kind !== getLivekit().Track.Kind.Audio || !pub.trackSid) return;
+      detachRemoteAudio(pub.trackSid);
+      const el = track.attach();
+      el.autoplay = true;
+      el.setAttribute("data-lk-remote-audio", pub.trackSid);
+      el.style.display = "none";
+      document.body.appendChild(el);
+      remoteAudioElsRef.current.set(pub.trackSid, el);
+      if ("setVolume" in track && typeof track.setVolume === "function") {
+        track.setVolume(muted ? 0 : volume);
+      }
+      if ("setMuted" in track && typeof track.setMuted === "function") {
+        track.setMuted(muted || deafenedRef.current);
+      }
+      void el.play().catch(() => undefined);
+    },
+    [detachRemoteAudio],
+  );
+
+  const applyShareAudioToParticipant = useCallback(
+    (participantIdentity: string, videoTrackSid: string) => {
+      const room = roomRef.current;
+      if (!room) return;
+      const state = shareAudioStateRef.current.get(videoTrackSid) ?? {
+        volume: 1,
+        muted: false,
+      };
+      const p = room.getParticipantByIdentity(participantIdentity);
+      if (!p) return;
+      p.trackPublications.forEach((pub) => {
+        if (pub.source !== getLivekit().Track.Source.ScreenShareAudio || !pub.track) return;
+        const track = pub.track;
+        if ("setVolume" in track && typeof track.setVolume === "function") {
+          track.setVolume(state.muted ? 0 : state.volume);
+        }
+        if ("setMuted" in track && typeof track.setMuted === "function") {
+          track.setMuted(state.muted || deafenedRef.current);
+        }
+      });
+    },
+    [],
+  );
+
+  /** Mic audio only — never auto-pull screen shares (viewer must Join). */
+  const subscribeRemoteAudio = useCallback((pub: RemoteTrackPublication) => {
+    if (
+      pub.source === getLivekit().Track.Source.ScreenShare ||
+      pub.source === getLivekit().Track.Source.ScreenShareAudio
+    ) {
+      return;
+    }
+    if (
+      pub.source === getLivekit().Track.Source.Microphone ||
+      pub.kind === getLivekit().Track.Kind.Audio
+    ) {
+      pub.setSubscribed(true);
+    }
+  }, []);
+
+  const pullRemoteAudio = useCallback(
+    (room: Room) => {
+      room.remoteParticipants.forEach((p) => {
+        p.trackPublications.forEach((pub) => subscribeRemoteAudio(pub));
+      });
+    },
+    [subscribeRemoteAudio],
+  );
+
+  const setRemoteScreenSubscribed = useCallback(
+    (trackSid: string, subscribed: boolean) => {
+      const room = roomRef.current;
+      if (!room) return;
+      if (subscribed) {
+        watchingScreensRef.current.add(trackSid);
+      } else {
+        watchingScreensRef.current.delete(trackSid);
+      }
+      room.remoteParticipants.forEach((p) => {
+        const target = [...p.trackPublications.values()].find(
+          (pub) => pub.trackSid === trackSid,
+        );
+        if (!target) return;
+        if (
+          target.source !== getLivekit().Track.Source.ScreenShare &&
+          target.source !== getLivekit().Track.Source.ScreenShareAudio
+        ) {
+          return;
+        }
+        target.setSubscribed(subscribed);
+
+        p.trackPublications.forEach((pub) => {
+          if (pub.source !== getLivekit().Track.Source.ScreenShareAudio) return;
+          if (subscribed) {
+            pub.setSubscribed(true);
+          } else {
+            const stillWatching = [...p.trackPublications.values()].some(
+              (v) =>
+                v.source === getLivekit().Track.Source.ScreenShare &&
+                v.kind !== getLivekit().Track.Kind.Audio &&
+                v.trackSid !== trackSid &&
+                watchingScreensRef.current.has(v.trackSid ?? ""),
+            );
+            if (!stillWatching) {
+              pub.setSubscribed(false);
+              if (pub.trackSid) detachRemoteAudio(pub.trackSid);
+            }
+          }
+        });
+
+        if (subscribed) {
+          if (!shareAudioStateRef.current.has(trackSid)) {
+            shareAudioStateRef.current.set(trackSid, {
+              volume: 1,
+              muted: false,
+            });
+          }
+          // Attach any already-subscribed share audio.
+          p.trackPublications.forEach((pub) => {
+            if (
+              pub.source === getLivekit().Track.Source.ScreenShareAudio &&
+              pub.track &&
+              pub.trackSid
+            ) {
+              const st = shareAudioStateRef.current.get(trackSid)!;
+              attachRemoteAudio(pub.track, pub, st.volume, st.muted);
+            }
+          });
+        }
+      });
+      refreshScreens(room);
+    },
+    [attachRemoteAudio, detachRemoteAudio, refreshScreens],
+  );
+
+  const joinRemoteScreen = useCallback(
+    (trackSid: string) => setRemoteScreenSubscribed(trackSid, true),
+    [setRemoteScreenSubscribed],
+  );
+
+  const leaveRemoteScreen = useCallback(
+    (trackSid: string) => setRemoteScreenSubscribed(trackSid, false),
+    [setRemoteScreenSubscribed],
+  );
+
+  const setScreenShareVolume = useCallback(
+    (videoTrackSid: string, volume: number) => {
+      const clamped = Math.max(0, Math.min(1, volume));
+      const prev = shareAudioStateRef.current.get(videoTrackSid) ?? {
+        volume: 1,
+        muted: false,
+      };
+      const next = { ...prev, volume: clamped };
+      shareAudioStateRef.current.set(videoTrackSid, next);
+      setShareAudioByTrack((s) => ({ ...s, [videoTrackSid]: next }));
+      const screen = remoteScreens.find((r) => r.trackSid === videoTrackSid);
+      if (screen) {
+        applyShareAudioToParticipant(screen.participantIdentity, videoTrackSid);
+      }
+    },
+    [applyShareAudioToParticipant, remoteScreens],
+  );
+
+  const setScreenShareMuted = useCallback(
+    (videoTrackSid: string, muted: boolean) => {
+      const prev = shareAudioStateRef.current.get(videoTrackSid) ?? {
+        volume: 1,
+        muted: false,
+      };
+      const next = { ...prev, muted };
+      shareAudioStateRef.current.set(videoTrackSid, next);
+      setShareAudioByTrack((s) => ({ ...s, [videoTrackSid]: next }));
+      const screen = remoteScreens.find((r) => r.trackSid === videoTrackSid);
+      if (screen) {
+        applyShareAudioToParticipant(screen.participantIdentity, videoTrackSid);
+      }
+    },
+    [applyShareAudioToParticipant, remoteScreens],
+  );
+
+  /** Stop all screen shares and optionally halt the underlying capture tracks. */
   const endScreenShare = useCallback(
     async (room: Room | null, stopTracks: boolean) => {
-      if (tauriShareStopRef.current) {
-        const stop = tauriShareStopRef.current;
-        tauriShareStopRef.current = null;
-        await stop().catch(() => undefined);
-      }
+      const stops = [...shareStopsRef.current.values()];
+      shareStopsRef.current.clear();
+      setActiveShareIds([]);
+      await Promise.all(stops.map((stop) => stop().catch(() => undefined)));
+
       if (!room) {
-        setLocalScreen(null);
+        setLocalScreens([]);
         setVoiceLocal({ streaming: false });
         return;
       }
@@ -201,18 +497,29 @@ export function useVoice() {
       ] as LocalTrackPublication[];
       for (const pub of pubs) {
         if (
-          pub.source !== Track.Source.ScreenShare &&
-          pub.source !== Track.Source.ScreenShareAudio
+          pub.source !== getLivekit().Track.Source.ScreenShare &&
+          pub.source !== getLivekit().Track.Source.ScreenShareAudio
         ) {
           continue;
         }
         if (pub.trackSid) unregisterScreenTrack(pub.trackSid);
-        if (pub.track) {
-          await room.localParticipant.unpublishTrack(pub.track, stopTracks);
-          if (stopTracks) pub.track.stop();
+        const track = pub.track;
+        if (!track) continue;
+        try {
+          // stopOnUnpublish=false — capture/media already stopped above (or caller owns stop).
+          await room.localParticipant.unpublishTrack(track, false);
+        } catch {
+          /* already gone */
+        }
+        if (stopTracks) {
+          try {
+            track.stop();
+          } catch {
+            /* ignore */
+          }
         }
       }
-      setLocalScreen(null);
+      setLocalScreens([]);
       setVoiceLocal({ streaming: false });
       try {
         await api("/api/voice/state", {
@@ -231,13 +538,13 @@ export function useVoice() {
       for (const track of tracks) {
         await room.localParticipant.publishTrack(track, {
           source:
-            track.kind === Track.Kind.Audio
-              ? Track.Source.ScreenShareAudio
-              : Track.Source.ScreenShare,
+            track.kind === getLivekit().Track.Kind.Audio
+              ? getLivekit().Track.Source.ScreenShareAudio
+              : getLivekit().Track.Source.ScreenShare,
           simulcast: false,
           videoEncoding:
-            track.kind === Track.Kind.Video
-              ? { maxBitrate: 3_000_000, maxFramerate: 30 }
+            track.kind === getLivekit().Track.Kind.Video
+              ? { maxBitrate: 8_000_000, maxFramerate: 30 }
               : undefined,
         });
       }
@@ -259,12 +566,19 @@ export function useVoice() {
 
   const leave = useCallback(async () => {
     const room = roomRef.current;
+    const wasInVoice = !!room;
     roomRef.current = null;
     // Leaving the lobby entirely always ends the stream.
     await endScreenShare(room, true);
     setConnected(false);
     setRemoteScreens([]);
     setSpeakingIds([]);
+    watchingScreensRef.current.clear();
+    for (const sid of [...remoteAudioElsRef.current.keys()]) {
+      detachRemoteAudio(sid);
+    }
+    shareAudioStateRef.current.clear();
+    setShareAudioByTrack({});
     if (room) {
       await room.disconnect(true);
     }
@@ -277,7 +591,10 @@ export function useVoice() {
     } catch {
       /* best effort */
     }
-  }, [endScreenShare, setVoiceLocal]);
+    if (wasInVoice && !deafenedRef.current && !switchingRef.current) {
+      playVoiceLeaveSound();
+    }
+  }, [detachRemoteAudio, endScreenShare, setVoiceLocal]);
 
   const join = useCallback(
     async (channelId: string) => {
@@ -306,13 +623,15 @@ export function useVoice() {
             }
             roomRef.current = null;
             setRemoteScreens([]);
+            watchingScreensRef.current.clear();
             await oldRoom.disconnect(false);
           } else {
             // Replacing a stuck session — drop share.
             await endScreenShare(oldRoom, true);
             roomRef.current = null;
             setRemoteScreens([]);
-            setLocalScreen(null);
+            setLocalScreens([]);
+            watchingScreensRef.current.clear();
             await oldRoom.disconnect(true);
           }
         }
@@ -321,7 +640,10 @@ export function useVoice() {
           `/api/channels/${channelId}/voice/token`,
           { method: "POST" },
         );
+        const livekitUrl = normalizeLivekitUrl(creds.url);
+        await ensureMicPermission();
         const settings = loadMediaSettings();
+        const { Room } = await loadLivekit();
         const room = new Room({
           adaptiveStream: true,
           dynacast: true,
@@ -341,27 +663,165 @@ export function useVoice() {
         roomRef.current = room;
 
         const onTrack = () => refreshScreens(room);
-        room.on(RoomEvent.TrackSubscribed, onTrack);
-        room.on(RoomEvent.TrackUnsubscribed, onTrack);
-        room.on(RoomEvent.TrackPublished, onTrack);
-        room.on(RoomEvent.TrackUnpublished, onTrack);
-        room.on(RoomEvent.LocalTrackPublished, onTrack);
-        room.on(RoomEvent.LocalTrackUnpublished, onTrack);
-        room.on(RoomEvent.ParticipantConnected, onTrack);
-        room.on(RoomEvent.ParticipantDisconnected, onTrack);
-        room.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
+        const isScreenSharePub = (pub: {
+          source: RemoteTrackPublication["source"];
+          kind?: RemoteTrackPublication["kind"];
+        }) =>
+          pub.source === getLivekit().Track.Source.ScreenShare &&
+          (pub.kind === undefined || pub.kind === getLivekit().Track.Kind.Video);
+
+        const ensureScreenShareOptIn = (
+          pub: RemoteTrackPublication,
+          participant?: { trackPublications: Map<string, RemoteTrackPublication> },
+        ) => {
+          if (pub.source === getLivekit().Track.Source.ScreenShareAudio) {
+            const watchingVideo = participant
+              ? [...participant.trackPublications.values()].some(
+                  (v) =>
+                    v.source === getLivekit().Track.Source.ScreenShare &&
+                    v.kind !== getLivekit().Track.Kind.Audio &&
+                    watchingScreensRef.current.has(v.trackSid ?? ""),
+                )
+              : false;
+            pub.setSubscribed(watchingVideo);
+            return true;
+          }
+          if (pub.source === getLivekit().Track.Source.ScreenShare) {
+            if (!watchingScreensRef.current.has(pub.trackSid ?? "")) {
+              pub.setSubscribed(false);
+            }
+            return true;
+          }
+          return false;
+        };
+
+        room.on(getLivekit().RoomEvent.TrackSubscribed, (track, pub, participant) => {
+          onTrack();
+          if (track.kind !== getLivekit().Track.Kind.Audio) return;
+
+          if (pub.source === getLivekit().Track.Source.ScreenShareAudio) {
+            const videoSid = [...participant.trackPublications.values()].find(
+              (v) =>
+                v.source === getLivekit().Track.Source.ScreenShare &&
+                v.kind !== getLivekit().Track.Kind.Audio &&
+                watchingScreensRef.current.has(v.trackSid ?? ""),
+            )?.trackSid;
+            const st = videoSid
+              ? (shareAudioStateRef.current.get(videoSid) ?? {
+                  volume: 1,
+                  muted: false,
+                })
+              : { volume: 1, muted: false };
+            attachRemoteAudio(track, pub, st.volume, st.muted);
+            return;
+          }
+
+          const out = outputGainFromSettings(loadMediaSettings());
+          attachRemoteAudio(
+            track,
+            pub,
+            out,
+            deafenedRef.current,
+          );
+        });
+        room.on(getLivekit().RoomEvent.TrackUnsubscribed, (track, pub) => {
+          onTrack();
+          if (pub.trackSid) detachRemoteAudio(pub.trackSid);
+          try {
+            track.detach();
+          } catch {
+            /* ignore */
+          }
+        });
+        room.on(getLivekit().RoomEvent.TrackPublished, (pub, participant) => {
+          if (!ensureScreenShareOptIn(pub, participant)) {
+            subscribeRemoteAudio(pub);
+          }
+          onTrack();
+          if (
+            !deafenedRef.current &&
+            !replacingShareRef.current &&
+            isScreenSharePub(pub)
+          ) {
+            playScreenShareStartSound();
+          }
+        });
+        room.on(getLivekit().RoomEvent.TrackUnpublished, (pub) => {
+          if (pub.trackSid) {
+            watchingScreensRef.current.delete(pub.trackSid);
+            detachRemoteAudio(pub.trackSid);
+          }
+          onTrack();
+          if (
+            !deafenedRef.current &&
+            !switchingRef.current &&
+            !replacingShareRef.current &&
+            isScreenSharePub(pub)
+          ) {
+            playScreenShareStopSound();
+          }
+        });
+        room.on(getLivekit().RoomEvent.LocalTrackPublished, (pub) => {
+          onTrack();
+          if (
+            !deafenedRef.current &&
+            !replacingShareRef.current &&
+            isScreenSharePub(pub)
+          ) {
+            playScreenShareStartSound();
+          }
+        });
+        room.on(getLivekit().RoomEvent.LocalTrackUnpublished, (pub) => {
+          onTrack();
+          if (
+            !deafenedRef.current &&
+            !switchingRef.current &&
+            !replacingShareRef.current &&
+            isScreenSharePub(pub)
+          ) {
+            playScreenShareStopSound();
+          }
+        });
+        room.on(getLivekit().RoomEvent.ParticipantConnected, (participant) => {
+          participant.trackPublications.forEach((pub) => {
+            if (!ensureScreenShareOptIn(pub, participant)) {
+              subscribeRemoteAudio(pub);
+            }
+          });
+          onTrack();
+          if (!deafenedRef.current) playVoiceJoinSound();
+        });
+        room.on(getLivekit().RoomEvent.ParticipantDisconnected, () => {
+          onTrack();
+          if (!deafenedRef.current && !switchingRef.current) {
+            playVoiceLeaveSound();
+          }
+        });
+        room.on(getLivekit().RoomEvent.ActiveSpeakersChanged, (speakers) => {
           setSpeakingIds(speakers.map((p) => p.identity));
         });
-        room.on(RoomEvent.Disconnected, () => {
+        room.on(getLivekit().RoomEvent.Disconnected, () => {
           setConnected(false);
           setRemoteScreens([]);
           setSpeakingIds([]);
+          watchingScreensRef.current.clear();
+          for (const sid of [...remoteAudioElsRef.current.keys()]) {
+            detachRemoteAudio(sid);
+          }
+          shareAudioStateRef.current.clear();
+          setShareAudioByTrack({});
           if (!switchingRef.current) {
-            setLocalScreen(null);
+            setLocalScreens([]);
           }
         });
 
-        await room.connect(creds.url, creds.token);
+        // autoSubscribe lives on connect options (not Room ctor) — keep screen off by default.
+        await room.connect(livekitUrl, creds.token, {
+          autoSubscribe: false,
+          rtcConfig: {
+            iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+          },
+        });
         await room.localParticipant.setMicrophoneEnabled(
           !mutedRef.current && !deafenedRef.current,
           {
@@ -371,19 +831,23 @@ export function useVoice() {
             autoGainControl: settings.autoGainControl,
           },
         );
+        // Unlock WebView audio playback (same user gesture as Join).
+        try {
+          await room.startAudio();
+        } catch {
+          /* may still work once a remote track arrives */
+        }
         await applyDevicesToRoom(room, settings);
-        room.remoteParticipants.forEach((p) => {
-          p.trackPublications.forEach((pub) => {
-            if (pub.kind === Track.Kind.Audio) {
-              pub.setSubscribed(true);
-            }
-          });
-        });
+        pullRemoteAudio(room);
+        // Publications can arrive a tick after connect.
+        queueMicrotask(() => pullRemoteAudio(room));
+        setTimeout(() => pullRemoteAudio(room), 250);
+        setTimeout(() => pullRemoteAudio(room), 1000);
 
         if (preservedScreen.length) {
           await republishScreenTracks(room, preservedScreen);
         } else {
-          setLocalScreen(null);
+          setLocalScreens([]);
           setVoiceLocal({ streaming: false });
         }
 
@@ -393,6 +857,9 @@ export function useVoice() {
           streaming: preservedScreen.length > 0,
         });
         refreshScreens(room);
+        if (!deafenedRef.current) {
+          playVoiceJoinSound();
+        }
       } catch (e) {
         for (const track of preservedScreen) {
           try {
@@ -408,7 +875,7 @@ export function useVoice() {
         setJoining(false);
       }
     },
-    [endScreenShare, leave, refreshScreens, republishScreenTracks, setVoiceLocal],
+    [attachRemoteAudio, detachRemoteAudio, endScreenShare, leave, pullRemoteAudio, refreshScreens, republishScreenTracks, setVoiceLocal, subscribeRemoteAudio],
   );
 
   useEffect(() => {
@@ -417,9 +884,29 @@ export function useVoice() {
     void room.localParticipant.setMicrophoneEnabled(!muted && !deafened);
     room.remoteParticipants.forEach((p) => {
       p.audioTrackPublications.forEach((pub: RemoteTrackPublication) => {
-        if (pub.track) {
-          pub.track.setMuted(deafened);
+        if (!pub.track) return;
+        if (pub.source === getLivekit().Track.Source.ScreenShareAudio) {
+          const videoSid = [...p.trackPublications.values()].find(
+            (v) =>
+              v.source === getLivekit().Track.Source.ScreenShare &&
+              v.kind !== getLivekit().Track.Kind.Audio &&
+              watchingScreensRef.current.has(v.trackSid ?? ""),
+          )?.trackSid;
+          const st = videoSid
+            ? shareAudioStateRef.current.get(videoSid)
+            : undefined;
+          pub.track.setMuted(deafened || Boolean(st?.muted));
+          if (
+            !deafened &&
+            st &&
+            "setVolume" in pub.track &&
+            typeof pub.track.setVolume === "function"
+          ) {
+            pub.track.setVolume(st.muted ? 0 : st.volume);
+          }
+          return;
         }
+        pub.track.setMuted(deafened);
       });
     });
     void api("/api/voice/state", {
@@ -456,72 +943,64 @@ export function useVoice() {
     });
   }, [deafened, setVoiceLocal]);
 
-  const shareScreen = useCallback(() => {
-    if (!roomRef.current) return;
-    setPickerOpen(true);
-  }, []);
-
   const closeScreenPicker = useCallback(() => {
     if (pickerBusy) return;
     setPickerOpen(false);
   }, [pickerBusy]);
 
-  const publishBrowserShare = useCallback(async () => {
-    const room = roomRef.current;
-    if (!room) return;
-    setPickerBusy(true);
-    try {
-      const tracks = await room.localParticipant.createScreenTracks({
-        audio: true,
-        resolution: { width: 1920, height: 1080, frameRate: 30 },
-      });
-      for (const track of tracks) {
-        await room.localParticipant.publishTrack(track, {
-          source:
-            track.kind === Track.Kind.Audio
-              ? Track.Source.ScreenShareAudio
-              : Track.Source.ScreenShare,
-          simulcast: false,
-          videoEncoding:
-            track.kind === Track.Kind.Video
-              ? { maxBitrate: 3_000_000, maxFramerate: 30 }
-              : undefined,
-        });
-      }
-      syncLocalScreen(room);
-      refreshScreens(room);
-      await api("/api/voice/state", {
-        method: "PUT",
-        body: { streaming: true },
-      });
-      setPickerOpen(false);
-      await focusMainWindow();
-    } catch (e) {
-      if (!isShareCancelError(e)) {
-        setError(e instanceof Error ? e.message : "Screen share failed");
-      }
-    } finally {
-      setPickerBusy(false);
-    }
-  }, [refreshScreens, syncLocalScreen]);
+  const openScreenPicker = useCallback(() => {
+    setPickerOpen(true);
+  }, []);
 
-  const publishTauriShare = useCallback(
-    async (source: ShareSource) => {
+  const publishElectronShare = useCallback(
+    async (opts: {
+      sourceId: string;
+      systemAudio?: boolean;
+      replaceAll?: boolean;
+    }) => {
       const room = roomRef.current;
       if (!room) return;
+      await loadLivekit();
       setPickerBusy(true);
+      setError(null);
       try {
-        if (tauriShareStopRef.current) {
-          await tauriShareStopRef.current().catch(() => undefined);
-          tauriShareStopRef.current = null;
+        if (opts.replaceAll) {
+          await endScreenShare(room, true);
         }
-        const { track, stop } = await startTauriScreenTrack(source.id);
-        tauriShareStopRef.current = stop;
-        await room.localParticipant.publishTrack(track, {
-          source: Track.Source.ScreenShare,
-          simulcast: false,
-          videoEncoding: { maxBitrate: 3_000_000, maxFramerate: 15 },
+
+        const captured = await captureElectronSource(opts.sourceId, {
+          systemAudio: opts.systemAudio !== false,
+          maxWidth: 1920,
+          maxHeight: 1080,
+          maxFps: 60,
         });
+
+        shareStopsRef.current.set(opts.sourceId, captured.stop);
+        setActiveShareIds((ids) =>
+          ids.includes(opts.sourceId) ? ids : [...ids, opts.sourceId],
+        );
+
+        if (!captured.audioTrack) {
+          setError(
+            "System audio wasn’t captured for this source. Try sharing a full screen with “Share system audio” enabled.",
+          );
+        }
+
+        await room.localParticipant.publishTrack(captured.videoTrack, {
+          name: `screen:${opts.sourceId}`,
+          source: getLivekit().Track.Source.ScreenShare,
+          simulcast: false,
+          videoEncoding: { maxBitrate: 12_000_000, maxFramerate: 60 },
+        });
+
+        if (captured.audioTrack) {
+          await room.localParticipant.publishTrack(captured.audioTrack, {
+            name: `screen-audio:${opts.sourceId}`,
+            source: getLivekit().Track.Source.ScreenShareAudio,
+            audioPreset: { maxBitrate: 128_000 },
+          });
+        }
+
         syncLocalScreen(room);
         refreshScreens(room);
         await api("/api/voice/state", {
@@ -531,10 +1010,6 @@ export function useVoice() {
         setPickerOpen(false);
         await focusMainWindow();
       } catch (e) {
-        if (tauriShareStopRef.current) {
-          await tauriShareStopRef.current().catch(() => undefined);
-          tauriShareStopRef.current = null;
-        }
         if (!isShareCancelError(e)) {
           setError(e instanceof Error ? e.message : "Screen share failed");
         }
@@ -542,21 +1017,213 @@ export function useVoice() {
         setPickerBusy(false);
       }
     },
-    [refreshScreens, syncLocalScreen],
+    [endScreenShare, refreshScreens, syncLocalScreen],
+  );
+
+  /** Fallback: OS getDisplayMedia (rarely needed in Electron). */
+  const publishBrowserShare = useCallback(
+    async (opts?: { replaceAll?: boolean }) => {
+      const room = roomRef.current;
+      if (!room) return;
+      await loadLivekit();
+      setPickerBusy(true);
+      setError(null);
+      try {
+        if (opts?.replaceAll) {
+          await endScreenShare(room, true);
+        }
+
+        const tracks = await room.localParticipant.createScreenTracks({
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+            // @ts-expect-error experimental display-media field
+            suppressLocalAudioPlayback: false,
+          },
+          contentHint: "motion",
+          resolution: { width: 1920, height: 1080, frameRate: 60 },
+          systemAudio: "include",
+          selfBrowserSurface: "exclude",
+        });
+
+        const hasShareAudio = tracks.some(
+          (t) => t.kind === getLivekit().Track.Kind.Audio,
+        );
+        if (!hasShareAudio) {
+          setError(
+            "Screen audio wasn’t captured. Enable “Share system audio” if available.",
+          );
+        }
+
+        const stamp = Date.now();
+        for (const track of tracks) {
+          if (track.kind === getLivekit().Track.Kind.Video) {
+            const media = track.mediaStreamTrack;
+            if (media) {
+              try {
+                media.contentHint = "motion";
+              } catch {
+                /* optional */
+              }
+            }
+          }
+          await room.localParticipant.publishTrack(track, {
+            name:
+              track.kind === getLivekit().Track.Kind.Video
+                ? `screen:native-${stamp}`
+                : `screen-audio:native-${stamp}`,
+            source:
+              track.kind === getLivekit().Track.Kind.Audio
+                ? getLivekit().Track.Source.ScreenShareAudio
+                : getLivekit().Track.Source.ScreenShare,
+            simulcast: false,
+            videoEncoding:
+              track.kind === getLivekit().Track.Kind.Video
+                ? { maxBitrate: 12_000_000, maxFramerate: 60 }
+                : undefined,
+            audioPreset:
+              track.kind === getLivekit().Track.Kind.Audio
+                ? { maxBitrate: 128_000 }
+                : undefined,
+          });
+        }
+        syncLocalScreen(room);
+        refreshScreens(room);
+        await api("/api/voice/state", {
+          method: "PUT",
+          body: { streaming: true },
+        });
+        setPickerOpen(false);
+        await focusMainWindow();
+      } catch (e) {
+        if (!isShareCancelError(e)) {
+          setError(e instanceof Error ? e.message : "Screen share failed");
+        }
+      } finally {
+        setPickerBusy(false);
+      }
+    },
+    [endScreenShare, refreshScreens, syncLocalScreen],
+  );
+
+  const shareScreen = useCallback(() => {
+    setPickerOpen(true);
+  }, []);
+
+  const stopOneShare = useCallback(
+    async (room: Room, sourceId: string) => {
+      const prevStop = shareStopsRef.current.get(sourceId);
+      shareStopsRef.current.delete(sourceId);
+      setActiveShareIds((ids) => ids.filter((id) => id !== sourceId));
+
+      const pubs = [
+        ...room.localParticipant.trackPublications.values(),
+      ] as LocalTrackPublication[];
+      for (const pub of pubs) {
+        const name = pub.trackName || "";
+        if (
+          name !== `screen:${sourceId}` &&
+          name !== `screen-audio:${sourceId}`
+        ) {
+          continue;
+        }
+        if (pub.trackSid) unregisterScreenTrack(pub.trackSid);
+        const existing = pub.track;
+        if (existing) {
+          try {
+            await room.localParticipant.unpublishTrack(existing, false);
+          } catch {
+            /* already unpublished */
+          }
+        }
+      }
+
+      if (prevStop) {
+        await prevStop().catch(() => undefined);
+      }
+    },
+    [],
   );
 
   const stopScreenShare = useCallback(async () => {
     await endScreenShare(roomRef.current, true);
   }, [endScreenShare]);
 
+  const stopLocalShare = useCallback(
+    async (opts: { sourceId?: string; trackSid?: string }) => {
+      const room = roomRef.current;
+      if (!room) return;
+
+      if (opts.sourceId) {
+        await stopOneShare(room, opts.sourceId);
+      } else if (opts.trackSid) {
+        const pubs = [
+          ...room.localParticipant.trackPublications.values(),
+        ] as LocalTrackPublication[];
+        for (const pub of pubs) {
+          if (pub.trackSid !== opts.trackSid) continue;
+          if (pub.trackSid) unregisterScreenTrack(pub.trackSid);
+          const existing = pub.track;
+          if (existing) {
+            try {
+              await room.localParticipant.unpublishTrack(existing, true);
+            } catch {
+              /* already unpublished */
+            }
+          }
+        }
+      }
+
+      syncLocalScreen(room);
+      refreshScreens(room);
+      if (
+        shareStopsRef.current.size === 0 &&
+        ![...room.localParticipant.trackPublications.values()].some(
+          (pub) => pub.source === getLivekit().Track.Source.ScreenShare,
+        )
+      ) {
+        await api("/api/voice/state", {
+          method: "PUT",
+          body: { streaming: false },
+        }).catch(() => undefined);
+        setVoiceLocal({ streaming: false });
+      }
+    },
+    [refreshScreens, setVoiceLocal, stopOneShare, syncLocalScreen],
+  );
+
   useEffect(() => {
+    const clearPresenceKeepalive = () => {
+      if (!voiceChannelIdRef.current) return;
+      const token = getAccessToken();
+      if (!token) return;
+      try {
+        void fetch(`${getApiBase()}/api/voice/state`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ channel_id: null, streaming: false }),
+          keepalive: true,
+        });
+      } catch {
+        /* best effort on quit */
+      }
+    };
+
+    window.addEventListener("beforeunload", clearPresenceKeepalive);
+    window.addEventListener("pagehide", clearPresenceKeepalive);
+
     return () => {
+      window.removeEventListener("beforeunload", clearPresenceKeepalive);
+      window.removeEventListener("pagehide", clearPresenceKeepalive);
       const room = roomRef.current;
       roomRef.current = null;
-      if (tauriShareStopRef.current) {
-        void tauriShareStopRef.current();
-        tauriShareStopRef.current = null;
-      }
+      const stops = [...shareStopsRef.current.values()];
+      shareStopsRef.current.clear();
+      for (const stop of stops) void stop();
       if (room) {
         void room.disconnect(true);
       }
@@ -572,19 +1239,27 @@ export function useVoice() {
     muted,
     deafened,
     remoteScreens,
-    localScreen,
+    localScreens,
     speakingIds,
+    shareAudioByTrack,
     pickerOpen,
     pickerBusy,
-    isTauri: isTauriApp(),
+    activeShareIds,
+    isDesktop: isDesktopApp(),
     join,
     leave,
     toggleMute,
     toggleDeafen,
     shareScreen,
+    openScreenPicker,
     closeScreenPicker,
+    publishElectronShare,
     publishBrowserShare,
-    publishTauriShare,
     stopScreenShare,
+    stopLocalShare,
+    joinRemoteScreen,
+    leaveRemoteScreen,
+    setScreenShareVolume,
+    setScreenShareMuted,
   };
 }

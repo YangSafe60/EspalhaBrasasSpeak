@@ -1,29 +1,13 @@
-import { LocalVideoTrack } from "livekit-client";
+import {
+  loadLivekit,
+  type LocalAudioTrack,
+  type LocalVideoTrack,
+} from "./livekit";
+import { getElectronAPI, isDesktopApp } from "./desktop";
 
-export function isTauriApp(): boolean {
-  if (typeof window === "undefined") return false;
-  const g = globalThis as typeof globalThis & {
-    isTauri?: boolean;
-    __TAURI_INTERNALS__?: unknown;
-    __TAURI__?: unknown;
-  };
-  if (g.isTauri) return true;
-  if (g.__TAURI_INTERNALS__) return true;
-  if (g.__TAURI__) return true;
-  return false;
-}
-
-/** Async probe — true if native share commands are available. */
-export async function canUseNativeShare(): Promise<boolean> {
-  try {
-    const { invoke, isTauri } = await import("@tauri-apps/api/core");
-    if (!isTauri() && !isTauriApp()) return false;
-    await invoke("list_share_sources");
-    return true;
-  } catch {
-    return false;
-  }
-}
+export { isDesktopApp };
+/** @deprecated use isDesktopApp */
+export const isTauriApp = isDesktopApp;
 
 export function isShareCancelError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
@@ -38,72 +22,115 @@ export function isShareCancelError(err: unknown): boolean {
   return false;
 }
 
+export async function listDesktopShareSources(opts?: {
+  types?: Array<"screen" | "window">;
+}) {
+  const api = getElectronAPI();
+  if (!api) throw new Error("Screen sources require the Electron desktop app");
+  return api.listShareSources(opts);
+}
+
+type CaptureConstraints = {
+  audio:
+    | false
+    | {
+        mandatory: {
+          chromeMediaSource: "desktop";
+        };
+      };
+  video: {
+    mandatory: {
+      chromeMediaSource: "desktop";
+      chromeMediaSourceId: string;
+      maxWidth: number;
+      maxHeight: number;
+      maxFrameRate: number;
+      minFrameRate?: number;
+    };
+  };
+};
+
 /**
- * Capture a MediaStreamTrack from an in-app picked screen/window via Tauri frame events.
+ * Native Chromium desktop capture (no JPEG) via Electron desktopCapturer source id.
  */
-export async function startTauriScreenTrack(sourceId: string): Promise<{
-  track: LocalVideoTrack;
+export async function captureElectronSource(
+  sourceId: string,
+  opts?: { systemAudio?: boolean; maxWidth?: number; maxHeight?: number; maxFps?: number },
+): Promise<{
+  stream: MediaStream;
+  videoTrack: LocalVideoTrack;
+  audioTrack: LocalAudioTrack | null;
   stop: () => Promise<void>;
 }> {
-  const { invoke } = await import("@tauri-apps/api/core");
-  const { listen } = await import("@tauri-apps/api/event");
-  type UnlistenFn = () => void;
+  const systemAudio = opts?.systemAudio !== false;
+  const maxWidth = opts?.maxWidth ?? 1920;
+  const maxHeight = opts?.maxHeight ?? 1080;
+  const maxFps = opts?.maxFps ?? 60;
 
-  const canvas = document.createElement("canvas");
-  canvas.width = 1280;
-  canvas.height = 720;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Canvas unsupported");
+  const constraints: CaptureConstraints = {
+    audio: systemAudio
+      ? {
+          mandatory: {
+            chromeMediaSource: "desktop",
+          },
+        }
+      : false,
+    video: {
+      mandatory: {
+        chromeMediaSource: "desktop",
+        chromeMediaSourceId: sourceId,
+        maxWidth,
+        maxHeight,
+        maxFrameRate: maxFps,
+        minFrameRate: Math.min(30, maxFps),
+      },
+    },
+  };
 
-  const img = new Image();
-  let unlisten: UnlistenFn | null = null;
-  let stopped = false;
+  const { LocalAudioTrack, LocalVideoTrack } = await loadLivekit();
 
-  unlisten = await listen<string>("share-frame", (ev) => {
-    if (stopped || !ev.payload) return;
-    img.onload = () => {
-      if (stopped) return;
-      const iw = img.naturalWidth || 1280;
-      const ih = img.naturalHeight || 720;
-      if (canvas.width !== iw || canvas.height !== ih) {
-        canvas.width = iw;
-        canvas.height = ih;
-      }
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    };
-    img.src = ev.payload;
-  });
+  // Electron uses legacy chromeMediaSource constraints not in standard typings.
+  const stream = await navigator.mediaDevices.getUserMedia(
+    constraints as unknown as MediaStreamConstraints,
+  );
 
-  await invoke("start_share_capture", { sourceId });
-
-  await new Promise((r) => setTimeout(r, 150));
-
-  const stream = canvas.captureStream(15);
-  const media = stream.getVideoTracks()[0];
-  if (!media) {
-    await invoke("stop_share_capture").catch(() => undefined);
-    unlisten?.();
-    throw new Error("No video track from capture");
+  const mediaVideo = stream.getVideoTracks()[0];
+  if (!mediaVideo) {
+    stream.getTracks().forEach((t) => t.stop());
+    throw new Error("No video track from desktop capture");
   }
-  media.contentHint = "detail";
+  try {
+    mediaVideo.contentHint = "motion";
+  } catch {
+    /* optional */
+  }
 
-  // userProvidedTrack=true so LiveKit won't try to reacquire via getDisplayMedia
-  const track = new LocalVideoTrack(media, undefined, true);
+  const videoTrack = new LocalVideoTrack(mediaVideo, undefined, true);
+  const mediaAudio = stream.getAudioTracks()[0] ?? null;
+  const audioTrack = mediaAudio ? new LocalAudioTrack(mediaAudio) : null;
 
   return {
-    track,
+    stream,
+    videoTrack,
+    audioTrack,
     stop: async () => {
-      stopped = true;
-      unlisten?.();
-      unlisten = null;
       try {
-        track.stop();
+        videoTrack.stop();
       } catch {
         /* ignore */
       }
-      media.stop();
-      stream.getTracks().forEach((t) => t.stop());
-      await invoke("stop_share_capture").catch(() => undefined);
+      try {
+        audioTrack?.stop();
+      } catch {
+        /* ignore */
+      }
+      for (const t of stream.getTracks()) {
+        try {
+          t.stop();
+        } catch {
+          /* ignore */
+        }
+      }
     },
   };
 }

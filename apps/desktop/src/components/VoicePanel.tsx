@@ -1,3 +1,5 @@
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { useVoice } from "../hooks/useVoice";
 import { useAppStore } from "../store/appStore";
 import { ScreenSharePicker } from "./ScreenSharePicker";
@@ -7,6 +9,8 @@ type VoiceApi = ReturnType<typeof useVoice>;
 type Props = {
   voice: VoiceApi;
 };
+
+type ShareMode = "new" | "add" | "replace";
 
 function IconMic({ off }: { off?: boolean }) {
   return (
@@ -72,11 +76,63 @@ export function VoicePanel({ voice }: Props) {
   const selectChannel = useAppStore((s) => s.selectChannel);
   const setModal = useAppStore((s) => s.setModal);
 
+  const shareBtnRef = useRef<HTMLButtonElement>(null);
+  const [liveMenuOpen, setLiveMenuOpen] = useState(false);
+  const [shareMode, setShareMode] = useState<ShareMode>("new");
+  const [menuPos, setMenuPos] = useState<{
+    bottom: number;
+    left: number;
+  } | null>(null);
+
   const channel = Object.values(channelsByServer)
     .flat()
     .find((c) => c.id === voice.voiceChannelId);
 
   const inVoice = Boolean(voice.voiceChannelId && channel);
+
+  useLayoutEffect(() => {
+    if (!liveMenuOpen || !shareBtnRef.current) {
+      setMenuPos(null);
+      return;
+    }
+    const rect = shareBtnRef.current.getBoundingClientRect();
+    const menuWidth = 220;
+    const left = Math.min(
+      Math.max(8, rect.right - menuWidth),
+      window.innerWidth - menuWidth - 8,
+    );
+    setMenuPos({
+      bottom: Math.max(8, window.innerHeight - rect.top + 6),
+      left,
+    });
+  }, [liveMenuOpen]);
+
+  useEffect(() => {
+    if (!liveMenuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setLiveMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [liveMenuOpen]);
+
+  useEffect(() => {
+    if (!streaming) setLiveMenuOpen(false);
+  }, [streaming]);
+
+  function openSharePicker(mode: ShareMode) {
+    setLiveMenuOpen(false);
+    setShareMode(mode);
+    voice.openScreenPicker();
+  }
+
+  function onShareClick() {
+    if (streaming) {
+      setLiveMenuOpen((open) => !open);
+      return;
+    }
+    openSharePicker("new");
+  }
 
   return (
     <div className="user-voice-dock">
@@ -104,13 +160,15 @@ export function VoicePanel({ voice }: Props) {
           </button>
           <div className="voice-icon-controls">
             <button
+              ref={shareBtnRef}
               type="button"
-              className={`voice-icon-btn${streaming ? " active accent" : ""}`}
-              title={streaming ? "Stop sharing" : "Share screen"}
-              aria-label={streaming ? "Stop sharing" : "Share screen"}
-              onClick={() =>
-                void (streaming ? voice.stopScreenShare() : voice.shareScreen())
-              }
+              className={`voice-icon-btn${streaming ? " active accent" : ""}${liveMenuOpen ? " menu-open" : ""}`}
+              title={streaming ? "Screen share options" : "Share screen"}
+              aria-label={streaming ? "Screen share options" : "Share screen"}
+              aria-expanded={streaming ? liveMenuOpen : undefined}
+              aria-haspopup={streaming ? "menu" : undefined}
+              disabled={voice.pickerBusy}
+              onClick={onShareClick}
             >
               <IconScreen />
             </button>
@@ -191,9 +249,62 @@ export function VoicePanel({ voice }: Props) {
       <ScreenSharePicker
         open={voice.pickerOpen}
         busy={voice.pickerBusy}
+        mode={shareMode}
+        activeSourceIds={voice.activeShareIds}
         onClose={voice.closeScreenPicker}
-        onPickSource={(src) => void voice.publishTauriShare(src)}
+        onPickSource={(source, opts) => {
+          void voice.publishElectronShare({
+            sourceId: source.id,
+            systemAudio: opts.systemAudio,
+            replaceAll: shareMode === "replace",
+          });
+        }}
       />
+
+      {liveMenuOpen &&
+        menuPos &&
+        createPortal(
+          <div
+            className="live-share-menu-layer"
+            onMouseDown={() => setLiveMenuOpen(false)}
+          >
+            <div
+              className="live-share-menu"
+              style={{ bottom: menuPos.bottom, left: menuPos.left }}
+              role="menu"
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                disabled={voice.pickerBusy}
+                onClick={() => openSharePicker("replace")}
+              >
+                Change screen
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={voice.pickerBusy}
+                onClick={() => openSharePicker("add")}
+              >
+                Share another screen
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="danger"
+                onClick={() => {
+                  setLiveMenuOpen(false);
+                  void voice.stopScreenShare();
+                }}
+              >
+                Stop sharing
+              </button>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

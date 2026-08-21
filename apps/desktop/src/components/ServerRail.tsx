@@ -1,5 +1,5 @@
 import { useAppStore } from "../store/appStore";
-import logoMark from "../assets/logo-mark-square.png";
+import logoMark from "../assets/logo-mark.png";
 
 export function ServerRail() {
   const servers = useAppStore((s) => s.servers);

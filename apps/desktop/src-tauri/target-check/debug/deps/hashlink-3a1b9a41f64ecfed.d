@@ -1,0 +1,10 @@
+D:\VSCode\RandomThings\SpeakApp\apps\desktop\src-tauri\target-check\debug\deps\hashlink-3a1b9a41f64ecfed.d: C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hashlink-0.10.0\src\lib.rs C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hashlink-0.10.0\src\linked_hash_map.rs C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hashlink-0.10.0\src\linked_hash_set.rs C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hashlink-0.10.0\src\lru_cache.rs
+
+D:\VSCode\RandomThings\SpeakApp\apps\desktop\src-tauri\target-check\debug\deps\libhashlink-3a1b9a41f64ecfed.rlib: C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hashlink-0.10.0\src\lib.rs C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hashlink-0.10.0\src\linked_hash_map.rs C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hashlink-0.10.0\src\linked_hash_set.rs C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hashlink-0.10.0\src\lru_cache.rs
+
+D:\VSCode\RandomThings\SpeakApp\apps\desktop\src-tauri\target-check\debug\deps\libhashlink-3a1b9a41f64ecfed.rmeta: C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hashlink-0.10.0\src\lib.rs C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hashlink-0.10.0\src\linked_hash_map.rs C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hashlink-0.10.0\src\linked_hash_set.rs C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hashlink-0.10.0\src\lru_cache.rs
+
+C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hashlink-0.10.0\src\lib.rs:
+C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hashlink-0.10.0\src\linked_hash_map.rs:
+C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hashlink-0.10.0\src\linked_hash_set.rs:
+C:\Users\YangSafe\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hashlink-0.10.0\src\lru_cache.rs:
