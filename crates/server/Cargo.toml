@@ -1,0 +1,35 @@
+[package]
+name = "speakapp-server"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "speakapp-server"
+path = "src/main.rs"
+
+[dependencies]
+speakapp-shared = { path = "../shared" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+axum = { version = "0.8", features = ["ws", "multipart", "macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "fs", "trace", "limit"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "uuid", "chrono", "migrate"] }
+argon2 = "0.5"
+jsonwebtoken = "9"
+rand = "0.8"
+futures-util = "0.3"
+dashmap = "6"
+bytes = "1"
+mime_guess = "2"
+tokio-util = { version = "0.7", features = ["io"] }
+base64 = "0.22"
+sha2 = "0.10"
+hex = "0.4"

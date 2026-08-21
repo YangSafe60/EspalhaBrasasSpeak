@@ -1,0 +1,142 @@
+mod auth_routes;
+mod channels;
+mod media;
+mod messages;
+mod servers;
+mod voice;
+
+use crate::auth::{decode_token, AuthUser};
+use crate::error::{AppError, AppResult};
+use crate::state::AppState;
+use crate::ws;
+use axum::{
+    extract::{Query, State, WebSocketUpgrade},
+    response::IntoResponse,
+    routing::{delete, get, patch, post, put},
+    Router,
+};
+use serde::Deserialize;
+use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::ServeDir;
+use tower_http::trace::TraceLayer;
+
+pub fn router(state: AppState) -> Router {
+    let media = ServeDir::new(&state.config.media_dir);
+
+    Router::new()
+        .route("/health", get(|| async { "ok" }))
+        .route("/api/auth/register", post(auth_routes::register))
+        .route("/api/auth/login", post(auth_routes::login))
+        .route("/api/auth/refresh", post(auth_routes::refresh))
+        .route(
+            "/api/auth/me",
+            get(auth_routes::me).patch(auth_routes::update_me),
+        )
+        .route("/api/users/me", patch(auth_routes::update_me))
+        .route("/api/servers", get(servers::list).post(servers::create))
+        .route(
+            "/api/servers/{id}",
+            get(servers::get).patch(servers::update).delete(servers::delete),
+        )
+        .route("/api/servers/{id}/members", get(servers::list_members))
+        .route(
+            "/api/servers/{id}/members/{user_id}",
+            delete(servers::kick_member),
+        )
+        .route("/api/servers/{id}/bans", get(servers::list_bans).post(servers::ban_member))
+        .route(
+            "/api/servers/{id}/bans/{user_id}",
+            delete(servers::unban_member),
+        )
+        .route(
+            "/api/servers/{id}/invites",
+            get(servers::list_invites).post(servers::create_invite),
+        )
+        .route("/api/invites/{code}", get(servers::invite_info).post(servers::join_invite))
+        .route(
+            "/api/servers/{id}/roles",
+            get(servers::list_roles).post(servers::create_role),
+        )
+        .route(
+            "/api/servers/{id}/roles/{role_id}",
+            patch(servers::update_role).delete(servers::delete_role),
+        )
+        .route(
+            "/api/servers/{id}/members/{user_id}/roles",
+            put(servers::set_member_roles),
+        )
+        .route(
+            "/api/servers/{id}/rules",
+            get(servers::list_rules).put(servers::set_rules),
+        )
+        .route(
+            "/api/servers/{id}/rules/accept",
+            post(servers::accept_rules),
+        )
+        .route(
+            "/api/servers/{id}/channels",
+            get(channels::list).post(channels::create),
+        )
+        .route(
+            "/api/channels/{id}",
+            get(channels::get).patch(channels::update).delete(channels::delete),
+        )
+        .route(
+            "/api/channels/{id}/overwrites",
+            get(channels::list_overwrites).put(channels::set_overwrites),
+        )
+        .route(
+            "/api/channels/{id}/messages",
+            get(messages::list).post(messages::create),
+        )
+        .route(
+            "/api/messages/{id}",
+            patch(messages::update).delete(messages::delete),
+        )
+        .route(
+            "/api/messages/{id}/reactions/{emoji}",
+            put(messages::add_reaction).delete(messages::remove_reaction),
+        )
+        .route("/api/channels/{id}/typing", post(messages::typing))
+        .route("/api/channels/{id}/voice/token", post(voice::token))
+        .route("/api/voice/state", put(voice::update_state).get(voice::list_states))
+        .route("/api/media/upload", post(media::upload))
+        .route("/api/ws", get(ws_upgrade))
+        .nest_service("/media", media)
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        )
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
+}
+
+#[derive(Deserialize)]
+struct WsQuery {
+    token: String,
+}
+
+async fn ws_upgrade(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+    Query(q): Query<WsQuery>,
+) -> AppResult<impl IntoResponse> {
+    let claims = decode_token(&q.token, &state.config.jwt_secret)?;
+    if claims.typ != "access" {
+        return Err(AppError::Unauthorized);
+    }
+    let user_id = claims.sub;
+    // Prime server membership cache
+    let servers = crate::db::user_servers(&state.db, user_id).await?;
+    for s in &servers {
+        let members = crate::db::server_member_ids(&state.db, s.id).await?;
+        state.hub.set_server_members(s.id, members);
+    }
+    Ok(ws.on_upgrade(move |socket| ws::handle_socket(socket, user_id, state.hub.clone())))
+}
+
+// silence unused AuthUser in this module
+#[allow(dead_code)]
+fn _auth(_: AuthUser) {}

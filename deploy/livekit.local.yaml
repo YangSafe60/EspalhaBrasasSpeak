@@ -1,0 +1,17 @@
+# Local Windows LiveKit (no Docker)
+port: 7880
+bind_addresses:
+  - 127.0.0.1
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  use_external_ip: false
+  node_ip: 127.0.0.1
+keys:
+  # Must match LIVEKIT_API_KEY / LIVEKIT_API_SECRET (secret >= 32 chars)
+  devkey: espalha_brasas_dev_livekit_secret_32b
+logging:
+  level: info
+room:
+  auto_create: true

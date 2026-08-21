@@ -1,0 +1,13 @@
+port: 7880
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  use_external_ip: true
+keys:
+  # Must match LIVEKIT_API_KEY / LIVEKIT_API_SECRET (secret >= 32 chars)
+  devkey: espalha_brasas_dev_livekit_secret_32b
+logging:
+  level: info
+room:
+  auto_create: true

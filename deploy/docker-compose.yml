@@ -1,0 +1,53 @@
+# Multi-arch friendly Espalha Brasas stack (amd64 + arm64)
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    restart: unless-stopped
+    environment:
+      SPEAKAPP_BIND: 0.0.0.0:8080
+      DATABASE_URL: sqlite:///data/speakapp.db?mode=rwc
+      JWT_SECRET: ${JWT_SECRET:-change-me-please}
+      MEDIA_DIR: /data/media
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
+      LIVEKIT_URL: ${LIVEKIT_URL:-ws://livekit:7880}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-espalha_brasas_dev_livekit_secret_32b}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-26214400}
+    volumes:
+      - speakapp-data:/data
+    ports:
+      - "8080:8080"
+    depends_on:
+      - livekit
+
+  livekit:
+    image: livekit/livekit-server:latest
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "50000-50100:50000-50100/udp"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api
+      - livekit
+
+volumes:
+  speakapp-data:
+  caddy-data:
+  caddy-config:

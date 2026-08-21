@@ -1,0 +1,4 @@
+# Fallback when using the GNU toolchain: mingw ld hits
+# "export ordinal too large" with Tauri/windows-rs. rust-lld avoids that.
+[target.x86_64-pc-windows-gnu]
+linker = "rust-lld"

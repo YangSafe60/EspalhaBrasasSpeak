@@ -1,0 +1,11 @@
+[[permission]]
+identifier = "allow-share-capture"
+description = "List screens/windows and stream frames for in-app screen share"
+commands.allow = [
+  "list_share_sources",
+  "start_share_capture",
+  "stop_share_capture",
+  "open_screen_popout",
+  "relay_screen_signal",
+  "relay_popout_frame"
+]

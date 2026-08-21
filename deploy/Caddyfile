@@ -1,0 +1,10 @@
+{
+  "apps": {
+    "http://localhost:8080": {
+      "reverse_proxy": "api:8080"
+    },
+    "http://livekit.localhost": {
+      "reverse_proxy": "livekit:7880"
+    }
+  }
+}
