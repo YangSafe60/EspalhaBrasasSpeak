@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { CATBOX_UPLOAD_HINT } from "../lib/uploadHints";
+import { IMAGE_UPLOAD_HINT } from "../lib/uploadHints";
 import { mediaCssUrl, mediaUrl } from "../lib/mediaUrl";
 import { getElectronAPI } from "../lib/desktop";
 import { useAppStore } from "../store/appStore";
@@ -112,7 +112,7 @@ export function UserSettingsModal() {
     setMsg(null);
     try {
       if (newPassword.length < 6) {
-        throw new Error("New password must be at least 6 characters.");
+        throw new Error("New password must be at least 8 characters.");
       }
       if (newPassword !== confirmPassword) {
         throw new Error("New passwords do not match.");
@@ -351,7 +351,7 @@ export function UserSettingsModal() {
                       </button>
                     )}
                   </div>
-                  <p className="muted tiny">{CATBOX_UPLOAD_HINT} GIFs allowed.</p>
+                  <p className="muted tiny">{IMAGE_UPLOAD_HINT} GIFs allowed.</p>
                   <input
                     ref={bannerRef}
                     type="file"
@@ -428,7 +428,7 @@ export function UserSettingsModal() {
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                     autoComplete="new-password"
-                    minLength={6}
+                    minLength={8}
                     required
                   />
                 </label>
@@ -439,7 +439,7 @@ export function UserSettingsModal() {
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     autoComplete="new-password"
-                    minLength={6}
+                    minLength={8}
                     required
                   />
                 </label>

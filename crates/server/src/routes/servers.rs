@@ -326,8 +326,8 @@ pub async fn kick_member(
     let server = db::get_server(&state.db, id).await?;
     db::require_perm(&state.db, &server, None, user.id, Permissions::KICK_MEMBERS)
         .await?;
-    if user_id == server.owner_id {
-        return Err(AppError::BadRequest("cannot kick owner".into()));
+    if !db::can_moderate_member(&state.db, &server, user.id, user_id).await? {
+        return Err(AppError::Forbidden);
     }
     sqlx::query("DELETE FROM members WHERE server_id = ? AND user_id = ?")
         .bind(id.to_string())
@@ -381,7 +381,7 @@ pub async fn moderate_voice(
     let server = db::get_server(&state.db, id).await?;
     db::require_perm(&state.db, &server, None, user.id, Permissions::MUTE_MEMBERS)
         .await?;
-    if user_id == server.owner_id && user.id != server.owner_id {
+    if !db::can_moderate_member(&state.db, &server, user.id, user_id).await? {
         return Err(AppError::Forbidden);
     }
     if !db::is_member(&state.db, id, user_id).await? {
@@ -399,8 +399,8 @@ pub async fn ban_member(
     let server = db::get_server(&state.db, id).await?;
     db::require_perm(&state.db, &server, None, user.id, Permissions::BAN_MEMBERS)
         .await?;
-    if body.user_id == server.owner_id {
-        return Err(AppError::BadRequest("cannot ban owner".into()));
+    if !db::can_moderate_member(&state.db, &server, user.id, body.user_id).await? {
+        return Err(AppError::Forbidden);
     }
     let now = Utc::now().to_rfc3339();
     sqlx::query(
@@ -751,18 +751,34 @@ pub async fn join_invite(
         return Ok(Json(db::get_server(&state.db, invite.server_id).await?));
     }
     let now = Utc::now().to_rfc3339();
+    let mut tx = state.db.begin().await?;
     sqlx::query(
         "INSERT INTO members (server_id, user_id, joined_at, accepted_rules) VALUES (?, ?, ?, 0)",
     )
     .bind(invite.server_id.to_string())
     .bind(user.id.to_string())
     .bind(&now)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
-    sqlx::query("UPDATE invites SET uses = uses + 1 WHERE code = ?")
-        .bind(&code)
-        .execute(&state.db)
-        .await?;
+    // Atomic use count — refuse if exhausted under concurrency.
+    let updated = if let Some(max) = invite.max_uses {
+        sqlx::query("UPDATE invites SET uses = uses + 1 WHERE code = ? AND uses < ?")
+            .bind(&code)
+            .bind(max as i64)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
+    } else {
+        sqlx::query("UPDATE invites SET uses = uses + 1 WHERE code = ?")
+            .bind(&code)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
+    };
+    if updated == 0 {
+        return Err(AppError::BadRequest("invite exhausted".into()));
+    }
+    tx.commit().await?;
 
     state.hub.add_server_member(invite.server_id, user.id);
     let member = db::get_member(&state.db, invite.server_id, user.id).await?;
@@ -838,13 +854,26 @@ pub async fn create_role(
     db::require_perm(&state.db, &server, None, user.id, Permissions::MANAGE_ROLES)
         .await?;
     let role_id = Uuid::new_v4();
-    let perms = body.permissions.unwrap_or(0);
+    let perms = db::cap_role_permissions(
+        &state.db,
+        &server,
+        user.id,
+        body.permissions.unwrap_or(0),
+    )
+    .await?;
     let color = body.color.unwrap_or_else(|| "#99a1b3".into());
     let max_pos: (i64,) =
         sqlx::query_as("SELECT COALESCE(MAX(position), 0) FROM roles WHERE server_id = ?")
             .bind(id.to_string())
             .fetch_one(&state.db)
             .await?;
+    // New roles sit below the actor's highest role (unless owner).
+    let actor_pos = if user.id == server.owner_id {
+        max_pos.0 + 1
+    } else {
+        db::member_highest_position(&state.db, id, user.id).await? as i64
+    };
+    let position = (max_pos.0 + 1).min(actor_pos.max(0));
     sqlx::query(
         "INSERT INTO roles (id, server_id, name, color, gradient, position, permissions, is_everyone) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
     )
@@ -853,7 +882,7 @@ pub async fn create_role(
     .bind(body.name.trim())
     .bind(color)
     .bind(body.gradient)
-    .bind(max_pos.0 + 1)
+    .bind(position)
     .bind(perms as i64)
     .execute(&state.db)
     .await?;
@@ -872,6 +901,20 @@ pub async fn update_role(
     let server = db::get_server(&state.db, id).await?;
     db::require_perm(&state.db, &server, None, user.id, Permissions::MANAGE_ROLES)
         .await?;
+    let roles = db::server_roles(&state.db, id).await?;
+    let target = roles
+        .iter()
+        .find(|r| r.id == role_id)
+        .ok_or(AppError::NotFound)?;
+    if target.is_everyone {
+        return Err(AppError::BadRequest("cannot edit @everyone this way".into()));
+    }
+    if user.id != server.owner_id {
+        let actor_pos = db::member_highest_position(&state.db, id, user.id).await?;
+        if target.position >= actor_pos {
+            return Err(AppError::Forbidden);
+        }
+    }
     if let Some(name) = body.name {
         sqlx::query("UPDATE roles SET name = ? WHERE id = ? AND server_id = ? AND is_everyone = 0")
             .bind(name.trim())
@@ -897,16 +940,24 @@ pub async fn update_role(
             .await?;
     }
     if let Some(perms) = body.permissions {
+        let capped = db::cap_role_permissions(&state.db, &server, user.id, perms).await?;
         sqlx::query("UPDATE roles SET permissions = ? WHERE id = ? AND server_id = ?")
-            .bind(perms as i64)
+            .bind(capped as i64)
             .bind(role_id.to_string())
             .bind(id.to_string())
             .execute(&state.db)
             .await?;
     }
     if let Some(pos) = body.position {
+        let mut next_pos = pos;
+        if user.id != server.owner_id {
+            let actor_pos = db::member_highest_position(&state.db, id, user.id).await?;
+            if next_pos >= actor_pos {
+                next_pos = actor_pos.saturating_sub(1);
+            }
+        }
         sqlx::query("UPDATE roles SET position = ? WHERE id = ? AND server_id = ?")
-            .bind(pos)
+            .bind(next_pos)
             .bind(role_id.to_string())
             .bind(id.to_string())
             .execute(&state.db)
@@ -928,6 +979,20 @@ pub async fn delete_role(
     let server = db::get_server(&state.db, id).await?;
     db::require_perm(&state.db, &server, None, user.id, Permissions::MANAGE_ROLES)
         .await?;
+    let roles = db::server_roles(&state.db, id).await?;
+    let target = roles
+        .iter()
+        .find(|r| r.id == role_id)
+        .ok_or(AppError::NotFound)?;
+    if target.is_everyone {
+        return Err(AppError::BadRequest("cannot delete @everyone".into()));
+    }
+    if user.id != server.owner_id {
+        let actor_pos = db::member_highest_position(&state.db, id, user.id).await?;
+        if target.position >= actor_pos {
+            return Err(AppError::Forbidden);
+        }
+    }
     sqlx::query("DELETE FROM roles WHERE id = ? AND server_id = ? AND is_everyone = 0")
         .bind(role_id.to_string())
         .bind(id.to_string())
@@ -945,12 +1010,42 @@ pub async fn set_member_roles(
     let server = db::get_server(&state.db, id).await?;
     db::require_perm(&state.db, &server, None, user.id, Permissions::MANAGE_ROLES)
         .await?;
+    if !db::is_member(&state.db, id, user_id).await? {
+        return Err(AppError::NotFound);
+    }
+    if !db::can_moderate_member(&state.db, &server, user.id, user_id).await?
+        && user.id != server.owner_id
+    {
+        // Owners always can; otherwise must outrank the target.
+        if user_id != user.id {
+            return Err(AppError::Forbidden);
+        }
+    }
+    let roles = db::server_roles(&state.db, id).await?;
+    let actor_pos = if user.id == server.owner_id {
+        i32::MAX
+    } else {
+        db::member_highest_position(&state.db, id, user.id).await?
+    };
+    let mut allowed: Vec<Uuid> = Vec::new();
+    for role_id in body.role_ids {
+        let Some(role) = roles.iter().find(|r| r.id == role_id) else {
+            continue;
+        };
+        if role.is_everyone {
+            continue;
+        }
+        if role.position >= actor_pos && user.id != server.owner_id {
+            return Err(AppError::Forbidden);
+        }
+        allowed.push(role_id);
+    }
     sqlx::query("DELETE FROM member_roles WHERE server_id = ? AND user_id = ?")
         .bind(id.to_string())
         .bind(user_id.to_string())
         .execute(&state.db)
         .await?;
-    for role_id in body.role_ids {
+    for role_id in allowed {
         sqlx::query(
             "INSERT INTO member_roles (server_id, user_id, role_id) VALUES (?, ?, ?)",
         )

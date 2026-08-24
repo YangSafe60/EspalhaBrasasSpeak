@@ -32,6 +32,18 @@ export type ElectronAPI = {
   onSignal: (handler: (payload: unknown) => void) => () => void;
   onFrame: (handler: (payload: unknown) => void) => () => void;
   onAppUpdate: (handler: (payload: AppUpdateEvent) => void) => () => void;
+  /** Upload a non-image file to Litterbox from the desktop process (no VPS storage). */
+  uploadTempMedia: (payload: {
+    filename: string;
+    contentType: string;
+    data: ArrayBuffer;
+    expire?: "1h" | "12h" | "24h" | "72h";
+  }) => Promise<{
+    url: string;
+    size: number;
+    filename: string;
+    contentType: string;
+  }>;
 };
 
 export type AppUpdateEvent = {

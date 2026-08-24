@@ -13,7 +13,7 @@ import {
   hasPerm,
   Perm,
 } from "../lib/serverPerms";
-import { CATBOX_UPLOAD_HINT } from "../lib/uploadHints";
+import { ATTACH_UPLOAD_HINT } from "../lib/uploadHints";
 import { matchCustomEmojiToken } from "../lib/customEmoji";
 import { mediaUrl } from "../lib/mediaUrl";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -698,14 +698,14 @@ export function MessageView() {
             {pendingFiles.map((f) => (
               <span key={f.id}>{f.name}</span>
             ))}
-            <p className="muted tiny pending-upload-hint">{CATBOX_UPLOAD_HINT}</p>
+            <p className="muted tiny pending-upload-hint">{ATTACH_UPLOAD_HINT}</p>
           </div>
         )}
         <form className="composer" onSubmit={(e) => void onSubmit(e)}>
           <button
             type="button"
             className="icon-btn"
-            title={`Attach file — ${CATBOX_UPLOAD_HINT}`}
+            title={`Attach file — ${ATTACH_UPLOAD_HINT}`}
             onClick={() => fileRef.current?.click()}
           >
             +

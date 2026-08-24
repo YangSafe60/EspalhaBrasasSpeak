@@ -102,9 +102,23 @@ pub async fn create(
     .await?;
 
     let content = body.content.trim();
-    if content.is_empty() && body.attachment_ids.as_ref().map(|a| a.is_empty()).unwrap_or(true)
-    {
+    let has_attachments = body
+        .attachment_ids
+        .as_ref()
+        .map(|a| !a.is_empty())
+        .unwrap_or(false);
+    if content.is_empty() && !has_attachments {
         return Err(AppError::BadRequest("empty message".into()));
+    }
+    if has_attachments {
+        db::require_perm(
+            &state.db,
+            &server,
+            Some(id),
+            user.id,
+            Permissions::ATTACH_FILES,
+        )
+        .await?;
     }
 
     let msg_id = Uuid::new_v4();
@@ -123,13 +137,18 @@ pub async fn create(
 
     if let Some(ids) = body.attachment_ids {
         for aid in ids {
-            sqlx::query(
-                "UPDATE attachments SET message_id = ? WHERE id = ? AND message_id IS NULL",
+            // Only the uploader may attach their own orphaned upload.
+            let res = sqlx::query(
+                "UPDATE attachments SET message_id = ? WHERE id = ? AND message_id IS NULL AND uploader_id = ?",
             )
             .bind(msg_id.to_string())
             .bind(aid.to_string())
+            .bind(user.id.to_string())
             .execute(&state.db)
             .await?;
+            if res.rows_affected() == 0 {
+                return Err(AppError::Forbidden);
+            }
         }
     }
 
@@ -168,6 +187,14 @@ pub async fn update(
     let channel_id = Uuid::parse_str(&row.channel_id).unwrap();
     let channel = db::get_channel(&state.db, channel_id).await?;
     let server = db::get_server(&state.db, channel.server_id).await?;
+    db::require_perm(
+        &state.db,
+        &server,
+        Some(channel_id),
+        user.id,
+        Permissions::VIEW_CHANNEL,
+    )
+    .await?;
     if author_id != user.id {
         db::require_perm(
             &state.db,
@@ -217,6 +244,14 @@ pub async fn delete(
     let channel_id = Uuid::parse_str(&row.channel_id).unwrap();
     let channel = db::get_channel(&state.db, channel_id).await?;
     let server = db::get_server(&state.db, channel.server_id).await?;
+    db::require_perm(
+        &state.db,
+        &server,
+        Some(channel_id),
+        user.id,
+        Permissions::VIEW_CHANNEL,
+    )
+    .await?;
     if author_id != user.id {
         db::require_perm(
             &state.db,
@@ -299,6 +334,14 @@ pub async fn remove_reaction(
     let message = db::load_message(&state.db, id, user.id).await?;
     let channel = db::get_channel(&state.db, message.channel_id).await?;
     let server = db::get_server(&state.db, channel.server_id).await?;
+    db::require_perm(
+        &state.db,
+        &server,
+        Some(channel.id),
+        user.id,
+        Permissions::VIEW_CHANNEL,
+    )
+    .await?;
     sqlx::query("DELETE FROM reactions WHERE message_id = ? AND user_id = ? AND emoji = ?")
         .bind(id.to_string())
         .bind(user.id.to_string())

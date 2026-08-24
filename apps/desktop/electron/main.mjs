@@ -207,6 +207,53 @@ function registerIpc() {
     }
     return true;
   });
+
+  /** Upload non-image files from the user's machine (bypasses VPS + CORS). */
+  ipcMain.handle("media:upload-temp", async (_evt, payload = {}) => {
+    const filename = String(payload.filename || "file.bin").replace(/[/\\]/g, "_");
+    const contentType = String(payload.contentType || "application/octet-stream");
+    const expire = ["1h", "12h", "24h", "72h"].includes(payload.expire)
+      ? payload.expire
+      : "72h";
+    const raw = payload.data;
+    if (!raw) {
+      throw new Error("file data required");
+    }
+    const buf = Buffer.isBuffer(raw)
+      ? raw
+      : Buffer.from(raw instanceof ArrayBuffer ? raw : new Uint8Array(raw));
+    if (buf.length === 0) {
+      throw new Error("empty file");
+    }
+    // Match server default MAX_UPLOAD_BYTES (25 MiB).
+    const maxBytes = 25 * 1024 * 1024;
+    if (buf.length > maxBytes) {
+      throw new Error("file too large (max 25 MB)");
+    }
+
+    const form = new FormData();
+    form.append("reqtype", "fileupload");
+    form.append("time", expire);
+    form.append(
+      "fileToUpload",
+      new Blob([new Uint8Array(buf)], { type: contentType }),
+      filename,
+    );
+
+    const res = await fetch(
+      "https://litterbox.catbox.moe/resources/internals/api.php",
+      { method: "POST", body: form },
+    );
+    const text = (await res.text()).trim();
+    if (!res.ok || !/^https:\/\/litter\.catbox\.moe\//i.test(text)) {
+      throw new Error(
+        text && text.length < 200
+          ? `Litterbox upload failed: ${text}`
+          : `Litterbox upload failed (${res.status})`,
+      );
+    }
+    return { url: text, size: buf.length, filename, contentType };
+  });
 }
 
 function sendAppUpdate(payload) {

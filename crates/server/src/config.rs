@@ -18,13 +18,51 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn from_env() -> Self {
-        Self {
+    pub fn from_env() -> anyhow::Result<Self> {
+        let jwt_secret = env::var("JWT_SECRET")
+            .unwrap_or_else(|_| "dev-secret-change-me-in-production".into());
+        let livekit_api_secret = env::var("LIVEKIT_API_SECRET").unwrap_or_else(|_| {
+            "espalha_brasas_dev_livekit_secret_32b".into()
+        });
+        let allow_insecure =
+            env::var("SPEAKAPP_ALLOW_INSECURE_SECRETS").as_deref() == Ok("1");
+        let is_prod_like = env::var("SPEAKAPP_ENV")
+            .map(|v| {
+                let v = v.to_ascii_lowercase();
+                v == "production" || v == "prod"
+            })
+            .unwrap_or(false);
+
+        if !allow_insecure {
+            let weak_jwt = jwt_secret.len() < 32
+                || jwt_secret == "dev-secret-change-me-in-production"
+                || jwt_secret == "change-me-please";
+            let weak_lk = livekit_api_secret.len() < 32
+                || livekit_api_secret == "espalha_brasas_dev_livekit_secret_32b"
+                || livekit_api_secret == "secret";
+            if is_prod_like && (weak_jwt || weak_lk) {
+                anyhow::bail!(
+                    "refusing to start with weak JWT_SECRET / LIVEKIT_API_SECRET in production; \
+                     set strong secrets (≥32 chars) or SPEAKAPP_ALLOW_INSECURE_SECRETS=1 for local-only"
+                );
+            }
+            if weak_jwt {
+                tracing::warn!(
+                    "JWT_SECRET is weak/default — set a long random secret before any public deploy"
+                );
+            }
+            if weak_lk {
+                tracing::warn!(
+                    "LIVEKIT_API_SECRET is weak/default — set a strong secret before any public deploy"
+                );
+            }
+        }
+
+        Ok(Self {
             bind: env::var("SPEAKAPP_BIND").unwrap_or_else(|_| "0.0.0.0:8080".into()),
             database_url: env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "sqlite://data/speakapp.db?mode=rwc".into()),
-            jwt_secret: env::var("JWT_SECRET")
-                .unwrap_or_else(|_| "dev-secret-change-me-in-production".into()),
+            jwt_secret,
             media_dir: PathBuf::from(
                 env::var("MEDIA_DIR").unwrap_or_else(|_| "data/media".into()),
             ),
@@ -33,9 +71,7 @@ impl Config {
             livekit_url: env::var("LIVEKIT_URL")
                 .unwrap_or_else(|_| "ws://localhost:7880".into()),
             livekit_api_key: env::var("LIVEKIT_API_KEY").unwrap_or_else(|_| "devkey".into()),
-            livekit_api_secret: env::var("LIVEKIT_API_SECRET").unwrap_or_else(|_| {
-                "espalha_brasas_dev_livekit_secret_32b".into()
-            }),
+            livekit_api_secret,
             max_upload_bytes: env::var("MAX_UPLOAD_BYTES")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -48,7 +84,7 @@ impl Config {
                 .ok()
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty()),
-        }
+        })
     }
 
     /// URL embedded in voice tokens for desktop clients.

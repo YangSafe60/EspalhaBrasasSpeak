@@ -326,6 +326,15 @@ pub async fn set_overwrites(
             OverwriteTarget::Role => "role",
             OverwriteTarget::Member => "member",
         };
+        let (allow, deny) = db::cap_overwrite_bits(
+            &state.db,
+            &server,
+            id,
+            user.id,
+            ow.allow,
+            ow.deny,
+        )
+        .await?;
         sqlx::query(
             "INSERT INTO permission_overwrites (id, channel_id, target_type, target_id, allow_bits, deny_bits) VALUES (?, ?, ?, ?, ?, ?)",
         )
@@ -333,8 +342,8 @@ pub async fn set_overwrites(
         .bind(id.to_string())
         .bind(ty)
         .bind(ow.target_id.to_string())
-        .bind(ow.allow as i64)
-        .bind(ow.deny as i64)
+        .bind(allow as i64)
+        .bind(deny as i64)
         .execute(&state.db)
         .await?;
     }

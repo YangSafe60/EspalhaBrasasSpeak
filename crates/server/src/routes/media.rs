@@ -22,6 +22,7 @@ pub struct RemoteMediaBody {
     pub url: String,
     pub filename: Option<String>,
     pub content_type: Option<String>,
+    pub size: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -44,7 +45,7 @@ pub struct GifSearchResponse {
 
 pub async fn upload(
     State(state): State<AppState>,
-    _user: AuthUser,
+    user: AuthUser,
     mut multipart: Multipart,
 ) -> AppResult<Json<UploadResponse>> {
     let field = multipart
@@ -61,6 +62,12 @@ pub async fn upload(
         .content_type()
         .unwrap_or("application/octet-stream")
         .to_string();
+    if !content_type.to_ascii_lowercase().starts_with("image/") {
+        return Err(AppError::BadRequest(
+            "only images can be uploaded here; other files must use temporary external hosting"
+                .into(),
+        ));
+    }
     let data = field
         .bytes()
         .await
@@ -77,27 +84,53 @@ pub async fn upload(
         .await
         .map_err(|e| AppError::BadRequest(format!("ImgBB upload failed: {e}")))?;
 
-    insert_attachment(&state, &filename, &content_type, data.len() as i64, &url).await
+    insert_attachment(&state, user.id, &filename, &content_type, data.len() as i64, &url).await
 }
 
 pub async fn register_remote(
     State(state): State<AppState>,
-    _user: AuthUser,
+    user: AuthUser,
     Json(body): Json<RemoteMediaBody>,
 ) -> AppResult<Json<UploadResponse>> {
     let url = body.url.trim().to_string();
-    if !is_klipy_url(&url) {
-        return Err(AppError::BadRequest("only Klipy GIF URLs are allowed".into()));
+    if !is_allowed_remote_url(&url) {
+        return Err(AppError::BadRequest(
+            "URL host is not allowed (Klipy / Litterbox / Catbox only)".into(),
+        ));
     }
     let filename = body
         .filename
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "gif.gif".into());
+        .unwrap_or_else(|| {
+            if is_klipy_url(&url) {
+                "gif.gif".into()
+            } else {
+                "file.bin".into()
+            }
+        });
     let content_type = body
         .content_type
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "image/gif".into());
-    insert_attachment(&state, &filename, &content_type, 0, &url).await
+        .unwrap_or_else(|| {
+            if is_klipy_url(&url) {
+                "image/gif".into()
+            } else {
+                "application/octet-stream".into()
+            }
+        });
+    let reported = body.size.unwrap_or(0);
+    if reported > state.config.max_upload_bytes {
+        return Err(AppError::BadRequest("file too large".into()));
+    }
+    insert_attachment(
+        &state,
+        user.id,
+        &filename,
+        &content_type,
+        reported as i64,
+        &url,
+    )
+    .await
 }
 
 pub async fn search_gifs(
@@ -117,33 +150,57 @@ pub async fn search_gifs(
 
 async fn insert_attachment(
     state: &AppState,
+    uploader_id: Uuid,
     filename: &str,
     content_type: &str,
     size: i64,
     url: &str,
 ) -> AppResult<Json<UploadResponse>> {
     let id = Uuid::new_v4();
+    // Sanitize filename: strip path components to avoid client-side confusion.
+    let safe_name = filename
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or("upload.bin")
+        .chars()
+        .take(180)
+        .collect::<String>();
     sqlx::query(
-        "INSERT INTO attachments (id, message_id, filename, content_type, size, url) VALUES (?, NULL, ?, ?, ?, ?)",
+        "INSERT INTO attachments (id, message_id, filename, content_type, size, url, uploader_id) VALUES (?, NULL, ?, ?, ?, ?, ?)",
     )
     .bind(id.to_string())
-    .bind(filename)
+    .bind(&safe_name)
     .bind(content_type)
     .bind(size)
     .bind(url)
+    .bind(uploader_id.to_string())
     .execute(&state.db)
     .await?;
 
     Ok(Json(UploadResponse {
         id,
         url: url.to_string(),
-        filename: filename.to_string(),
+        filename: safe_name,
         content_type: content_type.to_string(),
         size: size as u64,
     }))
 }
 
 fn is_klipy_url(raw: &str) -> bool {
+    host_matches(raw, |h| h == "klipy.com" || h.ends_with(".klipy.com"))
+}
+
+/// HTTPS hosts we trust for URL-only attachment registration (bytes never stored on this server).
+fn is_allowed_remote_url(raw: &str) -> bool {
+    host_matches(raw, |h| {
+        h == "klipy.com"
+            || h.ends_with(".klipy.com")
+            || h == "litter.catbox.moe"
+            || h == "files.catbox.moe"
+    })
+}
+
+fn host_matches(raw: &str, pred: impl FnOnce(&str) -> bool) -> bool {
     let Ok(parsed) = reqwest::Url::parse(raw) else {
         return false;
     };
@@ -152,10 +209,7 @@ fn is_klipy_url(raw: &str) -> bool {
     }
     parsed
         .host_str()
-        .map(|h| {
-            let h = h.to_ascii_lowercase();
-            h == "klipy.com" || h.ends_with(".klipy.com")
-        })
+        .map(|h| pred(&h.to_ascii_lowercase()))
         .unwrap_or(false)
 }
 

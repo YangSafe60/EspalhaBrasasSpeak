@@ -273,6 +273,23 @@ pub async fn update_state(
             .and_then(|c| Uuid::parse_str(c).ok()),
     };
 
+    // Joining / staying in a voice channel requires membership + CONNECT.
+    if let Some(cid) = channel_id {
+        let channel = db::get_channel(&state.db, cid).await?;
+        if channel.channel_type != ChannelType::Voice {
+            return Err(AppError::BadRequest("not a voice channel".into()));
+        }
+        let server = db::get_server(&state.db, channel.server_id).await?;
+        db::require_perm(
+            &state.db,
+            &server,
+            Some(cid),
+            user.id,
+            Permissions::CONNECT,
+        )
+        .await?;
+    }
+
     sqlx::query(
         r#"INSERT INTO voice_states (user_id, channel_id, muted, deafened, streaming, server_muted, server_deafened, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)

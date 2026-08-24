@@ -20,7 +20,7 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let config = Config::from_env();
+    let config = Config::from_env()?;
     let state = AppState::new(config.clone()).await?;
     let app = routes::router(state);
 

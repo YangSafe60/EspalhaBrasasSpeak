@@ -15,17 +15,71 @@ use crate::state::AppState;
 use crate::ws;
 use axum::{
     extract::{Query, State, WebSocketUpgrade},
+    http::{header, HeaderValue, Method},
     response::IntoResponse,
     routing::{delete, get, patch, post, put},
     Router,
 };
 use serde::Deserialize;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::services::ServeDir;
+use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
+
+fn build_cors(public_url: &str) -> CorsLayer {
+    let mut origins: Vec<HeaderValue> = Vec::new();
+    for raw in [
+        "http://localhost:1420",
+        "http://127.0.0.1:1420",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+    ] {
+        if let Ok(v) = raw.parse() {
+            origins.push(v);
+        }
+    }
+    if let Ok(v) = public_url.trim_end_matches('/').parse() {
+        origins.push(v);
+    }
+    if let Ok(extra) = std::env::var("CORS_ORIGINS") {
+        for part in extra.split(',') {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
+            }
+            if let Ok(v) = part.parse() {
+                origins.push(v);
+            }
+        }
+    }
+    // Electron may send Origin: null for file:// / custom schemes.
+    if let Ok(v) = HeaderValue::from_str("null") {
+        origins.push(v);
+    }
+
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::list(origins))
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            header::ACCEPT,
+        ])
+        .allow_credentials(false)
+}
 
 pub fn router(state: AppState) -> Router {
     let media = ServeDir::new(&state.config.media_dir);
+    let cors = build_cors(&state.config.public_url);
 
     Router::new()
         .route("/health", get(|| async { "ok" }))
@@ -194,12 +248,19 @@ pub fn router(state: AppState) -> Router {
         .route("/api/gifs/search", get(media::search_gifs))
         .route("/api/ws", get(ws_upgrade))
         .nest_service("/media", media)
-        .layer(
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any),
-        )
+        .layer(SetResponseHeaderLayer::overriding(
+            header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::X_FRAME_OPTIONS,
+            HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::REFERRER_POLICY,
+            HeaderValue::from_static("no-referrer"),
+        ))
+        .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
@@ -219,6 +280,9 @@ async fn ws_upgrade(
         return Err(AppError::Unauthorized);
     }
     let user_id = claims.sub;
+    if crate::db::is_user_disabled(&state.db, user_id).await? {
+        return Err(AppError::BadRequest("account disabled".into()));
+    }
     // Prime server membership cache
     let servers = crate::db::user_servers(&state.db, user_id).await?;
     for s in &servers {

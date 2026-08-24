@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { CATBOX_UPLOAD_HINT } from "../lib/uploadHints";
+import { IMAGE_UPLOAD_HINT } from "../lib/uploadHints";
 import { mediaCssUrl, mediaUrl } from "../lib/mediaUrl";
 import {
   effectiveServerPerms,
@@ -530,7 +530,7 @@ export function ServerSettingsModal() {
                 )}
               </div>
             </div>
-            <p className="muted tiny">{CATBOX_UPLOAD_HINT}</p>
+            <p className="muted tiny">{IMAGE_UPLOAD_HINT}</p>
             <button type="submit" className="btn primary" disabled={busy}>
               Save branding
             </button>
@@ -712,7 +712,7 @@ export function ServerSettingsModal() {
               </label>
             </div>
             <p className="muted tiny">
-              {CATBOX_UPLOAD_HINT} Max 50 emojis. GIFs animate.
+              {IMAGE_UPLOAD_HINT} Max 50 emojis. GIFs animate.
             </p>
             {serverEmojis.length === 0 ? (
               <p className="muted">No custom emojis yet.</p>

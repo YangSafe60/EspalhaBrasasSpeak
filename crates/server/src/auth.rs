@@ -103,10 +103,13 @@ pub fn hash_token(token: &str) -> String {
 }
 
 pub fn decode_token(token: &str, secret: &str) -> AppResult<Claims> {
+    let mut validation = Validation::new(jsonwebtoken::Algorithm::HS256);
+    validation.validate_exp = true;
+    validation.algorithms = vec![jsonwebtoken::Algorithm::HS256];
     decode::<Claims>(
         token,
         &DecodingKey::from_secret(secret.as_bytes()),
-        &Validation::default(),
+        &validation,
     )
     .map(|d| d.claims)
     .map_err(|_| AppError::Unauthorized)

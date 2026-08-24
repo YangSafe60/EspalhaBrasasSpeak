@@ -20,7 +20,7 @@ tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 axum = { version = "0.8", features = ["ws", "multipart", "macros"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "fs", "trace", "limit"] }
+tower-http = { version = "0.6", features = ["cors", "fs", "trace", "limit", "set-header"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "uuid", "chrono", "migrate"] }
 argon2 = "0.5"
 jsonwebtoken = "9"

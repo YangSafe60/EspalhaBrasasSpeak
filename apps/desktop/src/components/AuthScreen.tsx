@@ -98,7 +98,7 @@ export function AuthScreen() {
             onChange={(e) => setPassword(e.target.value)}
             autoComplete={mode === "login" ? "current-password" : "new-password"}
             required
-            minLength={6}
+            minLength={8}
           />
         </label>
 

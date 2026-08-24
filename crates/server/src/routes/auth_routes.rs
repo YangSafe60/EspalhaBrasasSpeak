@@ -73,8 +73,10 @@ pub async fn register(
     if username.len() < 2 || username.len() > 32 {
         return Err(AppError::BadRequest("username must be 2-32 chars".into()));
     }
-    if body.password.len() < 6 {
-        return Err(AppError::BadRequest("password too short".into()));
+    if body.password.len() < 8 {
+        return Err(AppError::BadRequest(
+            "password must be at least 8 characters".into(),
+        ));
     }
     let id = Uuid::new_v4();
     let now = Utc::now().to_rfc3339();
@@ -208,6 +210,11 @@ pub async fn update_me(
         res?;
     }
     if let Some(avatar) = body.avatar_url {
+        if let Some(ref url) = avatar {
+            if !is_safe_profile_url(url) {
+                return Err(AppError::BadRequest("invalid avatar url".into()));
+            }
+        }
         sqlx::query("UPDATE users SET avatar_url = ? WHERE id = ?")
             .bind(avatar)
             .bind(user.id.to_string())
@@ -215,6 +222,11 @@ pub async fn update_me(
             .await?;
     }
     if let Some(banner) = body.banner_url {
+        if let Some(ref url) = banner {
+            if !is_safe_profile_url(url) {
+                return Err(AppError::BadRequest("invalid banner url".into()));
+            }
+        }
         sqlx::query("UPDATE users SET banner_url = ? WHERE id = ?")
             .bind(banner)
             .bind(user.id.to_string())
@@ -245,8 +257,10 @@ pub async fn change_password(
     user: AuthUser,
     Json(body): Json<PasswordChangeReq>,
 ) -> AppResult<Json<serde_json::Value>> {
-    if body.new_password.len() < 6 {
-        return Err(AppError::BadRequest("password too short".into()));
+    if body.new_password.len() < 8 {
+        return Err(AppError::BadRequest(
+            "password must be at least 8 characters".into(),
+        ));
     }
     verify_current_password(&state, user.id, &body.current_password).await?;
     let hash = hash_password(&body.new_password)?;
@@ -277,6 +291,26 @@ pub async fn delete_account(
     verify_current_password(&state, user.id, &body.password).await?;
     db::delete_user_account(&state.db, user.id).await?;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+fn is_safe_profile_url(raw: &str) -> bool {
+    let raw = raw.trim();
+    if raw.len() > 2048 || raw.contains('\0') {
+        return false;
+    }
+    // Reject javascript:, data:, file:, etc. Allow http(s) only.
+    let lower = raw.to_ascii_lowercase();
+    if !(lower.starts_with("https://") || lower.starts_with("http://")) {
+        return false;
+    }
+    // No credentials in URL (user:pass@host).
+    if let Some(rest) = raw.split("://").nth(1) {
+        let authority = rest.split('/').next().unwrap_or("");
+        if authority.contains('@') {
+            return false;
+        }
+    }
+    true
 }
 
 async fn issue_pair(state: &AppState, user_id: Uuid) -> AppResult<Json<AuthResponse>> {

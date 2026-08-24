@@ -14,6 +14,7 @@ import {
   loadOrCreateIdentity,
   type IdentityKeyPair,
 } from "../lib/e2e";
+import { getElectronAPI } from "../lib/desktop";
 import type {
   AuthResponse,
   Channel,
@@ -434,6 +435,7 @@ interface AppState {
     url: string;
     filename?: string;
     content_type?: string;
+    size?: number;
   }) => Promise<{ id: string; url: string }>;
   applyWsEvent: (event: WsEvent) => void;
 }
@@ -452,6 +454,27 @@ function upsertMessage(list: Message[], message: Message): Message[] {
   }
   const CAP = 80;
   return next.length > CAP ? next.slice(next.length - CAP) : next;
+}
+
+function guessContentType(name: string): string | null {
+  const ext = name.split(".").pop()?.toLowerCase();
+  switch (ext) {
+    case "png":
+      return "image/png";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "gif":
+      return "image/gif";
+    case "webp":
+      return "image/webp";
+    case "bmp":
+      return "image/bmp";
+    case "svg":
+      return "image/svg+xml";
+    default:
+      return null;
+  }
 }
 
 function upsertDm(list: DmMessage[], message: DmMessage): DmMessage[] {
@@ -1778,13 +1801,46 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   uploadFile: async (file) => {
-    const fd = new FormData();
-    fd.append("file", file);
-    const res = await api<{ id: string; url: string }>("/api/media/upload", {
-      method: "POST",
-      formData: fd,
+    const contentType =
+      file.type || guessContentType(file.name) || "application/octet-stream";
+    const isImage = contentType.toLowerCase().startsWith("image/");
+
+    // Images: stream through API → ImgBB (URL only in DB; nothing written to MEDIA_DIR).
+    if (isImage) {
+      const fd = new FormData();
+      const payload =
+        file.type === contentType
+          ? file
+          : new File([file], file.name || "image.bin", { type: contentType });
+      fd.append("file", payload);
+      return api<{ id: string; url: string }>("/api/media/upload", {
+        method: "POST",
+        formData: fd,
+      });
+    }
+
+    // Other files: upload from the user's machine to Litterbox, then register URL only.
+    const desktop = getElectronAPI();
+    if (!desktop?.uploadTempMedia) {
+      throw new Error(
+        "Non-image files require the desktop app (Litterbox upload from your PC).",
+      );
+    }
+    const temp = await desktop.uploadTempMedia({
+      filename: file.name || "file.bin",
+      contentType,
+      data: await file.arrayBuffer(),
+      expire: "72h",
     });
-    return res;
+    return api<{ id: string; url: string }>("/api/media/remote", {
+      method: "POST",
+      body: {
+        url: temp.url,
+        filename: temp.filename || file.name,
+        content_type: temp.contentType || contentType,
+        size: temp.size ?? file.size,
+      },
+    });
   },
 
   attachRemoteMedia: async (body) => {

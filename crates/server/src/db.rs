@@ -508,6 +508,10 @@ pub async fn effective_permissions(
     if server.owner_id == user_id {
         return Ok(Permissions::all());
     }
+    // Non-members must not inherit @everyone (or any) server permissions.
+    if !is_member(db, server.id, user_id).await? {
+        return Ok(Permissions::empty());
+    }
     let roles = server_roles(db, server.id).await?;
     let mut role_ids = member_role_ids(db, server.id, user_id).await?;
     if let Some(everyone) = roles.iter().find(|r| r.is_everyone) {
@@ -527,6 +531,84 @@ pub async fn effective_permissions(
         &overwrites,
         user_id,
     ))
+}
+
+/// Highest role position held by a member (`-1` if none / not a member).
+pub async fn member_highest_position(
+    db: &SqlitePool,
+    server_id: Uuid,
+    user_id: Uuid,
+) -> AppResult<i32> {
+    let roles = server_roles(db, server_id).await?;
+    let held = member_role_ids(db, server_id, user_id).await?;
+    let mut max = -1i32;
+    for role in &roles {
+        if role.is_everyone || held.contains(&role.id) {
+            max = max.max(role.position);
+        }
+    }
+    Ok(max)
+}
+
+/// True when `actor` may moderate `target` (kick/ban/mute/role assign).
+pub async fn can_moderate_member(
+    db: &SqlitePool,
+    server: &Server,
+    actor_id: Uuid,
+    target_id: Uuid,
+) -> AppResult<bool> {
+    if actor_id == target_id {
+        return Ok(false);
+    }
+    if target_id == server.owner_id {
+        return Ok(false);
+    }
+    if actor_id == server.owner_id {
+        return Ok(true);
+    }
+    let actor_pos = member_highest_position(db, server.id, actor_id).await?;
+    let target_pos = member_highest_position(db, server.id, target_id).await?;
+    Ok(actor_pos > target_pos)
+}
+
+/// Cap role permission bits so an actor cannot grant powers they lack.
+/// Owners may grant anything; others cannot grant ADMINISTRATOR.
+pub async fn cap_role_permissions(
+    db: &SqlitePool,
+    server: &Server,
+    actor_id: Uuid,
+    requested: u64,
+) -> AppResult<u64> {
+    let actor_perms = effective_permissions(db, server, None, actor_id).await?;
+    let mut bits = Permissions::from_bits_truncate(requested);
+    if actor_id != server.owner_id {
+        bits.remove(Permissions::ADMINISTRATOR);
+        // Only grant bits the actor themselves holds (ADMINISTRATOR already covered).
+        bits = bits.intersection(actor_perms);
+        bits.remove(Permissions::ADMINISTRATOR);
+    }
+    Ok(bits.bits())
+}
+
+/// Cap channel overwrite bits to what the actor can manage.
+pub async fn cap_overwrite_bits(
+    db: &SqlitePool,
+    server: &Server,
+    channel_id: Uuid,
+    actor_id: Uuid,
+    allow: u64,
+    deny: u64,
+) -> AppResult<(u64, u64)> {
+    let actor_perms = effective_permissions(db, server, Some(channel_id), actor_id).await?;
+    let mut allow_bits = Permissions::from_bits_truncate(allow);
+    let mut deny_bits = Permissions::from_bits_truncate(deny);
+    if actor_id != server.owner_id && !actor_perms.has(Permissions::ADMINISTRATOR) {
+        allow_bits = allow_bits.intersection(actor_perms);
+        deny_bits = deny_bits.intersection(actor_perms);
+        allow_bits.remove(Permissions::ADMINISTRATOR);
+        deny_bits.remove(Permissions::ADMINISTRATOR);
+    }
+    Ok((allow_bits.bits(), deny_bits.bits()))
 }
 
 pub async fn require_perm(
