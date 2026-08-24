@@ -1,7 +1,12 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
+const apiBase = String(
+  process.env.SPEAKAPP_API_BASE || process.env.VITE_API_BASE || "",
+).replace(/\/$/, "");
+
 contextBridge.exposeInMainWorld("electronAPI", {
   isElectron: true,
+  apiBase,
   getInfo: () => ipcRenderer.invoke("desktop:info"),
   focusMain: () => ipcRenderer.invoke("window:focus-main"),
   setBackgroundThrottling: (enabled) =>

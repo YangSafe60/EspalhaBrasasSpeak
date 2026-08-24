@@ -65,6 +65,16 @@ Repo → **Settings → Secrets and variables → Actions**:
 
 If `VPS_HOST` is unset, the deploy job is **skipped** (safe for forks without secrets).
 
+The GitHub Actions SSH user must run Docker without a password prompt:
+
+```bash
+sudo usermod -aG docker ubuntu   # or opc
+# log out of ALL sessions, then SSH back in once
+groups   # should list docker
+```
+
+If `groups` still has no `docker`, Actions will fail with `permission denied` on `docker.sock`.
+
 The VPS clone must be able to `git fetch` GitHub:
 
 - **Public repo:** `git clone https://github.com/<you>/<repo>.git ~/espalha-brasas`
@@ -89,17 +99,15 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Point DNS A/AAAA to the VPS. Update `Caddyfile` with your real domain and use Caddy automatic HTTPS:
+Point DNS A/AAAA to the VPS. On deploy, `remote-deploy.sh` **writes** `Caddyfile` from
+`PUBLIC_URL` + `LIVEKIT_URL` (GitHub secrets), so Caddy gets automatic HTTPS for:
 
 ```
-your.domain {
-  reverse_proxy api:8080
-}
-
-livekit.your.domain {
-  reverse_proxy livekit:7880
-}
+your.domain            → api:8080
+livekit.your.domain    → livekit:7880
 ```
+
+You do **not** need to edit `Caddyfile` by hand if those secrets are set.
 
 Set server env so tokens and URLs match the public host:
 

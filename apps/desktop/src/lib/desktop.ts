@@ -7,6 +7,8 @@ export type DesktopShareSource = {
 
 export type ElectronAPI = {
   isElectron: true;
+  /** Runtime override (SPEAKAPP_API_BASE / VITE_API_BASE). Empty = use Vite default. */
+  apiBase?: string;
   getInfo: () => Promise<{
     isElectron: boolean;
     platform: string;

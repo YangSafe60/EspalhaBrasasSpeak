@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { getApiBase } from "../api/client";
 import { useAppStore } from "../store/appStore";
 import logoFull from "../assets/logo-full.png";
 
@@ -103,6 +104,7 @@ export function AuthScreen() {
         </label>
 
         {error && <p className="form-error">{error}</p>}
+        <p className="muted tiny">Server: {getApiBase()}</p>
 
         <button type="submit" className="btn primary" disabled={busy}>
           {busy ? "Please wait…" : mode === "login" ? "Sign in" : "Register"}

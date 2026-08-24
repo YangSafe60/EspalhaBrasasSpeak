@@ -5,15 +5,15 @@ const STORAGE_REFRESH = "speakapp_refresh";
 /** Legacy key — cleared so old user overrides no longer apply. */
 const LEGACY_STORAGE_API = "speakapp_api_base";
 
-/** App-configured API origin (build-time / env), not user-editable. */
+/** App-configured API origin (runtime Electron env, then Vite, then localhost). */
 export function getApiBase(): string {
   if (typeof localStorage !== "undefined") {
     localStorage.removeItem(LEGACY_STORAGE_API);
   }
-  return (
-    import.meta.env.VITE_API_BASE?.replace(/\/$/, "") ||
-    "http://localhost:8080"
-  );
+  const runtime =
+    typeof window !== "undefined" ? window.electronAPI?.apiBase : "";
+  const baked = import.meta.env.VITE_API_BASE;
+  return (runtime || baked || "http://localhost:8080").replace(/\/$/, "");
 }
 
 export function getAccessToken(): string | null {
@@ -109,7 +109,17 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
       body: formData ? formData : body !== undefined ? JSON.stringify(body) : undefined,
     });
 
-  let res = await doFetch();
+  let res: Response;
+  try {
+    res = await doFetch();
+  } catch (e) {
+    const hint = getApiBase();
+    throw new ApiError(
+      0,
+      `Failed to reach ${hint}${path}. If this is the VPS: open TCP 80/443/8080 in Oracle (security list + iptables), and start the app with SPEAKAPP_API_BASE=${hint.startsWith("http://localhost") ? "http://YOUR_VPS_IP:8080" : hint}.`,
+      e,
+    );
+  }
   if (res.status === 401 && auth) {
     const ok = await tryRefresh();
     if (ok) {

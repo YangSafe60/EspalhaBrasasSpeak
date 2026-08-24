@@ -65,14 +65,17 @@ jobs:
             fi
 
             cd "$DEPLOY_PATH"
+            git config --global --add safe.directory "$DEPLOY_PATH" || true
             git fetch --prune origin
             # Checkout the exact commit from this Actions run (after fetch it is on origin).
             if git rev-parse --verify "$GIT_REF^{commit}" >/dev/null 2>&1; then
               git reset --hard "$GIT_REF"
             else
+              echo "Commit $GIT_REF not on origin yet; using origin/HEAD"
               BRANCH=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || echo main)
               git reset --hard "origin/${BRANCH}"
             fi
 
-            chmod +x deploy/remote-deploy.sh
+            chmod +x deploy/remote-deploy.sh deploy/open-oracle-ports.sh || true
+            # Actions SSH has no TTY; docker group must already apply, or passwordless sudo.
             deploy/remote-deploy.sh
