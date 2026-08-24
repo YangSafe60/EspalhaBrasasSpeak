@@ -11,7 +11,7 @@ JWT_SECRET="${JWT_SECRET:-dev-secret-change-me-in-production}"
 PUBLIC_URL="${PUBLIC_URL:-http://127.0.0.1:8080}"
 # Public URL embedded in voice tokens (desktop clients). Do not use ws://livekit:7880
 # on a VPS — that hostname only exists inside Docker.
-LIVEKIT_URL="${LIVEKIT_URL:-ws://127.0.0.1:7880}"
+LIVEKIT_URL="${LIVEKIT_URL:-}"
 LIVEKIT_API_KEY="${LIVEKIT_API_KEY:-devkey}"
 LIVEKIT_API_SECRET="${LIVEKIT_API_SECRET:-espalha_brasas_dev_livekit_secret_32b}"
 MAX_UPLOAD_BYTES="${MAX_UPLOAD_BYTES:-26214400}"
@@ -23,7 +23,33 @@ api_host() {
   printf '%s' "$1" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##' | cut -d/ -f1 | cut -d@ -f2
 }
 
+host_only() {
+  # Strip :port from host:port (IPv4 / hostname).
+  printf '%s' "$1" | sed -E 's/:([0-9]+)$//'
+}
+
+is_loopback_or_docker() {
+  case "$1" in
+    127.0.0.1|localhost|::1|livekit|0.0.0.0|"") return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 API_HOST="$(api_host "$PUBLIC_URL")"
+API_HOST_ONLY="$(host_only "$API_HOST")"
+
+# If LIVEKIT_URL is unset or still points at loopback/Docker, derive from PUBLIC_URL.
+# Otherwise clients get ws://127.0.0.1:7880 and voice fails with "Failed to fetch".
+if [[ -z "$LIVEKIT_URL" ]] || is_loopback_or_docker "$(host_only "$(api_host "$LIVEKIT_URL")")"; then
+  if is_loopback_or_docker "$API_HOST_ONLY"; then
+    LIVEKIT_URL="ws://127.0.0.1:7880"
+  else
+    LIVEKIT_URL="ws://${API_HOST_ONLY}:7880"
+    echo "==> LIVEKIT_URL unset/loopback — using ${LIVEKIT_URL} (from PUBLIC_URL)"
+    echo "    Set Actions secret LIVEKIT_URL=wss://livekit.your.domain for TLS subdomain setup."
+  fi
+fi
+
 LK_HOST="$(api_host "$LIVEKIT_URL")"
 
 umask 077
@@ -48,8 +74,9 @@ if [[ "$API_HOST" == 127.0.0.1:* ]] || [[ "$API_HOST" == localhost* ]] || [[ "$A
 }
 EOF
   echo "==> Caddy: HTTP on :80 → api (no domain yet)"
+  echo "==> Voice clients connect directly to ${LIVEKIT_URL} (open TCP 7880/7881 + UDP 50000-50100)"
 else
-  if [[ "$LK_HOST" == "$API_HOST" ]] || [[ -z "$LK_HOST" ]]; then
+  if [[ "$LK_HOST" == "$API_HOST" ]] || [[ -z "$LK_HOST" ]] || is_loopback_or_docker "$(host_only "$LK_HOST")"; then
     cat > Caddyfile <<EOF
 # Generated from PUBLIC_URL=${PUBLIC_URL}
 ${API_HOST} {

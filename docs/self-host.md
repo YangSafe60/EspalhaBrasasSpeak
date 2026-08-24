@@ -54,7 +54,7 @@ Repo → **Settings → Secrets and variables → Actions**:
 | `VPS_DEPLOY_PATH` | no | `/home/ubuntu/espalha-brasas` |
 | `JWT_SECRET` | no* | long random string |
 | `PUBLIC_URL` | no* | `https://your.domain` |
-| `LIVEKIT_URL` | no* | `wss://livekit.your.domain` (written to VPS `.env`; used in voice tokens) |
+| `LIVEKIT_URL` | no* | `wss://livekit.your.domain` **or** `ws://YOUR_VPS_IP:7880` (written into voice tokens) |
 | `LIVEKIT_API_KEY` | no* | same key on API **and** LiveKit container |
 | `LIVEKIT_API_SECRET` | no* | ≥32 chars; same secret on API **and** LiveKit container |
 | `MAX_UPLOAD_BYTES` | no | `26214400` |
@@ -62,6 +62,10 @@ Repo → **Settings → Secrets and variables → Actions**:
 | `KLIPY_API_KEY` | yes for GIFs | Klipy API key ([partner.klipy.com](https://partner.klipy.com)) |
 
 \*If these are missing or empty, the deploy script and Compose keep **localhost / local-dev defaults** (same as `.env.example`). Set them for a real public VPS.
+
+If `LIVEKIT_URL` is empty (or still `ws://127.0.0.1:7880`) while `PUBLIC_URL` is your VPS IP/domain, deploy now derives `ws://<PUBLIC_HOST>:7880` automatically. Without that, desktop clients try to open LiveKit on their own PC and fail with **could not establish signal connection: Failed to fetch**.
+
+Also open **TCP 7880/7881** and **UDP 50000–50100** on the Oracle security list (`deploy/open-oracle-ports.sh`).
 
 `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` are written to `deploy/.env` on the Oracle box. Compose injects them into **both** the API and the LiveKit server so tokens and the SFU stay in sync.
 

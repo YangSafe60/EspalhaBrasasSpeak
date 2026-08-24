@@ -161,10 +161,8 @@ pub async fn token(
         token,
         // Prefer loopback IPv4 — `localhost` can resolve to ::1 and break
         // WebRTC ICE inside Tauri/WebView2 while Chrome still works.
-        url: state
-            .config
-            .livekit_url
-            .replace("://localhost", "://127.0.0.1"),
+        // Also rewrite Docker/loopback LIVEKIT_URL using PUBLIC_URL on VPS.
+        url: state.config.client_livekit_url(),
         room,
     }))
 }

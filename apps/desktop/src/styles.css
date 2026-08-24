@@ -1706,7 +1706,7 @@ html[data-compact="1"] .message {
 }
 
 .emoji-picker-body {
-  max-height: min(420px, 52vh);
+  max-height: min(320px, 40vh);
   overflow-y: auto;
   padding-right: 0.1rem;
 }

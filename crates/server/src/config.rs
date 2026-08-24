@@ -50,4 +50,103 @@ impl Config {
                 .filter(|s| !s.is_empty()),
         }
     }
+
+    /// URL embedded in voice tokens for desktop clients.
+    /// Rewrites loopback / Docker-only hosts using PUBLIC_URL so VPS deploys
+    /// don't hand clients `ws://127.0.0.1:7880`.
+    pub fn client_livekit_url(&self) -> String {
+        let url = self
+            .livekit_url
+            .trim()
+            .trim_end_matches('/')
+            .replace("://localhost", "://127.0.0.1");
+
+        let Some(lk_host) = url_host(&url) else {
+            return url;
+        };
+        if !is_unusable_livekit_host(&lk_host) {
+            return url;
+        }
+
+        let Some(pub_host) = url_host(&self.public_url) else {
+            return url;
+        };
+        if is_unusable_livekit_host(&pub_host) {
+            // Local dev — keep loopback.
+            return url;
+        }
+
+        // IP / host without a dedicated LiveKit subdomain: direct :7880 (compose publishes it).
+        let rewritten = format!("ws://{}:7880", pub_host);
+        tracing::warn!(
+            livekit = %rewritten,
+            "LIVEKIT_URL was loopback/docker-internal; rewritten from PUBLIC_URL for clients"
+        );
+        rewritten
+    }
+}
+
+fn is_unusable_livekit_host(host: &str) -> bool {
+    matches!(
+        host,
+        "127.0.0.1" | "localhost" | "::1" | "livekit" | "0.0.0.0"
+    )
+}
+
+/// Host from `scheme://host[:port]/path` (IPv4 / hostname; not IPv6).
+fn url_host(url: &str) -> Option<String> {
+    let rest = url.split("://").nth(1)?;
+    let authority = rest.split('/').next()?;
+    let hostport = authority.split('@').next_back()?;
+    if let Some((host, port)) = hostport.rsplit_once(':') {
+        if port.chars().all(|c| c.is_ascii_digit()) {
+            return Some(host.to_string());
+        }
+    }
+    Some(hostport.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bare(public_url: &str, livekit_url: &str) -> Config {
+        Config {
+            bind: String::new(),
+            database_url: String::new(),
+            jwt_secret: String::new(),
+            media_dir: PathBuf::new(),
+            public_url: public_url.into(),
+            livekit_url: livekit_url.into(),
+            livekit_api_key: String::new(),
+            livekit_api_secret: String::new(),
+            max_upload_bytes: 0,
+            imgbb_api_key: None,
+            klipy_api_key: None,
+        }
+    }
+
+    #[test]
+    fn rewrites_loopback_livekit_using_public_ip() {
+        let cfg = bare("http://130.61.1.2:8080", "ws://127.0.0.1:7880");
+        assert_eq!(cfg.client_livekit_url(), "ws://130.61.1.2:7880");
+    }
+
+    #[test]
+    fn rewrites_docker_hostname() {
+        let cfg = bare("http://130.61.1.2:8080", "ws://livekit:7880");
+        assert_eq!(cfg.client_livekit_url(), "ws://130.61.1.2:7880");
+    }
+
+    #[test]
+    fn keeps_explicit_public_livekit() {
+        let cfg = bare("https://chat.example.com", "wss://livekit.example.com");
+        assert_eq!(cfg.client_livekit_url(), "wss://livekit.example.com");
+    }
+
+    #[test]
+    fn local_dev_keeps_loopback() {
+        let cfg = bare("http://127.0.0.1:8080", "ws://127.0.0.1:7880");
+        assert_eq!(cfg.client_livekit_url(), "ws://127.0.0.1:7880");
+    }
 }
