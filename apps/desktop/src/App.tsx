@@ -11,6 +11,7 @@ import {
   micIntroDone,
 } from "./components/MicConsentModal";
 import { ServerRail } from "./components/ServerRail";
+import { UpdateOverlay } from "./components/UpdateOverlay";
 import { VoiceLobbyView } from "./components/VoiceLobbyView";
 import { VoicePanel } from "./components/VoicePanel";
 import { useVoice } from "./hooks/useVoice";
@@ -211,6 +212,7 @@ export default function App() {
   return (
     <BrowserPreviewGate>
       <MainApp />
+      <UpdateOverlay />
     </BrowserPreviewGate>
   );
 }

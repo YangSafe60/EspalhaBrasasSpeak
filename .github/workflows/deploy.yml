@@ -1,7 +1,8 @@
 # Deploy Espalha Brasas to the Oracle VPS when `main` / `master` is updated.
 #
-# Skips entirely when `VPS_HOST` is not configured (forks / local-only repos).
-# App + Compose already fall back to localhost defaults when env vars are empty.
+# VPS deploy skips inside the job when VPS_HOST is empty (GitHub forbids
+# `secrets` in job-level `if:` — that broke the whole workflow before).
+# Desktop release always runs so auto-update can publish installers.
 #
 # Required secrets (Settings → Secrets and variables → Actions):
 #   VPS_HOST       — Oracle public IP or hostname
@@ -38,9 +39,20 @@ jobs:
   deploy:
     name: Deploy to Oracle VPS
     runs-on: ubuntu-latest
-    if: ${{ secrets.VPS_HOST != '' }}
     steps:
+      - name: Check VPS configured
+        id: gate
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          if [ -z "$VPS_HOST" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "VPS_HOST secret empty — skipping VPS deploy"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Deploy over SSH
+        if: steps.gate.outputs.configured == 'true'
         uses: appleboy/ssh-action@v1.2.0
         env:
           DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}

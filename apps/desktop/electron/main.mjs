@@ -205,6 +205,12 @@ function registerIpc() {
   });
 }
 
+function sendAppUpdate(payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("app:update", payload);
+  }
+}
+
 function setupAutoUpdate() {
   if (isDev) return;
   let autoUpdater;
@@ -216,9 +222,40 @@ function setupAutoUpdate() {
   }
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on("update-available", (info) => {
+    sendAppUpdate({
+      phase: "downloading",
+      percent: 0,
+      version: info?.version || "",
+    });
+  });
+  autoUpdater.on("download-progress", (progress) => {
+    sendAppUpdate({
+      phase: "downloading",
+      percent: Math.max(0, Math.min(100, progress?.percent || 0)),
+      version: "",
+    });
+  });
+  autoUpdater.on("update-downloaded", (info) => {
+    sendAppUpdate({
+      phase: "ready",
+      percent: 100,
+      version: info?.version || "",
+    });
+    setTimeout(() => {
+      try {
+        autoUpdater.quitAndInstall(false, true);
+      } catch (err) {
+        console.warn("quitAndInstall", err);
+      }
+    }, 1400);
+  });
   autoUpdater.on("error", (err) => {
     console.warn("auto-update", err);
+    sendAppUpdate({ phase: "idle", percent: 0, version: "" });
   });
+
   void autoUpdater.checkForUpdatesAndNotify().catch((err) => {
     console.warn("checkForUpdates", err);
   });

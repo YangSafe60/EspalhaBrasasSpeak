@@ -4005,3 +4005,174 @@ html.is-screen-popout #root {
   padding: 0.75rem;
   font-size: 0.85rem;
 }
+
+.update-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background:
+    radial-gradient(720px 420px at 50% 72%, rgba(227, 27, 35, 0.28), transparent 58%),
+    rgba(4, 3, 3, 0.88);
+  backdrop-filter: blur(10px);
+}
+
+.update-overlay-card {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  gap: 0.55rem;
+  max-width: 360px;
+}
+
+.update-overlay-card h2 {
+  margin: 0.4rem 0 0;
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  letter-spacing: 0.02em;
+}
+
+.brasas-fire {
+  position: relative;
+  width: 140px;
+  height: 150px;
+  margin: 0.2rem 0 0.4rem;
+}
+
+.brasas-glow {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  width: 90px;
+  height: 90px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 170, 60, 0.55), transparent 70%);
+  filter: blur(8px);
+  animation: brasas-pulse 1.4s ease-in-out infinite;
+}
+
+.brasas-flame {
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  width: 42px;
+  height: 78px;
+  transform: translateX(-50%);
+  border-radius: 50% 50% 40% 40%;
+  filter: blur(1px);
+  mix-blend-mode: screen;
+  transform-origin: 50% 100%;
+}
+
+.brasas-flame.flame-a {
+  background: radial-gradient(circle at 50% 80%, #fff6c8 0%, #ffb347 28%, #e31b23 72%, transparent 100%);
+  animation: brasas-flicker 0.9s ease-in-out infinite;
+}
+
+.brasas-flame.flame-b {
+  width: 54px;
+  height: 92px;
+  left: calc(50% - 10px);
+  background: radial-gradient(circle at 50% 85%, #ffd27a 0%, #ff6a2a 38%, #b10f18 78%, transparent 100%);
+  opacity: 0.85;
+  animation: brasas-flicker 1.15s ease-in-out infinite reverse;
+}
+
+.brasas-flame.flame-c {
+  width: 34px;
+  height: 70px;
+  left: calc(50% + 12px);
+  background: radial-gradient(circle at 50% 82%, #fff1a8 0%, #ff8a1a 40%, #e31b23 80%, transparent 100%);
+  opacity: 0.9;
+  animation: brasas-flicker 0.75s ease-in-out infinite 0.12s;
+}
+
+.brasas-logs {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  width: 88px;
+  height: 14px;
+  transform: translateX(-50%);
+  border-radius: 8px;
+  background: linear-gradient(90deg, #3a2214, #6a3b1c 40%, #2a160e);
+  box-shadow: 0 0 16px rgba(227, 27, 35, 0.35);
+}
+
+.brasas-embers {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.brasas-spark {
+  position: absolute;
+  bottom: 28px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #ffd27a;
+  box-shadow: 0 0 8px #ff8a1a;
+  animation: brasas-rise 1.8s linear infinite;
+}
+
+.brasas-spark.spark-0 { left: 38%; animation-delay: 0s; }
+.brasas-spark.spark-1 { left: 46%; animation-delay: 0.2s; width: 3px; height: 3px; }
+.brasas-spark.spark-2 { left: 54%; animation-delay: 0.45s; }
+.brasas-spark.spark-3 { left: 62%; animation-delay: 0.7s; width: 2px; height: 2px; }
+.brasas-spark.spark-4 { left: 42%; animation-delay: 0.95s; }
+.brasas-spark.spark-5 { left: 58%; animation-delay: 1.1s; }
+.brasas-spark.spark-6 { left: 50%; animation-delay: 0.35s; width: 5px; height: 5px; }
+.brasas-spark.spark-7 { left: 34%; animation-delay: 1.3s; }
+.brasas-spark.spark-8 { left: 66%; animation-delay: 0.55s; }
+.brasas-spark.spark-9 { left: 48%; animation-delay: 1.5s; width: 3px; height: 3px; }
+.brasas-spark.spark-10 { left: 56%; animation-delay: 0.15s; }
+.brasas-spark.spark-11 { left: 40%; animation-delay: 1.7s; }
+
+.update-progress {
+  width: min(260px, 72vw);
+  height: 8px;
+  margin-top: 0.35rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.update-progress span {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #e31b23, #ff8a1a, #ffd27a);
+  box-shadow: 0 0 12px rgba(255, 138, 26, 0.7);
+  transition: width 0.25s ease;
+}
+
+@keyframes brasas-flicker {
+  0%, 100% { transform: translateX(-50%) scaleY(1) scaleX(1); opacity: 0.92; }
+  35% { transform: translateX(-46%) scaleY(1.12) scaleX(0.92); opacity: 1; }
+  70% { transform: translateX(-54%) scaleY(0.9) scaleX(1.08); opacity: 0.82; }
+}
+
+@keyframes brasas-pulse {
+  0%, 100% { opacity: 0.55; transform: translateX(-50%) scale(1); }
+  50% { opacity: 0.9; transform: translateX(-50%) scale(1.12); }
+}
+
+@keyframes brasas-rise {
+  0% { transform: translateY(0) scale(1); opacity: 0; }
+  15% { opacity: 1; }
+  100% { transform: translateY(-110px) scale(0.4); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brasas-flame,
+  .brasas-glow,
+  .brasas-spark {
+    animation: none;
+  }
+}

@@ -26,4 +26,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("relay:frame", listener);
     return () => ipcRenderer.removeListener("relay:frame", listener);
   },
+  onAppUpdate: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on("app:update", listener);
+    return () => ipcRenderer.removeListener("app:update", listener);
+  },
 });

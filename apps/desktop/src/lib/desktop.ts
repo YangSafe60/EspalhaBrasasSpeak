@@ -30,6 +30,13 @@ export type ElectronAPI = {
   relayFrame: (payload: unknown) => Promise<boolean>;
   onSignal: (handler: (payload: unknown) => void) => () => void;
   onFrame: (handler: (payload: unknown) => void) => () => void;
+  onAppUpdate: (handler: (payload: AppUpdateEvent) => void) => () => void;
+};
+
+export type AppUpdateEvent = {
+  phase: "idle" | "downloading" | "ready";
+  percent: number;
+  version?: string;
 };
 
 declare global {
