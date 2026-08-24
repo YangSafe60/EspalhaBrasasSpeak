@@ -106,13 +106,22 @@ See [docs/desktop.md](docs/desktop.md) for packaging details.
 
 ```bash
 cd deploy
+# Optional — omit these and Compose/API use localhost-friendly defaults
 export JWT_SECRET=please-change-me
 export PUBLIC_URL=https://your.domain
 docker compose build --platform linux/arm64
 docker compose up -d
 ```
 
-See [docs/self-host.md](docs/self-host.md) for Oracle sizing, TLS, backups, and building the Electron client against your domain.
+### Auto-deploy from GitHub
+
+Push to `main` runs [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml): SSH → VPS → `git reset` to that commit → `deploy/remote-deploy.sh`.
+
+1. Clone the repo once on the VPS (`~/espalha-brasas` by default).
+2. Add secrets: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY` (and optionally `PUBLIC_URL`, `JWT_SECRET`, LiveKit keys…).
+3. Empty/missing app secrets keep local defaults — same as running without a production `.env`.
+
+See [docs/self-host.md](docs/self-host.md) for Oracle sizing, TLS, backups, GitHub secret table, and building the Electron client against your domain.
 
 ## Features (v1)
 

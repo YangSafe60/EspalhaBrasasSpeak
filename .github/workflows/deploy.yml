@@ -1,0 +1,78 @@
+# Deploy Espalha Brasas to the Oracle VPS when `main` / `master` is updated.
+#
+# Skips entirely when `VPS_HOST` is not configured (forks / local-only repos).
+# App + Compose already fall back to localhost defaults when env vars are empty.
+#
+# Required secrets (Settings → Secrets and variables → Actions):
+#   VPS_HOST       — Oracle public IP or hostname
+#   VPS_USER       — SSH user (e.g. ubuntu, opc)
+#   VPS_SSH_KEY    — private key (full PEM) that can SSH into the VPS
+#
+# Optional secrets:
+#   VPS_PORT       — SSH port (default 22)
+#   VPS_DEPLOY_PATH — absolute path to the clone on the VPS (default ~/espalha-brasas)
+#   JWT_SECRET
+#   PUBLIC_URL           — e.g. https://your.domain
+#   LIVEKIT_URL          — e.g. wss://livekit.your.domain
+#   LIVEKIT_API_KEY
+#   LIVEKIT_API_SECRET
+#   MAX_UPLOAD_BYTES
+
+name: deploy
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Oracle VPS
+    runs-on: ubuntu-latest
+    if: ${{ secrets.VPS_HOST != '' }}
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
+          GIT_REF: ${{ github.sha }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          PUBLIC_URL: ${{ secrets.PUBLIC_URL }}
+          LIVEKIT_URL: ${{ secrets.LIVEKIT_URL }}
+          LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY }}
+          LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET }}
+          MAX_UPLOAD_BYTES: ${{ secrets.MAX_UPLOAD_BYTES }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          command_timeout: 45m
+          envs: DEPLOY_PATH,GIT_REF,JWT_SECRET,PUBLIC_URL,LIVEKIT_URL,LIVEKIT_API_KEY,LIVEKIT_API_SECRET,MAX_UPLOAD_BYTES
+          script: |
+            set -euo pipefail
+
+            DEPLOY_PATH="${DEPLOY_PATH:-$HOME/espalha-brasas}"
+            if [ ! -d "$DEPLOY_PATH/.git" ]; then
+              echo "Missing git clone at $DEPLOY_PATH"
+              echo "On the VPS, run once:"
+              echo "  git clone <your-repo-url> $DEPLOY_PATH"
+              exit 1
+            fi
+
+            cd "$DEPLOY_PATH"
+            git fetch --prune origin
+            # Checkout the exact commit from this Actions run (after fetch it is on origin).
+            if git rev-parse --verify "$GIT_REF^{commit}" >/dev/null 2>&1; then
+              git reset --hard "$GIT_REF"
+            else
+              BRANCH=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || echo main)
+              git reset --hard "origin/${BRANCH}"
+            fi
+
+            chmod +x deploy/remote-deploy.sh
+            deploy/remote-deploy.sh

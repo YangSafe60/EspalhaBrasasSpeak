@@ -5,7 +5,8 @@ rtc:
   port_range_end: 50100
   use_external_ip: true
 keys:
-  # Must match LIVEKIT_API_KEY / LIVEKIT_API_SECRET (secret >= 32 chars)
+  # Fallback only. Compose overrides with --keys from LIVEKIT_API_KEY / LIVEKIT_API_SECRET
+  # (GitHub secrets on the VPS, localhost defaults when unset). Secret >= 32 chars.
   devkey: espalha_brasas_dev_livekit_secret_32b
 logging:
   level: info

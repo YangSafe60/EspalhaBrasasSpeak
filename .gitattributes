@@ -1,0 +1,3 @@
+# Keep shell scripts LF so they run on Linux VPS after Windows edits
+*.sh text eol=lf
+deploy/remote-deploy.sh text eol=lf
