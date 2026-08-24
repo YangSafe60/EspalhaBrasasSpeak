@@ -13,7 +13,7 @@
 #   VPS_PORT       — SSH port (default 22)
 #   VPS_DEPLOY_PATH — absolute path to the clone on the VPS (default ~/espalha-brasas)
 #   JWT_SECRET
-#   PUBLIC_URL           — e.g. https://your.domain
+#   PUBLIC_URL           — e.g. http://YOUR_VPS_IP:8080 (baked into the Windows installer)
 #   LIVEKIT_URL          — e.g. wss://livekit.your.domain
 #   LIVEKIT_API_KEY
 #   LIVEKIT_API_SECRET
@@ -154,12 +154,33 @@ jobs:
               --notes "Desktop auto-update release ${VERSION}." \
               --latest
           fi
+      - name: Resolve public API URL for installer
+        id: api
+        env:
+          PUBLIC_URL: ${{ secrets.PUBLIC_URL }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="${PUBLIC_URL:-}"
+          BASE="${BASE%/}"
+          if [ -z "$BASE" ] || [[ "$BASE" == *localhost* ]] || [[ "$BASE" == *127.0.0.1* ]]; then
+            if [ -n "${VPS_HOST:-}" ]; then
+              BASE="http://${VPS_HOST}:8080"
+              echo "PUBLIC_URL missing/local — using VPS_HOST → ${BASE}"
+            else
+              echo "::error::Set Actions secret PUBLIC_URL to your VPS API (e.g. http://YOUR_IP:8080). Refusing to bake localhost into the installer."
+              exit 1
+            fi
+          fi
+          echo "base=${BASE}" >> "$GITHUB_OUTPUT"
+          echo "VITE_API_BASE=${BASE}"
       - name: Install and build Windows installer
         working-directory: apps/desktop
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-          VITE_API_BASE: ${{ secrets.PUBLIC_URL }}
+          VITE_API_BASE: ${{ steps.api.outputs.base }}
         shell: bash
         run: |
           npm ci
