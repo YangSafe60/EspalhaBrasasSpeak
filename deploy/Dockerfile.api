@@ -1,37 +1,38 @@
 # syntax=docker/dockerfile:1
+# Build on Oracle (ARM) natively; CI can still cross-build arm64 from amd64.
 
-FROM --platform=$BUILDPLATFORM rust:1.85-bookworm AS builder
+FROM --platform=$BUILDPLATFORM rust:1.88-bookworm AS builder
 ARG TARGETPLATFORM
+ARG BUILDPLATFORM
 WORKDIR /src
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config libssl-dev ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-RUN case "$TARGETPLATFORM" in \
-      linux/arm64) rustup target add aarch64-unknown-linux-gnu \
-        && apt-get update \
-        && apt-get install -y --no-install-recommends \
-             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-        && rm -rf /var/lib/apt/lists/* ;; \
-    esac
+# Cross-compile only when the builder host is not already arm64.
+RUN if [ "$TARGETPLATFORM" = "linux/arm64" ] && [ "$BUILDPLATFORM" != "linux/arm64" ]; then \
+      rustup target add aarch64-unknown-linux-gnu \
+      && apt-get update \
+      && apt-get install -y --no-install-recommends \
+           gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+      && rm -rf /var/lib/apt/lists/* ; \
+    fi
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 
-# Cache deps with a stub then build for real
 RUN mkdir -p crates/server/src crates/shared/src crates/server/migrations \
     && true
 
-RUN case "$TARGETPLATFORM" in \
-      linux/arm64) \
-        export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
-        && cargo build --release -p speakapp-server --target aarch64-unknown-linux-gnu \
-        && cp target/aarch64-unknown-linux-gnu/release/speakapp-server /speakapp-server ;; \
-      *) \
-        cargo build --release -p speakapp-server \
-        && cp target/release/speakapp-server /speakapp-server ;; \
-    esac
+RUN if [ "$TARGETPLATFORM" = "linux/arm64" ] && [ "$BUILDPLATFORM" != "linux/arm64" ]; then \
+      export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+      && cargo build --release -p speakapp-server --target aarch64-unknown-linux-gnu \
+      && cp target/aarch64-unknown-linux-gnu/release/speakapp-server /speakapp-server ; \
+    else \
+      cargo build --release -p speakapp-server \
+      && cp target/release/speakapp-server /speakapp-server ; \
+    fi
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
