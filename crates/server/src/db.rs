@@ -2,7 +2,7 @@ use crate::error::{AppError, AppResult};
 use chrono::{DateTime, Utc};
 use speakapp_shared::{
     Attachment, Channel, ChannelType, Member, Message, OverwriteTarget, PermissionOverwrite,
-    Permissions, ReactionSummary, Role, Server, ServerRule, UserPublic,
+    Permissions, PresenceStatus, ReactionSummary, Role, Server, ServerRule, UserPublic,
 };
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -14,7 +14,7 @@ pub fn parse_uuid(s: &str) -> AppResult<Uuid> {
 
 pub async fn user_public(db: &SqlitePool, id: Uuid) -> AppResult<UserPublic> {
     let row = sqlx::query_as::<_, UserRow>(
-        "SELECT id, username, display_name, avatar_url, created_at FROM users WHERE id = ?",
+        "SELECT id, username, display_name, avatar_url, banner_url, created_at FROM users WHERE id = ?",
     )
     .bind(id.to_string())
     .fetch_optional(db)
@@ -29,6 +29,7 @@ struct UserRow {
     username: String,
     display_name: String,
     avatar_url: Option<String>,
+    banner_url: Option<String>,
     created_at: String,
 }
 
@@ -39,11 +40,56 @@ impl From<UserRow> for UserPublic {
             username: r.username,
             display_name: r.display_name,
             avatar_url: r.avatar_url,
+            banner_url: r.banner_url,
             created_at: DateTime::parse_from_rfc3339(&r.created_at)
                 .map(|d| d.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now()),
         }
     }
+}
+
+pub fn parse_presence_status(raw: &str) -> PresenceStatus {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "idle" => PresenceStatus::Idle,
+        "dnd" | "busy" => PresenceStatus::Dnd,
+        "offline" | "invisible" => PresenceStatus::Offline,
+        _ => PresenceStatus::Online,
+    }
+}
+
+pub fn presence_status_str(status: PresenceStatus) -> &'static str {
+    match status {
+        PresenceStatus::Online => "online",
+        PresenceStatus::Idle => "idle",
+        PresenceStatus::Dnd => "dnd",
+        PresenceStatus::Offline => "offline",
+    }
+}
+
+pub async fn get_user_status(db: &SqlitePool, id: Uuid) -> AppResult<PresenceStatus> {
+    let row: Option<String> = sqlx::query_scalar("SELECT status FROM users WHERE id = ?")
+        .bind(id.to_string())
+        .fetch_optional(db)
+        .await?;
+    Ok(row
+        .map(|s| parse_presence_status(&s))
+        .unwrap_or(PresenceStatus::Online))
+}
+
+pub async fn set_user_status(
+    db: &SqlitePool,
+    id: Uuid,
+    status: PresenceStatus,
+) -> AppResult<()> {
+    let res = sqlx::query("UPDATE users SET status = ? WHERE id = ?")
+        .bind(presence_status_str(status))
+        .bind(id.to_string())
+        .execute(db)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(AppError::NotFound);
+    }
+    Ok(())
 }
 
 #[derive(sqlx::FromRow)]
@@ -259,19 +305,73 @@ pub async fn channel_overwrites(
     .await?;
     Ok(rows
         .into_iter()
-        .map(|r| PermissionOverwrite {
-            id: Uuid::parse_str(&r.id).unwrap(),
-            channel_id: Uuid::parse_str(&r.channel_id).unwrap(),
-            target_type: if r.target_type == "member" {
-                OverwriteTarget::Member
-            } else {
-                OverwriteTarget::Role
-            },
-            target_id: Uuid::parse_str(&r.target_id).unwrap(),
-            allow: Permissions::from_bits_truncate(r.allow_bits as u64),
-            deny: Permissions::from_bits_truncate(r.deny_bits as u64),
-        })
+        .map(|r| map_overwrite_row(
+            r.id,
+            r.channel_id,
+            r.target_type,
+            r.target_id,
+            r.allow_bits,
+            r.deny_bits,
+        ))
         .collect())
+}
+
+/// All permission overwrites for channels in a server (for sidebar lock badges).
+pub async fn server_channel_overwrites(
+    db: &SqlitePool,
+    server_id: Uuid,
+) -> AppResult<Vec<PermissionOverwrite>> {
+    #[derive(sqlx::FromRow)]
+    struct OwRow {
+        id: String,
+        channel_id: String,
+        target_type: String,
+        target_id: String,
+        allow_bits: i64,
+        deny_bits: i64,
+    }
+    let rows = sqlx::query_as::<_, OwRow>(
+        "SELECT po.id, po.channel_id, po.target_type, po.target_id, po.allow_bits, po.deny_bits
+         FROM permission_overwrites po
+         INNER JOIN channels c ON c.id = po.channel_id
+         WHERE c.server_id = ?",
+    )
+    .bind(server_id.to_string())
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| map_overwrite_row(
+            r.id,
+            r.channel_id,
+            r.target_type,
+            r.target_id,
+            r.allow_bits,
+            r.deny_bits,
+        ))
+        .collect())
+}
+
+fn map_overwrite_row(
+    id: String,
+    channel_id: String,
+    target_type: String,
+    target_id: String,
+    allow_bits: i64,
+    deny_bits: i64,
+) -> PermissionOverwrite {
+    PermissionOverwrite {
+        id: Uuid::parse_str(&id).unwrap(),
+        channel_id: Uuid::parse_str(&channel_id).unwrap(),
+        target_type: if target_type == "member" {
+            OverwriteTarget::Member
+        } else {
+            OverwriteTarget::Role
+        },
+        target_id: Uuid::parse_str(&target_id).unwrap(),
+        allow: Permissions::from_bits_truncate(allow_bits as u64),
+        deny: Permissions::from_bits_truncate(deny_bits as u64),
+    }
 }
 
 pub async fn effective_permissions(

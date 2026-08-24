@@ -28,6 +28,8 @@ export function VoiceLobbyView({ voice }: Props) {
   const membersByServer = useAppStore((s) => s.membersByServer);
   const authors = useAppStore((s) => s.authors);
   const user = useAppStore((s) => s.user);
+  const activeServerId = useAppStore((s) => s.activeServerId);
+  const openMiniProfile = useAppStore((s) => s.openMiniProfile);
   const [popoutBusy, setPopoutBusy] = useState<string | null>(null);
   const { openForUserId, menuPortal } = useMemberContextMenu({
     applyUserMic: voice.applyUserMic,
@@ -192,6 +194,14 @@ export function VoiceLobbyView({ voice }: Props) {
                 <div
                   key={u.user_id}
                   className={`voice-lobby-tile${u.streaming ? " live" : ""}${u.isSelf ? " self" : ""}${voice.speakingIds.includes(u.user_id) ? " speaking" : ""}`}
+                  onClick={(e) =>
+                    openMiniProfile({
+                      userId: u.user_id,
+                      serverId: activeServerId,
+                      x: e.clientX,
+                      y: e.clientY,
+                    })
+                  }
                   onContextMenu={
                     u.isSelf
                       ? undefined

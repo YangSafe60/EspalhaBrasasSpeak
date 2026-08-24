@@ -1,0 +1,32 @@
+import type { PresenceStatus } from "../types";
+
+export const PRESENCE_OPTIONS: {
+  status: PresenceStatus;
+  label: string;
+  description: string;
+}[] = [
+  {
+    status: "online",
+    label: "Online",
+    description: "Available to chat",
+  },
+  {
+    status: "idle",
+    label: "Idle",
+    description: "Away from keyboard",
+  },
+  {
+    status: "dnd",
+    label: "Busy",
+    description: "Do not disturb",
+  },
+  {
+    status: "offline",
+    label: "Offline",
+    description: "Appear offline",
+  },
+];
+
+export function presenceLabel(status: PresenceStatus): string {
+  return PRESENCE_OPTIONS.find((o) => o.status === status)?.label || status;
+}

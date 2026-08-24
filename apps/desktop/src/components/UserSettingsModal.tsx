@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { CATBOX_UPLOAD_HINT } from "../lib/uploadHints";
-import { mediaCssUrl } from "../lib/mediaUrl";
+import { mediaCssUrl, mediaUrl } from "../lib/mediaUrl";
 import { getElectronAPI } from "../lib/desktop";
 import { useAppStore } from "../store/appStore";
 import { VoiceVideoSettingsPanel } from "./VoiceVideoSettingsPanel";
@@ -9,6 +9,7 @@ type Tab = "account" | "voice" | "appearance";
 
 const STORAGE_COMPACT = "eb_compact_messages";
 const STORAGE_NOTIFY = "eb_notify_sound";
+const IMAGE_ACCEPT = "image/*,image/gif,.gif";
 
 function readBool(key: string, fallback: boolean) {
   const v = localStorage.getItem(key);
@@ -27,6 +28,7 @@ export function UserSettingsModal() {
   const [tab, setTab] = useState<Tab>("account");
   const [displayName, setDisplayName] = useState("");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [bannerUrl, setBannerUrl] = useState<string | null>(null);
   const [compact, setCompact] = useState(() => readBool(STORAGE_COMPACT, false));
   const [notifySound, setNotifySound] = useState(() =>
     readBool(STORAGE_NOTIFY, true),
@@ -35,7 +37,8 @@ export function UserSettingsModal() {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState("dev");
-  const fileRef = useRef<HTMLInputElement>(null);
+  const avatarRef = useRef<HTMLInputElement>(null);
+  const bannerRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     void getElectronAPI()
@@ -50,6 +53,7 @@ export function UserSettingsModal() {
     if (modal !== "user-settings" || !user) return;
     setDisplayName(user.display_name || "");
     setAvatarUrl(user.avatar_url || null);
+    setBannerUrl(user.banner_url || null);
     setTab("account");
     setMsg(null);
     setErr(null);
@@ -97,7 +101,24 @@ export function UserSettingsModal() {
       setErr(error instanceof Error ? error.message : "Upload failed");
     } finally {
       setBusy(false);
-      if (fileRef.current) fileRef.current.value = "";
+      if (avatarRef.current) avatarRef.current.value = "";
+    }
+  }
+
+  async function onBannerFile(file: File | null) {
+    if (!file) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const up = await uploadFile(file);
+      setBannerUrl(up.url);
+      await updateProfile({ banner_url: up.url });
+      setMsg("Banner updated.");
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : "Upload failed");
+    } finally {
+      setBusy(false);
+      if (bannerRef.current) bannerRef.current.value = "";
     }
   }
 
@@ -115,10 +136,30 @@ export function UserSettingsModal() {
     }
   }
 
+  async function removeBanner() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await updateProfile({ banner_url: null });
+      setBannerUrl(null);
+      setMsg("Banner removed.");
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : "Failed to remove banner");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function doLogout() {
     setModal(null);
     logout();
   }
+
+  const initial = (
+    displayName.charAt(0) ||
+    user.username.charAt(0) ||
+    "?"
+  ).toUpperCase();
 
   return (
     <div className="modal-backdrop" onClick={() => setModal(null)}>
@@ -178,55 +219,96 @@ export function UserSettingsModal() {
 
           {tab === "account" && (
             <form className="stack" onSubmit={saveAccount}>
-              <div className="profile-banner">
+              <div className="user-profile-editor">
                 <button
                   type="button"
-                  className="avatar-edit"
+                  className={`user-profile-banner-edit${bannerUrl ? "" : " is-empty"}`}
                   style={
-                    avatarUrl
-                      ? { backgroundImage: mediaCssUrl(avatarUrl) }
+                    bannerUrl
+                      ? { backgroundImage: mediaCssUrl(bannerUrl) }
                       : undefined
                   }
-                  onClick={() => fileRef.current?.click()}
-                  title="Change avatar"
+                  onClick={() => bannerRef.current?.click()}
+                  title="Change banner"
                   disabled={busy}
                 >
-                  {!avatarUrl &&
-                    (displayName.charAt(0) || user.username.charAt(0) || "?").toUpperCase()}
+                  {!bannerUrl && <span>Change banner</span>}
                 </button>
-                <div>
-                  <strong>{user.display_name}</strong>
-                  <p className="muted">@{user.username}</p>
-                  <div className="row gap-sm" style={{ marginTop: 8 }}>
+                <div className="user-profile-avatar-edit-wrap">
+                  <button
+                    type="button"
+                    className="user-profile-avatar-edit"
+                    onClick={() => avatarRef.current?.click()}
+                    title="Change avatar"
+                    disabled={busy}
+                  >
+                    {avatarUrl ? (
+                      <img
+                        src={mediaUrl(avatarUrl)}
+                        alt=""
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <span>{initial}</span>
+                    )}
+                  </button>
+                </div>
+                <div className="user-profile-edit-actions">
+                  <button
+                    type="button"
+                    className="btn sm"
+                    disabled={busy}
+                    onClick={() => bannerRef.current?.click()}
+                  >
+                    Change banner
+                  </button>
+                  {bannerUrl && (
                     <button
                       type="button"
-                      className="btn"
+                      className="btn sm"
                       disabled={busy}
-                      onClick={() => fileRef.current?.click()}
+                      onClick={() => void removeBanner()}
                     >
-                      Change avatar
+                      Remove banner
                     </button>
-                    {avatarUrl && (
-                      <button
-                        type="button"
-                        className="btn"
-                        disabled={busy}
-                        onClick={() => void removeAvatar()}
-                      >
-                        Remove
-                      </button>
-                    )}
-                  </div>
-                  <p className="muted tiny" style={{ marginTop: 8, maxWidth: 280 }}>
-                    {CATBOX_UPLOAD_HINT}
-                  </p>
+                  )}
+                  <button
+                    type="button"
+                    className="btn sm"
+                    disabled={busy}
+                    onClick={() => avatarRef.current?.click()}
+                  >
+                    Change avatar
+                  </button>
+                  {avatarUrl && (
+                    <button
+                      type="button"
+                      className="btn sm"
+                      disabled={busy}
+                      onClick={() => void removeAvatar()}
+                    >
+                      Remove avatar
+                    </button>
+                  )}
                 </div>
+                <p className="muted tiny">{CATBOX_UPLOAD_HINT} GIFs allowed.</p>
                 <input
-                  ref={fileRef}
+                  ref={bannerRef}
                   type="file"
-                  accept="image/*"
+                  accept={IMAGE_ACCEPT}
                   hidden
-                  onChange={(e) => void onAvatarFile(e.target.files?.[0] ?? null)}
+                  onChange={(e) =>
+                    void onBannerFile(e.target.files?.[0] ?? null)
+                  }
+                />
+                <input
+                  ref={avatarRef}
+                  type="file"
+                  accept={IMAGE_ACCEPT}
+                  hidden
+                  onChange={(e) =>
+                    void onAvatarFile(e.target.files?.[0] ?? null)
+                  }
                 />
               </div>
 

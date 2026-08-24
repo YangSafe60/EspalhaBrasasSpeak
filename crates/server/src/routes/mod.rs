@@ -1,9 +1,11 @@
 mod auth_routes;
 mod channels;
 mod dms;
+mod emojis;
 pub(crate) mod friends;
 mod media;
 mod messages;
+mod presence;
 mod servers;
 pub(crate) mod voice;
 
@@ -98,6 +100,28 @@ pub fn router(state: AppState) -> Router {
             "/api/servers/{id}/invites",
             get(servers::list_invites).post(servers::create_invite),
         )
+        .route(
+            "/api/servers/{id}/invites/{code}",
+            delete(servers::delete_invite),
+        )
+        .route(
+            "/api/servers/{id}/invite-friend",
+            post(servers::invite_friend),
+        )
+        .route(
+            "/api/servers/{id}/emojis",
+            get(emojis::list_server_emojis).post(emojis::create_server_emoji),
+        )
+        .route(
+            "/api/servers/{id}/emojis/{emoji_id}",
+            patch(emojis::rename_server_emoji).delete(emojis::delete_server_emoji),
+        )
+        .route("/api/users/me/emojis", get(emojis::list_my_emojis))
+        .route(
+            "/api/users/me/presence",
+            get(presence::get_my_presence).put(presence::set_my_presence),
+        )
+        .route("/api/emojis/{emoji_id}", get(emojis::get_emoji))
         .route("/api/invites/{code}", get(servers::invite_info).post(servers::join_invite))
         .route(
             "/api/servers/{id}/roles",
@@ -124,12 +148,20 @@ pub fn router(state: AppState) -> Router {
             get(channels::list).post(channels::create),
         )
         .route(
+            "/api/servers/{id}/channel-overwrites",
+            get(channels::list_server_overwrites),
+        )
+        .route(
             "/api/channels/{id}",
             get(channels::get).patch(channels::update).delete(channels::delete),
         )
         .route(
             "/api/channels/{id}/overwrites",
             get(channels::list_overwrites).put(channels::set_overwrites),
+        )
+        .route(
+            "/api/channels/{id}/invite",
+            post(channels::invite_to_channel),
         )
         .route(
             "/api/channels/{id}/messages",

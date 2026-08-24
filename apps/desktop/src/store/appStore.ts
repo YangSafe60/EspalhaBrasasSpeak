@@ -29,21 +29,40 @@ import type {
   PresenceStatus,
   Role,
   Server,
+  ServerEmoji,
   ServerRule,
   UserIdentityKey,
   UserPublic,
   VoiceStateView,
   WsEvent,
 } from "../types";
+import { extractCustomEmojiIds } from "../lib/customEmoji";
+import {
+  channelIsMuted,
+  loadChannelMutes,
+  pruneExpiredMutes,
+  saveChannelMutes,
+  type ChannelMuteMap,
+} from "../lib/channelMutePrefs";
+import { playMessageNotify } from "../lib/messageNotify";
 import { permBits } from "../lib/serverPerms";
 
 export type ModalKind =
   | null
   | "create-server"
   | "join-invite"
+  | "invite-people"
   | "server-settings"
   | "channel-settings"
   | "user-settings";
+
+export type MiniProfileState = {
+  userId: string;
+  /** When set, show that member's roles on this server. */
+  serverId: string | null;
+  x: number;
+  y: number;
+};
 
 type TypingEntry = { username: string; expires: number };
 
@@ -90,6 +109,16 @@ function upsertFriendship(list: Friendship[], f: Friendship): Friendship[] {
   return next;
 }
 
+function normalizeOverwrite(o: PermissionOverwrite): PermissionOverwrite {
+  return {
+    ...o,
+    target_type:
+      String(o.target_type).toLowerCase() === "member" ? "member" : "role",
+    allow: permBits(o.allow),
+    deny: permBits(o.deny),
+  };
+}
+
 interface AppState {
   user: UserPublic | null;
   servers: Server[];
@@ -97,11 +126,18 @@ interface AppState {
   membersByServer: Record<string, Member[]>;
   rolesByServer: Record<string, Role[]>;
   rulesByServer: Record<string, ServerRule[]>;
+  /** channelId → permission overwrites (for private/lock badges). */
+  overwritesByChannel: Record<string, PermissionOverwrite[]>;
   messagesByChannel: Record<string, Message[]>;
   authors: Record<string, UserPublic>;
+  /** Custom emojis from all joined servers (for picker + cross-server use). */
+  customEmojis: ServerEmoji[];
+  customEmojisById: Record<string, ServerEmoji>;
   voiceStates: VoiceStateView[];
   typing: Record<string, TypingEntry[]>;
   presenceByUser: Record<string, PresenceStatus>;
+  /** My chosen status (offline = invisible while connected). */
+  myStatus: PresenceStatus;
 
   friendsHome: boolean;
   friends: Friendship[];
@@ -123,12 +159,47 @@ interface AppState {
 
   modal: ModalKind;
   settingsChannelId: string | null;
+  /** When opening invite-people from a channel row. */
+  inviteChannelId: string | null;
+  miniProfile: MiniProfileState | null;
+  /** Shown when a friend invites you into a server. */
+  pendingServerInvite: {
+    server: Server;
+    invited_by: UserPublic;
+    member_count: number;
+    online_count: number;
+  } | null;
+  /** Shown when invited to a specific channel. */
+  pendingChannelInvite: {
+    server: Server;
+    channel: Channel;
+    invited_by: UserPublic;
+    member_count: number;
+    online_count: number;
+  } | null;
+  /** channelId → mutedUntil ms, or null = until unmuted */
+  channelMutes: ChannelMuteMap;
+  /** Unread text-message counts (suppressed while muted). */
+  unreadByChannel: Record<string, number>;
   bootstrapped: boolean;
   connecting: boolean;
   error: string | null;
 
   setError: (error: string | null) => void;
   setModal: (modal: ModalKind, channelId?: string | null) => void;
+  openInvitePeople: (channelId?: string | null) => void;
+  openMiniProfile: (opts: {
+    userId: string;
+    serverId?: string | null;
+    x: number;
+    y: number;
+  }) => void;
+  closeMiniProfile: () => void;
+  clearPendingServerInvite: () => void;
+  clearPendingChannelInvite: () => void;
+  muteChannel: (channelId: string, durationMs: number | null) => void;
+  unmuteChannel: (channelId: string) => void;
+  pruneChannelMutes: () => void;
   setActiveServer: (id: string | null) => void;
   setActiveChannel: (id: string | null) => void;
   setVoiceLocal: (partial: {
@@ -150,7 +221,10 @@ interface AppState {
   updateProfile: (body: {
     display_name?: string;
     avatar_url?: string | null;
+    banner_url?: string | null;
   }) => Promise<void>;
+  setMyStatus: (status: PresenceStatus) => Promise<void>;
+  loadMyStatus: () => Promise<void>;
 
   loadServers: () => Promise<void>;
   selectServer: (serverId: string) => Promise<void>;
@@ -175,7 +249,22 @@ interface AppState {
     serverId: string,
     rules: { title: string; body: string }[],
   ) => Promise<void>;
-  createInvite: (serverId: string) => Promise<Invite>;
+  createInvite: (
+    serverId: string,
+    opts?: { max_age?: number | null; max_uses?: number | null },
+  ) => Promise<Invite>;
+  listInvites: (serverId: string) => Promise<Invite[]>;
+  deleteInvite: (serverId: string, code: string) => Promise<void>;
+  inviteFriend: (serverId: string, userId: string) => Promise<Member>;
+  inviteToChannel: (channelId: string, userId: string) => Promise<void>;
+  loadMyEmojis: () => Promise<void>;
+  listServerEmojis: (serverId: string) => Promise<ServerEmoji[]>;
+  createServerEmoji: (
+    serverId: string,
+    body: { name: string; image_url: string; animated?: boolean },
+  ) => Promise<ServerEmoji>;
+  deleteServerEmoji: (serverId: string, emojiId: string) => Promise<void>;
+  resolveCustomEmojis: (content: string) => Promise<void>;
   createChannel: (
     serverId: string,
     body: {
@@ -292,11 +381,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   membersByServer: {},
   rolesByServer: {},
   rulesByServer: {},
+  overwritesByChannel: {},
   messagesByChannel: {},
   authors: {},
+  customEmojis: [],
+  customEmojisById: {},
   voiceStates: [],
   typing: {},
   presenceByUser: {},
+  myStatus: "online",
 
   friendsHome: false,
   friends: [],
@@ -318,13 +411,73 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   modal: null,
   settingsChannelId: null,
+  inviteChannelId: null,
+  miniProfile: null,
+  pendingServerInvite: null,
+  pendingChannelInvite: null,
+  channelMutes: loadChannelMutes(),
+  unreadByChannel: {},
   bootstrapped: false,
   connecting: false,
   error: null,
 
   setError: (error) => set({ error }),
   setModal: (modal, channelId = null) =>
-    set({ modal, settingsChannelId: channelId ?? null }),
+    set({
+      modal,
+      settingsChannelId: modal === "channel-settings" ? channelId ?? null : null,
+      inviteChannelId: null,
+      miniProfile: null,
+    }),
+  openInvitePeople: (channelId = null) =>
+    set({
+      modal: "invite-people",
+      inviteChannelId: channelId,
+      settingsChannelId: null,
+      miniProfile: null,
+    }),
+  openMiniProfile: ({ userId, serverId = null, x, y }) =>
+    set({
+      miniProfile: { userId, serverId, x, y },
+      modal: null,
+    }),
+  closeMiniProfile: () => set({ miniProfile: null }),
+  clearPendingServerInvite: () => set({ pendingServerInvite: null }),
+  clearPendingChannelInvite: () => set({ pendingChannelInvite: null }),
+  muteChannel: (channelId, durationMs) => {
+    const until = durationMs === null ? null : Date.now() + durationMs;
+    set((s) => {
+      const channelMutes = pruneExpiredMutes({
+        ...s.channelMutes,
+        [channelId]: until,
+      });
+      saveChannelMutes(channelMutes);
+      const { [channelId]: _drop, ...unreadByChannel } = s.unreadByChannel;
+      void _drop;
+      return { channelMutes, unreadByChannel };
+    });
+  },
+  unmuteChannel: (channelId) => {
+    set((s) => {
+      const { [channelId]: _drop, ...rest } = s.channelMutes;
+      void _drop;
+      const channelMutes = pruneExpiredMutes(rest);
+      saveChannelMutes(channelMutes);
+      return { channelMutes };
+    });
+  },
+  pruneChannelMutes: () => {
+    set((s) => {
+      const channelMutes = pruneExpiredMutes(s.channelMutes);
+      if (
+        Object.keys(channelMutes).length === Object.keys(s.channelMutes).length
+      ) {
+        return s;
+      }
+      saveChannelMutes(channelMutes);
+      return { channelMutes };
+    });
+  },
   setActiveServer: (id) => set({ activeServerId: id }),
   setActiveChannel: (id) => set({ activeChannelId: id }),
   setVoiceLocal: (partial) => set(partial),
@@ -338,6 +491,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const user = await api<UserPublic>("/api/auth/me");
       set({ user });
+      void get().loadMyStatus();
       // Hard quit leaves a stale voice_states row; we are never in LiveKit on cold start.
       try {
         await api("/api/voice/state", {
@@ -353,6 +507,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         voiceStates: get().voiceStates.filter((v) => v.user_id !== user.id),
       });
       await get().loadServers();
+      void get().loadMyEmojis();
       try {
         const id = await ensureIdentity(user.id);
         set({ identityPublicKey: id.publicKeyB64 });
@@ -377,6 +532,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     applyAuth(set, data);
     identityPair = null;
     clearIdentityCache();
+    void get().loadMyStatus();
     await get().loadServers();
     try {
       const id = await ensureIdentity(data.user.id);
@@ -401,6 +557,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     applyAuth(set, data);
     identityPair = null;
     clearIdentityCache();
+    void get().loadMyStatus();
     await get().loadServers();
     try {
       const id = await ensureIdentity(data.user.id);
@@ -422,10 +579,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       membersByServer: {},
       rolesByServer: {},
       rulesByServer: {},
+      overwritesByChannel: {},
       messagesByChannel: {},
       authors: {},
+      customEmojis: [],
+      customEmojisById: {},
       voiceStates: [],
       presenceByUser: {},
+      myStatus: "online",
       friendsHome: false,
       friends: [],
       pendingInbound: [],
@@ -440,6 +601,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       activeChannelId: null,
       voiceChannelId: null,
       modal: null,
+      miniProfile: null,
+      pendingServerInvite: null,
+      pendingChannelInvite: null,
+      inviteChannelId: null,
+      unreadByChannel: {},
     });
   },
 
@@ -448,9 +614,57 @@ export const useAppStore = create<AppState>((set, get) => ({
       method: "PATCH",
       body,
     });
+    set((s) => {
+      const membersByServer: Record<string, Member[]> = {};
+      for (const [sid, members] of Object.entries(s.membersByServer)) {
+        membersByServer[sid] = members.map((m) =>
+          m.user.id === user.id ? { ...m, user } : m,
+        );
+      }
+      return {
+        user,
+        authors: { ...s.authors, [user.id]: user },
+        membersByServer,
+        friends: s.friends.map((f) =>
+          f.peer.id === user.id ? { ...f, peer: user } : f,
+        ),
+        dmChannels: s.dmChannels.map((d) =>
+          d.peer.id === user.id ? { ...d, peer: user } : d,
+        ),
+      };
+    });
+  },
+
+  loadMyStatus: async () => {
+    try {
+      const res = await api<{ status: PresenceStatus }>("/api/users/me/presence");
+      const status = res.status || "online";
+      set((s) => ({
+        myStatus: status,
+        presenceByUser: s.user
+          ? {
+              ...s.presenceByUser,
+              // Invisible still shows as offline to others; keep local truth for self.
+              [s.user.id]: status === "offline" ? "offline" : status,
+            }
+          : s.presenceByUser,
+      }));
+    } catch {
+      /* older servers */
+    }
+  },
+
+  setMyStatus: async (status) => {
+    const res = await api<{ status: PresenceStatus }>("/api/users/me/presence", {
+      method: "PUT",
+      body: { status },
+    });
+    const next = res.status || status;
     set((s) => ({
-      user,
-      authors: { ...s.authors, [user.id]: user },
+      myStatus: next,
+      presenceByUser: s.user
+        ? { ...s.presenceByUser, [s.user.id]: next }
+        : s.presenceByUser,
     }));
   },
 
@@ -475,7 +689,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       connecting: true,
     });
     try {
-      const [channels, members, roles, rules, voiceStates, presence] =
+      const [channels, members, roles, rules, voiceStates, presence, overwrites] =
         await Promise.all([
         api<Channel[]>(`/api/servers/${serverId}/channels`),
         api<Member[]>(`/api/servers/${serverId}/members`),
@@ -487,6 +701,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         api<{ user_id: string; status: PresenceStatus }[]>(
           `/api/servers/${serverId}/presence`,
         ).catch(() => [] as { user_id: string; status: PresenceStatus }[]),
+        api<PermissionOverwrite[]>(
+          `/api/servers/${serverId}/channel-overwrites`,
+        ).catch(() => [] as PermissionOverwrite[]),
       ]);
       const authors: Record<string, UserPublic> = { ...get().authors };
       for (const m of members) authors[m.user.id] = m.user;
@@ -494,8 +711,20 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...get().presenceByUser,
       };
       for (const p of presence) presenceByUser[p.user_id] = p.status;
-      // Self is online while connected
-      if (get().user) presenceByUser[get().user!.id] = "online";
+      // Prefer local chosen status for self (incl. invisible).
+      if (get().user) {
+        presenceByUser[get().user!.id] = get().myStatus;
+      }
+
+      const normalizedOws = overwrites.map(normalizeOverwrite);
+      const owsByChannel: Record<string, PermissionOverwrite[]> = {};
+      for (const o of normalizedOws) {
+        (owsByChannel[o.channel_id] ||= []).push(o);
+      }
+      // Ensure every loaded channel has an entry (even empty) so lock checks are stable.
+      for (const c of channels) {
+        if (!(c.id in owsByChannel)) owsByChannel[c.id] = [];
+      }
 
       set((s) => {
         const keepIds = new Set(channels.map((c) => c.id));
@@ -504,11 +733,22 @@ export const useAppStore = create<AppState>((set, get) => ({
             keepIds.has(cid),
           ),
         );
+        const overwritesByChannel = { ...s.overwritesByChannel };
+        for (const id of Object.keys(overwritesByChannel)) {
+          const ch = Object.values(s.channelsByServer)
+            .flat()
+            .find((c) => c.id === id);
+          if (ch?.server_id === serverId || keepIds.has(id)) {
+            delete overwritesByChannel[id];
+          }
+        }
+        Object.assign(overwritesByChannel, owsByChannel);
         return {
           channelsByServer: { ...s.channelsByServer, [serverId]: channels },
           membersByServer: { ...s.membersByServer, [serverId]: members },
           rolesByServer: { ...s.rolesByServer, [serverId]: roles },
           rulesByServer: { ...s.rulesByServer, [serverId]: rules },
+          overwritesByChannel,
           authors,
           voiceStates,
           presenceByUser,
@@ -527,7 +767,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   selectChannel: async (channelId) => {
-    set({ activeChannelId: channelId });
+    set((s) => {
+      const { [channelId]: _drop, ...unreadByChannel } = s.unreadByChannel;
+      void _drop;
+      return { activeChannelId: channelId, unreadByChannel };
+    });
     const channel = Object.values(get().channelsByServer)
       .flat()
       .find((c) => c.id === channelId);
@@ -543,6 +787,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
     set((s) => ({ servers: [...s.servers, server] }));
     await get().selectServer(server.id);
+    void get().loadMyEmojis();
     return server;
   },
 
@@ -552,6 +797,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
     await get().loadServers();
     await get().selectServer(server.id);
+    void get().loadMyEmojis();
     return server;
   },
 
@@ -657,10 +903,113 @@ export const useAppStore = create<AppState>((set, get) => ({
     }));
   },
 
-  createInvite: async (serverId) => {
+  createInvite: async (serverId, opts) => {
     return api<Invite>(`/api/servers/${serverId}/invites`, {
       method: "POST",
-      body: {},
+      body: {
+        max_age: opts?.max_age ?? null,
+        max_uses: opts?.max_uses ?? null,
+      },
+    });
+  },
+
+  listInvites: async (serverId) => {
+    return api<Invite[]>(`/api/servers/${serverId}/invites`);
+  },
+
+  deleteInvite: async (serverId, code) => {
+    await api(`/api/servers/${serverId}/invites/${encodeURIComponent(code)}`, {
+      method: "DELETE",
+    });
+  },
+
+  inviteFriend: async (serverId, userId) => {
+    const member = await api<Member>(`/api/servers/${serverId}/invite-friend`, {
+      method: "POST",
+      body: { user_id: userId },
+    });
+    set((s) => ({
+      authors: { ...s.authors, [member.user.id]: member.user },
+      membersByServer: {
+        ...s.membersByServer,
+        [serverId]: [
+          ...(s.membersByServer[serverId] || []).filter(
+            (m) => m.user.id !== member.user.id,
+          ),
+          member,
+        ],
+      },
+    }));
+    return member;
+  },
+
+  inviteToChannel: async (channelId, userId) => {
+    await api(`/api/channels/${channelId}/invite`, {
+      method: "POST",
+      body: { user_id: userId },
+    });
+    void get().loadChannelOverwrites(channelId).catch(() => {});
+  },
+
+  loadMyEmojis: async () => {
+    try {
+      const list = await api<ServerEmoji[]>("/api/users/me/emojis");
+      const customEmojisById: Record<string, ServerEmoji> = {
+        ...get().customEmojisById,
+      };
+      for (const e of list) customEmojisById[e.id] = e;
+      set({ customEmojis: list, customEmojisById });
+    } catch {
+      /* older servers may not have the route yet */
+    }
+  },
+
+  listServerEmojis: async (serverId) => {
+    return api<ServerEmoji[]>(`/api/servers/${serverId}/emojis`);
+  },
+
+  createServerEmoji: async (serverId, body) => {
+    const emoji = await api<ServerEmoji>(`/api/servers/${serverId}/emojis`, {
+      method: "POST",
+      body,
+    });
+    set((s) => ({
+      customEmojis: [...s.customEmojis.filter((e) => e.id !== emoji.id), emoji],
+      customEmojisById: { ...s.customEmojisById, [emoji.id]: emoji },
+    }));
+    return emoji;
+  },
+
+  deleteServerEmoji: async (serverId, emojiId) => {
+    await api(`/api/servers/${serverId}/emojis/${emojiId}`, {
+      method: "DELETE",
+    });
+    set((s) => {
+      const { [emojiId]: _drop, ...customEmojisById } = s.customEmojisById;
+      void _drop;
+      return {
+        customEmojis: s.customEmojis.filter((e) => e.id !== emojiId),
+        customEmojisById,
+      };
+    });
+  },
+
+  resolveCustomEmojis: async (content) => {
+    const ids = extractCustomEmojiIds(content);
+    if (!ids.length) return;
+    const missing = ids.filter((id) => !get().customEmojisById[id]);
+    if (!missing.length) return;
+    const fetched = await Promise.all(
+      missing.map((id) =>
+        api<ServerEmoji>(`/api/emojis/${id}`).catch(() => null),
+      ),
+    );
+    set((s) => {
+      const customEmojisById = { ...s.customEmojisById };
+      for (const e of fetched) {
+        if (e) customEmojisById[e.id] = e;
+      }
+      return { customEmojisById };
     });
   },
 
@@ -762,13 +1111,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     const rows = await api<PermissionOverwrite[]>(
       `/api/channels/${channelId}/overwrites`,
     );
-    return rows.map((o) => ({
-      ...o,
-      target_type:
-        String(o.target_type).toLowerCase() === "member" ? "member" : "role",
-      allow: permBits(o.allow),
-      deny: permBits(o.deny),
+    const normalized = rows.map(normalizeOverwrite);
+    set((s) => ({
+      overwritesByChannel: {
+        ...s.overwritesByChannel,
+        [channelId]: normalized,
+      },
     }));
+    return normalized;
   },
 
   saveChannelOverwrites: async (channelId, overwrites) => {
@@ -779,13 +1129,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         body: { overwrites },
       },
     );
-    return rows.map((o) => ({
-      ...o,
-      target_type:
-        String(o.target_type).toLowerCase() === "member" ? "member" : "role",
-      allow: permBits(o.allow),
-      deny: permBits(o.deny),
+    const normalized = rows.map(normalizeOverwrite);
+    set((s) => ({
+      overwritesByChannel: {
+        ...s.overwritesByChannel,
+        [channelId]: normalized,
+      },
     }));
+    return normalized;
   },
 
   loadMessages: async (channelId) => {
@@ -1227,23 +1578,44 @@ export const useAppStore = create<AppState>((set, get) => ({
           authors: { ...state.authors, [event.user.id]: event.user },
         });
         break;
-      case "message_create":
+      case "message_create": {
+        const cid = event.message.channel_id;
+        const isSelf = state.user?.id === event.author.id;
+        const isActive = state.activeChannelId === cid;
+        const muted = channelIsMuted(state.channelMutes, cid);
         set((s) => {
-          const cid = event.message.channel_id;
           const authors = { ...s.authors, [event.author.id]: event.author };
           // Don't grow caches for channels we've never opened.
           if (!(cid in s.messagesByChannel) && cid !== s.activeChannelId) {
-            return { authors };
+            const next: Partial<AppState> = { authors };
+            if (!isSelf && !isActive && !muted) {
+              next.unreadByChannel = {
+                ...s.unreadByChannel,
+                [cid]: (s.unreadByChannel[cid] || 0) + 1,
+              };
+            }
+            return next;
           }
-          return {
+          const next: Partial<AppState> = {
             authors,
             messagesByChannel: {
               ...s.messagesByChannel,
               [cid]: upsertMessage(s.messagesByChannel[cid] || [], event.message),
             },
           };
+          if (!isSelf && !isActive && !muted) {
+            next.unreadByChannel = {
+              ...s.unreadByChannel,
+              [cid]: (s.unreadByChannel[cid] || 0) + 1,
+            };
+          }
+          return next;
         });
+        if (!isSelf && !isActive && !muted) {
+          playMessageNotify();
+        }
         break;
+      }
       case "message_update":
         set((s) => {
           const cid = event.message.channel_id;
@@ -1307,6 +1679,8 @@ export const useAppStore = create<AppState>((set, get) => ({
             ],
           },
         }));
+        // Overwrite saves rebroadcast as channel_create — refresh lock state.
+        void get().loadChannelOverwrites(event.channel.id).catch(() => {});
         break;
       case "channel_update":
         set((s) => {
@@ -1325,20 +1699,26 @@ export const useAppStore = create<AppState>((set, get) => ({
         });
         break;
       case "channel_delete":
-        set((s) => ({
-          channelsByServer: {
-            ...s.channelsByServer,
-            [event.server_id]: (s.channelsByServer[event.server_id] || [])
-              .filter((c) => c.id !== event.channel_id)
-              .map((c) =>
-                c.category_id === event.channel_id
-                  ? { ...c, category_id: null }
-                  : c,
-              ),
-          },
-          activeChannelId:
-            s.activeChannelId === event.channel_id ? null : s.activeChannelId,
-        }));
+        set((s) => {
+          const { [event.channel_id]: _ow, ...overwritesByChannel } =
+            s.overwritesByChannel;
+          void _ow;
+          return {
+            channelsByServer: {
+              ...s.channelsByServer,
+              [event.server_id]: (s.channelsByServer[event.server_id] || [])
+                .filter((c) => c.id !== event.channel_id)
+                .map((c) =>
+                  c.category_id === event.channel_id
+                    ? { ...c, category_id: null }
+                    : c,
+                ),
+            },
+            overwritesByChannel,
+            activeChannelId:
+              s.activeChannelId === event.channel_id ? null : s.activeChannelId,
+          };
+        });
         break;
       case "server_update":
         set((s) => ({
@@ -1347,7 +1727,11 @@ export const useAppStore = create<AppState>((set, get) => ({
           ),
         }));
         break;
-      case "member_join":
+      case "member_join": {
+        const joinedSelf = state.user?.id === event.member.user.id;
+        const knownServer = state.servers.some(
+          (s) => s.id === event.member.server_id,
+        );
         set((s) => ({
           authors: { ...s.authors, [event.member.user.id]: event.member.user },
           membersByServer: {
@@ -1360,7 +1744,55 @@ export const useAppStore = create<AppState>((set, get) => ({
             ],
           },
         }));
+        // Friend invite: pull the new server into the rail when we were added.
+        if (joinedSelf && !knownServer) {
+          void get().loadServers().then(() => get().loadMyEmojis());
+        } else if (joinedSelf) {
+          void get().loadMyEmojis();
+        }
         break;
+      }
+      case "server_invite": {
+        set({
+          pendingServerInvite: {
+            server: event.server,
+            invited_by: event.invited_by,
+            member_count: event.member_count,
+            online_count: event.online_count,
+          },
+          authors: {
+            ...state.authors,
+            [event.invited_by.id]: event.invited_by,
+          },
+        });
+        if (!state.servers.some((s) => s.id === event.server.id)) {
+          void get().loadServers().then(() => get().loadMyEmojis());
+        }
+        break;
+      }
+      case "channel_invite": {
+        set({
+          pendingChannelInvite: {
+            server: event.server,
+            channel: event.channel,
+            invited_by: event.invited_by,
+            member_count: event.member_count,
+            online_count: event.online_count,
+          },
+          authors: {
+            ...state.authors,
+            [event.invited_by.id]: event.invited_by,
+          },
+        });
+        if (!state.servers.some((s) => s.id === event.server.id)) {
+          void get()
+            .loadServers()
+            .then(() => get().loadMyEmojis());
+        } else {
+          void get().loadChannelOverwrites(event.channel.id).catch(() => {});
+        }
+        break;
+      }
       case "member_leave":
         set((s) => ({
           membersByServer: {

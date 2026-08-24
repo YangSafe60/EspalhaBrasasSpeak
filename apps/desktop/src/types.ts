@@ -7,6 +7,7 @@ export interface UserPublic {
   username: string;
   display_name: string;
   avatar_url: string | null;
+  banner_url?: string | null;
   created_at: string;
 }
 
@@ -99,6 +100,16 @@ export interface Invite {
   max_uses: number | null;
   uses: number;
   expires_at: string | null;
+}
+
+export interface ServerEmoji {
+  id: string;
+  server_id: string;
+  name: string;
+  image_url: string;
+  animated: boolean;
+  creator_id: string;
+  created_at: string;
 }
 
 export interface Member {
@@ -226,6 +237,21 @@ export type WsEvent =
   | { type: "channel_delete"; server_id: string; channel_id: string }
   | { type: "server_update"; server: Server }
   | { type: "member_join"; member: Member }
+  | {
+      type: "server_invite";
+      server: Server;
+      invited_by: UserPublic;
+      member_count: number;
+      online_count: number;
+    }
+  | {
+      type: "channel_invite";
+      server: Server;
+      channel: Channel;
+      invited_by: UserPublic;
+      member_count: number;
+      online_count: number;
+    }
   | { type: "member_leave"; server_id: string; user_id: string }
   | {
       type: "reaction_add";
@@ -273,6 +299,7 @@ export const Perm = {
   ATTACH_FILES: 1 << 14,
   ADD_REACTIONS: 1 << 15,
   MENTION_EVERYONE: 1 << 16,
+  MANAGE_EXPRESSIONS: 1 << 17,
 } as const;
 
 /** Discord-style role permission checklist (server-wide). */
@@ -303,6 +330,11 @@ export const ROLE_PERM_GROUPS: {
         bit: Perm.MANAGE_SERVER,
         label: "Manage Server",
         description: "Allow members to change this server’s name, icon, and banner.",
+      },
+      {
+        bit: Perm.MANAGE_EXPRESSIONS,
+        label: "Manage Expressions",
+        description: "Allow members to create and delete custom server emojis.",
       },
       {
         bit: Perm.CREATE_INVITE,

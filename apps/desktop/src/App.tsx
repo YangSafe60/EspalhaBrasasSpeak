@@ -5,6 +5,7 @@ import { DmMessageView } from "./components/DmMessageView";
 import { FriendsSidebar } from "./components/FriendsSidebar";
 import { MemberList } from "./components/MemberList";
 import { MessageView } from "./components/MessageView";
+import { MiniProfileCard } from "./components/MiniProfileCard";
 import {
   MicConsentModal,
   markMicIntroDone,
@@ -15,6 +16,7 @@ import { UpdateOverlay } from "./components/UpdateOverlay";
 import { VoiceLobbyView } from "./components/VoiceLobbyView";
 import { VoicePanel } from "./components/VoicePanel";
 import { useVoice } from "./hooks/useVoice";
+import { useAutoIdlePresence } from "./hooks/useAutoIdlePresence";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { useAppStore } from "./store/appStore";
 import logoFull from "./assets/logo-full.png";
@@ -35,6 +37,21 @@ const CreateServerModal = lazy(() =>
 const JoinInviteModal = lazy(() =>
   import("./components/JoinInviteModal").then((m) => ({
     default: m.JoinInviteModal,
+  })),
+);
+const InvitePeopleModal = lazy(() =>
+  import("./components/InvitePeopleModal").then((m) => ({
+    default: m.InvitePeopleModal,
+  })),
+);
+const ServerInviteReceivedModal = lazy(() =>
+  import("./components/ServerInviteReceivedModal").then((m) => ({
+    default: m.ServerInviteReceivedModal,
+  })),
+);
+const ChannelInviteReceivedModal = lazy(() =>
+  import("./components/ChannelInviteReceivedModal").then((m) => ({
+    default: m.ChannelInviteReceivedModal,
   })),
 );
 const ServerSettingsModal = lazy(() =>
@@ -114,6 +131,7 @@ function MainApp() {
   }, [bootstrap]);
 
   useWebSocket(!!user);
+  useAutoIdlePresence(!!user);
 
   async function joinVoice(channelId: string) {
     setMicBusy(true);
@@ -184,10 +202,14 @@ function MainApp() {
         <SoftSuspense>
           <CreateServerModal />
           <JoinInviteModal />
+          <InvitePeopleModal />
+          <ServerInviteReceivedModal />
+          <ChannelInviteReceivedModal />
           <ServerSettingsModal />
           <ChannelSettingsModal />
           <UserSettingsModal />
         </SoftSuspense>
+        <MiniProfileCard />
         <MicConsentModal
           open={pendingVoiceId != null}
           busy={micBusy}

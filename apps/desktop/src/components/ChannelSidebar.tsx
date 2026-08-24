@@ -7,14 +7,21 @@ import {
   type FormEvent,
   type MouseEvent,
 } from "react";
-import { useAppStore } from "../store/appStore";
+import {
+  channelIsMuted,
+  formatMuteRemaining,
+  MUTE_DURATIONS,
+} from "../lib/channelMutePrefs";
 import { mediaCssUrl } from "../lib/mediaUrl";
 import {
   effectiveServerPerms,
   hasPerm,
+  isChannelLocked,
   Perm,
 } from "../lib/serverPerms";
+import { useAppStore } from "../store/appStore";
 import type { Channel } from "../types";
+import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import {
   useMemberContextMenu,
   type MemberVoiceHandlers,
@@ -25,6 +32,12 @@ type Props = {
   speakingIds?: string[];
   voiceHandlers?: MemberVoiceHandlers;
 };
+
+type ChannelMenuState = {
+  x: number;
+  y: number;
+  channel: Channel;
+} | null;
 
 type CreateDraft = {
   mode: "channel" | "category";
@@ -134,8 +147,16 @@ export function ChannelSidebar({
   const voiceChannelId = useAppStore((s) => s.voiceChannelId);
   const selectChannel = useAppStore((s) => s.selectChannel);
   const setModal = useAppStore((s) => s.setModal);
+  const openInvitePeople = useAppStore((s) => s.openInvitePeople);
+  const openMiniProfile = useAppStore((s) => s.openMiniProfile);
   const createChannel = useAppStore((s) => s.createChannel);
   const applyChannelOrder = useAppStore((s) => s.applyChannelOrder);
+  const channelMutes = useAppStore((s) => s.channelMutes);
+  const unreadByChannel = useAppStore((s) => s.unreadByChannel);
+  const overwritesByChannel = useAppStore((s) => s.overwritesByChannel);
+  const muteChannel = useAppStore((s) => s.muteChannel);
+  const unmuteChannel = useAppStore((s) => s.unmuteChannel);
+  const pruneChannelMutes = useAppStore((s) => s.pruneChannelMutes);
   const { openForUserId, menuPortal } = useMemberContextMenu(voiceHandlers);
 
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -144,6 +165,7 @@ export function ChannelSidebar({
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [channelMenu, setChannelMenu] = useState<ChannelMenuState>(null);
   const creatingRef = useRef(false);
 
   const [dragging, setDragging] = useState<DragPayload | null>(null);
@@ -163,10 +185,12 @@ export function ChannelSidebar({
     [server, roles, me, user?.id],
   );
   const canManageChannels = hasPerm(myPerms, Perm.MANAGE_CHANNELS);
+  const canInvitePeople = hasPerm(myPerms, Perm.CREATE_INVITE);
   const canOpenServerSettings =
     hasPerm(myPerms, Perm.MANAGE_SERVER) ||
     hasPerm(myPerms, Perm.MANAGE_ROLES) ||
-    hasPerm(myPerms, Perm.CREATE_INVITE);
+    hasPerm(myPerms, Perm.MANAGE_EXPRESSIONS) ||
+    canInvitePeople;
   const channels = useMemo(
     () =>
       (activeServerId ? channelsByServer[activeServerId] || [] : [])
@@ -185,7 +209,14 @@ export function ChannelSidebar({
     setDraft(null);
     setDragging(null);
     setDropHint(null);
+    setChannelMenu(null);
   }, [activeServerId]);
+
+  useEffect(() => {
+    pruneChannelMutes();
+    const t = window.setInterval(() => pruneChannelMutes(), 30_000);
+    return () => window.clearInterval(t);
+  }, [pruneChannelMutes]);
 
   function channelsIn(cat: Channel) {
     return channels.filter(
@@ -395,6 +426,16 @@ export function ChannelSidebar({
   function renderChannel(ch: Channel) {
     const active = ch.id === activeChannelId;
     const inVoice = ch.id === voiceChannelId;
+    const muted =
+      ch.channel_type === "text" && channelIsMuted(channelMutes, ch.id);
+    const unread =
+      ch.channel_type === "text" && !muted
+        ? unreadByChannel[ch.id] || 0
+        : 0;
+    const muteLabel =
+      muted && ch.id in channelMutes
+        ? formatMuteRemaining(channelMutes[ch.id])
+        : null;
     const limitLabel =
       ch.channel_type === "voice" && ch.user_limit > 0
         ? ` · ${voiceUsers(ch.id).length}/${ch.user_limit}`
@@ -403,10 +444,15 @@ export function ChannelSidebar({
       dropHint?.zone === "channel-before" && dropHint.channelId === ch.id;
     const isDraggingSelf =
       dragging?.kind === "channel" && dragging.id === ch.id;
+    const locked = isChannelLocked(
+      overwritesByChannel[ch.id],
+      roles,
+      ch.channel_type,
+    );
 
     const row = (
       <div
-        className={`channel-row ${inVoice ? "connected" : ""} ${active ? "active" : ""} ${isDragOver ? "drop-before" : ""} ${isDraggingSelf ? "is-dragging" : ""}`}
+        className={`channel-row ${inVoice ? "connected" : ""} ${active ? "active" : ""} ${muted ? "muted-channel" : ""} ${unread ? "has-unread" : ""} ${isDragOver ? "drop-before" : ""} ${isDraggingSelf ? "is-dragging" : ""}`}
         draggable={canManageChannels}
         onDragStart={(e) => onDragStart("channel", ch.id, e)}
         onDragEnd={onDragEnd}
@@ -424,24 +470,89 @@ export function ChannelSidebar({
             categoryId: ch.category_id,
           })
         }
+        onContextMenu={(e) => {
+          if (ch.channel_type !== "text") return;
+          e.preventDefault();
+          e.stopPropagation();
+          setChannelMenu({ x: e.clientX, y: e.clientY, channel: ch });
+        }}
       >
         <button
           type="button"
           className={`channel-btn ${ch.channel_type === "voice" ? "voice" : ""} ${inVoice ? "connected" : ""} ${active ? "active" : ""}`}
+          title={muteLabel || undefined}
           onClick={() => {
             if (guardClick()) return;
             if (ch.channel_type === "voice") onJoinVoice(ch.id);
             else void selectChannel(ch.id);
           }}
         >
-          <span className="ch-icon">
+          <span
+            className={`ch-icon${locked ? " is-locked" : ""}`}
+            aria-label={locked ? "Private channel" : undefined}
+          >
             {ch.channel_type === "voice" ? "◎" : "#"}
+            {locked ? (
+              <svg
+                className="ch-lock"
+                viewBox="0 0 24 24"
+                width="10"
+                height="10"
+                aria-hidden
+              >
+                <path
+                  fill="currentColor"
+                  d="M17 8h-1V6a4 4 0 1 0-8 0v2H7a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2zm-7-2a2 2 0 1 1 4 0v2h-4V6zm7 13H7v-9h10v9z"
+                />
+              </svg>
+            ) : null}
           </span>
           <span className="channel-name">
             {ch.name}
             {limitLabel}
           </span>
+          {muted && (
+            <span
+              className="channel-mute-icon"
+              title={muteLabel || "Muted"}
+              aria-label="Muted"
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden>
+                <path
+                  fill="currentColor"
+                  d="M12 22c1.1 0 2-.9 2-2h-4a2 2 0 0 0 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4a1.5 1.5 0 0 0-3 0v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2zm-2.04 1.5H8.04L8 16.04V11c0-2.48 1.51-4.5 4-4.5s4 2.02 4 4.5v5.04l-.04.46zM4.27 3 3 4.27l6.01 6.01 1.41 1.41 8.49 8.49L20.18 19l-5.46-5.46L4.27 3z"
+                />
+              </svg>
+            </span>
+          )}
+          {unread > 0 && (
+            <span className="channel-unread" aria-label={`${unread} unread`}>
+              {unread > 99 ? "99+" : unread}
+            </span>
+          )}
         </button>
+        {canInvitePeople && (
+          <button
+            type="button"
+            className="channel-invite"
+            title="Invite people"
+            onClick={(e) => {
+              e.stopPropagation();
+              openInvitePeople(ch.id);
+            }}
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden>
+              <path
+                fill="currentColor"
+                d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-3.33 0-8 1.67-8 5v1h16v-1c0-3.33-4.67-5-8-5z"
+              />
+              <path
+                fill="currentColor"
+                d="M19 8h-2v2h-2v2h2v2h2v-2h2v-2h-2z"
+              />
+            </svg>
+          </button>
+        )}
         {canManageChannels && (
           <button
             type="button"
@@ -474,6 +585,14 @@ export function ChannelSidebar({
                   <li
                     key={u.user_id}
                     className={`${u.streaming ? "live" : ""}${speakingIds.includes(u.user_id) ? " speaking" : ""}`}
+                    onClick={(e) =>
+                      openMiniProfile({
+                        userId: u.user_id,
+                        serverId: activeServerId,
+                        x: e.clientX,
+                        y: e.clientY,
+                      })
+                    }
                     onContextMenu={(e) => openForUserId(e, u.user_id, u.name)}
                   >
                     <span
@@ -669,6 +788,16 @@ export function ChannelSidebar({
       <header className="sidebar-header">
         <h2>{server.name}</h2>
         <div className="sidebar-header-actions">
+          {canInvitePeople && (
+            <button
+              type="button"
+              className="icon-btn"
+              title="Invite people"
+              onClick={() => openInvitePeople()}
+            >
+              ✉
+            </button>
+          )}
           {canManageChannels && (
             <>
               <button
@@ -851,6 +980,38 @@ export function ChannelSidebar({
         </div>
       )}
       {menuPortal}
+      {channelMenu && (
+        <ContextMenu
+          x={channelMenu.x}
+          y={channelMenu.y}
+          onClose={() => setChannelMenu(null)}
+          items={(() => {
+            const ch = channelMenu.channel;
+            const muted = channelIsMuted(channelMutes, ch.id);
+            const items: ContextMenuItem[] = [];
+            if (muted) {
+              items.push({
+                label: "Unmute Channel",
+                onClick: () => unmuteChannel(ch.id),
+              });
+            }
+            items.push({
+              label: muted ? "Change Mute Duration" : "Mute Channel",
+              children: MUTE_DURATIONS.map((d) => ({
+                label: d.label,
+                onClick: () => muteChannel(ch.id, d.ms),
+              })),
+            });
+            if (canManageChannels) {
+              items.push({
+                label: "Edit Channel",
+                onClick: () => setModal("channel-settings", ch.id),
+              });
+            }
+            return items;
+          })()}
+        />
+      )}
     </aside>
   );
 }

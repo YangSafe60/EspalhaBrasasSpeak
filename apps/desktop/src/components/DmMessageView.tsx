@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent } from "react";
 import logoMark from "../assets/logo-mark.png";
 import { insertAtCursor } from "../lib/emojis";
 import { mediaUrl } from "../lib/mediaUrl";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { EmojiPickerButton } from "./EmojiPickerButton";
+import { MessageContent } from "./MessageContent";
 import { useAppStore } from "../store/appStore";
 import type { DmMessage } from "../types";
 
@@ -42,6 +43,7 @@ export function DmMessageView() {
   const authors = useAppStore((s) => s.authors);
   const typing = useAppStore((s) => s.typing);
   const user = useAppStore((s) => s.user);
+  const openMiniProfile = useAppStore((s) => s.openMiniProfile);
   const dmFingerprints = useAppStore((s) => s.dmFingerprints);
   const sendDmMessage = useAppStore((s) => s.sendDmMessage);
   const editDmMessage = useAppStore((s) => s.editDmMessage);
@@ -175,15 +177,30 @@ export function DmMessageView() {
             >
               <div className="avatar-col">
                 {isGroupStart ? (
-                  <div className="avatar">
+                  <button
+                    type="button"
+                    className="avatar clickable-user"
+                    onClick={(e: MouseEvent) =>
+                      openMiniProfile({
+                        userId: m.author_id,
+                        serverId: null,
+                        x: e.clientX,
+                        y: e.clientY,
+                      })
+                    }
+                  >
                     {author?.avatar_url ? (
-                      <img src={mediaUrl(author.avatar_url)} alt="" />
+                      <img
+                        src={mediaUrl(author.avatar_url)}
+                        alt=""
+                        referrerPolicy="no-referrer"
+                      />
                     ) : (
                       <span>
                         {(author?.display_name || "?").charAt(0).toUpperCase()}
                       </span>
                     )}
-                  </div>
+                  </button>
                 ) : (
                   <time
                     className="grouped-time"
@@ -200,7 +217,20 @@ export function DmMessageView() {
               <div className="message-body">
                 {isGroupStart && (
                   <div className="message-meta">
-                    <strong>{author?.display_name || "Unknown"}</strong>
+                    <button
+                      type="button"
+                      className="message-author-btn"
+                      onClick={(e: MouseEvent) =>
+                        openMiniProfile({
+                          userId: m.author_id,
+                          serverId: null,
+                          x: e.clientX,
+                          y: e.clientY,
+                        })
+                      }
+                    >
+                      {author?.display_name || "Unknown"}
+                    </button>
                     <time dateTime={m.created_at}>{formatTime(m.created_at)}</time>
                   </div>
                 )}
@@ -244,15 +274,15 @@ export function DmMessageView() {
                       </button>
                     </div>
                   </div>
-                ) : (
-                  <p className={`message-content ${m.decrypt_failed ? "muted" : ""}`}>
-                    {m.decrypt_failed
-                      ? "Unable to decrypt this message on this device."
-                      : m.content}
-                    {m.edited_at && !m.decrypt_failed && (
-                      <span className="edited"> (edited)</span>
-                    )}
+                ) : m.decrypt_failed ? (
+                  <p className="message-content muted">
+                    Unable to decrypt this message on this device.
+                    {m.edited_at && <span className="edited"> (edited)</span>}
                   </p>
+                ) : (
+                  <MessageContent content={m.content}>
+                    {m.edited_at && <span className="edited"> (edited)</span>}
+                  </MessageContent>
                 )}
 
                 {mine && canSend && !editing && (
@@ -295,7 +325,6 @@ export function DmMessageView() {
           </p>
         ) : (
           <form className="composer composer-dm" onSubmit={(e) => void onSubmit(e)}>
-            <EmojiPickerButton onPick={insertEmoji} />
             <textarea
               ref={draftRef}
               value={draft}
@@ -305,6 +334,7 @@ export function DmMessageView() {
               rows={1}
               disabled={busy}
             />
+            <EmojiPickerButton onPick={insertEmoji} />
             <button
               type="submit"
               className="btn primary sm"

@@ -127,8 +127,8 @@ pub async fn user_by_username(
     Path(username): Path<String>,
 ) -> AppResult<Json<UserPublic>> {
     let username = username.trim().trim_start_matches('@').trim();
-    let row = sqlx::query_as::<_, (String, String, String, Option<String>, String)>(
-        "SELECT id, username, display_name, avatar_url, created_at FROM users WHERE lower(username) = lower(?)",
+    let row = sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>, String)>(
+        "SELECT id, username, display_name, avatar_url, banner_url, created_at FROM users WHERE lower(username) = lower(?)",
     )
     .bind(username)
     .fetch_optional(&state.db)
@@ -139,7 +139,8 @@ pub async fn user_by_username(
         username: row.1,
         display_name: row.2,
         avatar_url: row.3,
-        created_at: parse_dt(&row.4),
+        banner_url: row.4,
+        created_at: parse_dt(&row.5),
     }))
 }
 

@@ -33,11 +33,13 @@ pub struct RefreshReq {
 pub struct UpdateMeReq {
     pub display_name: Option<String>,
     /// Absent = leave unchanged; JSON `null` = clear; string = set.
-    #[serde(default, deserialize_with = "deserialize_optional_avatar")]
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
     pub avatar_url: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub banner_url: Option<Option<String>>,
 }
 
-fn deserialize_optional_avatar<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+fn deserialize_optional_string<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -170,6 +172,13 @@ pub async fn update_me(
     if let Some(avatar) = body.avatar_url {
         sqlx::query("UPDATE users SET avatar_url = ? WHERE id = ?")
             .bind(avatar)
+            .bind(user.id.to_string())
+            .execute(&state.db)
+            .await?;
+    }
+    if let Some(banner) = body.banner_url {
+        sqlx::query("UPDATE users SET banner_url = ? WHERE id = ?")
+            .bind(banner)
             .bind(user.id.to_string())
             .execute(&state.db)
             .await?;

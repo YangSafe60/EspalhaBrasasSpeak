@@ -6,6 +6,7 @@ use axum::{
     extract::{Path, State},
     Json,
 };
+use chrono::Utc;
 use serde::Deserialize;
 use speakapp_shared::{
     Channel, ChannelType, OverwriteTarget, PermissionOverwrite, Permissions, WsEvent,
@@ -293,6 +294,17 @@ pub async fn list_overwrites(
     Ok(Json(db::channel_overwrites(&state.db, id).await?))
 }
 
+pub async fn list_server_overwrites(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<Vec<PermissionOverwrite>>> {
+    if !db::is_member(&state.db, id, user.id).await? {
+        return Err(AppError::Forbidden);
+    }
+    Ok(Json(db::server_channel_overwrites(&state.db, id).await?))
+}
+
 pub async fn set_overwrites(
     State(state): State<AppState>,
     user: AuthUser,
@@ -355,4 +367,143 @@ pub async fn set_overwrites(
         }
     }
     Ok(Json(saved))
+}
+
+#[derive(Deserialize)]
+pub struct InviteToChannelReq {
+    pub user_id: Uuid,
+}
+
+/// Invite a friend (or server member) into a channel — grants access + join card.
+pub async fn invite_to_channel(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<InviteToChannelReq>,
+) -> AppResult<Json<serde_json::Value>> {
+    if body.user_id == user.id {
+        return Err(AppError::BadRequest("cannot invite yourself".into()));
+    }
+    let channel = db::get_channel(&state.db, id).await?;
+    if channel.channel_type == ChannelType::Category {
+        return Err(AppError::BadRequest("cannot invite to a category".into()));
+    }
+    let server = db::get_server(&state.db, channel.server_id).await?;
+    db::require_perm(
+        &state.db,
+        &server,
+        Some(id),
+        user.id,
+        Permissions::CREATE_INVITE,
+    )
+    .await?;
+
+    let is_friend =
+        crate::routes::friends::are_friends(&state.db, user.id, body.user_id).await?;
+    let is_member = db::is_member(&state.db, server.id, body.user_id).await?;
+    if !is_friend && !is_member {
+        return Err(AppError::BadRequest(
+            "you can only invite friends or server members".into(),
+        ));
+    }
+
+    let banned: (i64,) =
+        sqlx::query_as("SELECT COUNT(1) FROM bans WHERE server_id = ? AND user_id = ?")
+            .bind(server.id.to_string())
+            .bind(body.user_id.to_string())
+            .fetch_one(&state.db)
+            .await?;
+    if banned.0 > 0 {
+        return Err(AppError::Forbidden);
+    }
+
+    if !is_member {
+        if !is_friend {
+            return Err(AppError::BadRequest("you can only invite friends".into()));
+        }
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO members (server_id, user_id, joined_at, accepted_rules) VALUES (?, ?, ?, 0)",
+        )
+        .bind(server.id.to_string())
+        .bind(body.user_id.to_string())
+        .bind(&now)
+        .execute(&state.db)
+        .await?;
+        state.hub.add_server_member(server.id, body.user_id);
+        let member = db::get_member(&state.db, server.id, body.user_id).await?;
+        state
+            .hub
+            .broadcast_server(server.id, &WsEvent::MemberJoin { member });
+    }
+
+    grant_member_channel_access(&state, &channel, body.user_id).await?;
+
+    // Ensure invitee can see the channel.
+    let can = db::effective_permissions(&state.db, &server, Some(id), body.user_id)
+        .await?
+        .has(Permissions::VIEW_CHANNEL);
+    if can {
+        state.hub.send_to_user(
+            body.user_id,
+            &WsEvent::ChannelCreate {
+                channel: channel.clone(),
+            },
+        );
+    }
+
+    let member_ids = db::server_member_ids(&state.db, server.id).await?;
+    let member_count = member_ids.len() as u32;
+    let online_count = state.hub.online_among(&member_ids).len() as u32;
+    let invited_by = db::user_public(&state.db, user.id).await?;
+    state.hub.send_to_user(
+        body.user_id,
+        &WsEvent::ChannelInvite {
+            server: server.clone(),
+            channel: channel.clone(),
+            invited_by,
+            member_count,
+            online_count,
+        },
+    );
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn grant_member_channel_access(
+    state: &AppState,
+    channel: &Channel,
+    user_id: Uuid,
+) -> AppResult<()> {
+    let mut access = Permissions::VIEW_CHANNEL;
+    if channel.channel_type == ChannelType::Voice {
+        access |= Permissions::CONNECT;
+    }
+
+    let existing = db::channel_overwrites(&state.db, channel.id).await?;
+    if let Some(ow) = existing.iter().find(|o| {
+        o.target_type == OverwriteTarget::Member && o.target_id == user_id
+    }) {
+        let allow = ow.allow | access;
+        let deny = ow.deny - access;
+        sqlx::query(
+            "UPDATE permission_overwrites SET allow_bits = ?, deny_bits = ? WHERE id = ?",
+        )
+        .bind(allow.bits() as i64)
+        .bind(deny.bits() as i64)
+        .bind(ow.id.to_string())
+        .execute(&state.db)
+        .await?;
+    } else {
+        sqlx::query(
+            "INSERT INTO permission_overwrites (id, channel_id, target_type, target_id, allow_bits, deny_bits) VALUES (?, ?, 'member', ?, ?, 0)",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(channel.id.to_string())
+        .bind(user_id.to_string())
+        .bind(access.bits() as i64)
+        .execute(&state.db)
+        .await?;
+    }
+    Ok(())
 }

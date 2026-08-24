@@ -26,6 +26,7 @@ bitflags! {
         const ATTACH_FILES     = 1 << 14;
         const ADD_REACTIONS    = 1 << 15;
         const MENTION_EVERYONE = 1 << 16;
+        const MANAGE_EXPRESSIONS = 1 << 17;
         const ADMINISTRATOR    = 1 << 63;
     }
 }
@@ -61,6 +62,8 @@ pub struct UserPublic {
     pub username: String,
     pub display_name: String,
     pub avatar_url: Option<String>,
+    #[serde(default)]
+    pub banner_url: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -169,6 +172,17 @@ pub struct Invite {
     pub max_uses: Option<u32>,
     pub uses: u32,
     pub expires_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerEmoji {
+    pub id: Uuid,
+    pub server_id: Uuid,
+    pub name: String,
+    pub image_url: String,
+    pub animated: bool,
+    pub creator_id: Uuid,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -288,6 +302,21 @@ pub enum WsEvent {
     },
     MemberJoin {
         member: Member,
+    },
+    /// Friend was added to a server via Invite People — show invite card to invitee.
+    ServerInvite {
+        server: Server,
+        invited_by: UserPublic,
+        member_count: u32,
+        online_count: u32,
+    },
+    /// Invited to a specific channel (often private) — show join-channel card.
+    ChannelInvite {
+        server: Server,
+        channel: Channel,
+        invited_by: UserPublic,
+        member_count: u32,
+        online_count: u32,
     },
     MemberLeave {
         server_id: Uuid,

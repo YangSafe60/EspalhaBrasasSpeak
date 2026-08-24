@@ -4,6 +4,7 @@ import type { useVoice } from "../hooks/useVoice";
 import { mediaCssUrl } from "../lib/mediaUrl";
 import { useAppStore } from "../store/appStore";
 import { ScreenSharePicker } from "./ScreenSharePicker";
+import { StatusPicker } from "./StatusPicker";
 
 type VoiceApi = ReturnType<typeof useVoice>;
 
@@ -73,9 +74,11 @@ function IconSignal() {
 export function VoicePanel({ voice }: Props) {
   const channelsByServer = useAppStore((s) => s.channelsByServer);
   const user = useAppStore((s) => s.user);
+  const activeServerId = useAppStore((s) => s.activeServerId);
   const streaming = useAppStore((s) => s.streaming);
   const selectChannel = useAppStore((s) => s.selectChannel);
   const setModal = useAppStore((s) => s.setModal);
+  const openMiniProfile = useAppStore((s) => s.openMiniProfile);
 
   const shareBtnRef = useRef<HTMLButtonElement>(null);
   const [liveMenuOpen, setLiveMenuOpen] = useState(false);
@@ -187,32 +190,43 @@ export function VoicePanel({ voice }: Props) {
       )}
 
       <div className="user-panel">
-        <button
-          type="button"
-          className="user-panel-identity"
-          title={
-            user
-              ? `${user.display_name} (@${user.username}) — User settings`
-              : "User settings"
-          }
-          onClick={() => setModal("user-settings")}
-        >
-          <span
-            className="user-panel-avatar"
-            style={
-              user?.avatar_url
-                ? { backgroundImage: mediaCssUrl(user.avatar_url) }
-                : undefined
+        <div className="user-panel-identity-wrap">
+          <button
+            type="button"
+            className="user-panel-identity"
+            title={
+              user
+                ? `${user.display_name} (@${user.username}) — Profile`
+                : "Profile"
             }
+            onClick={(e) => {
+              if (!user) return;
+              openMiniProfile({
+                userId: user.id,
+                serverId: activeServerId,
+                x: e.clientX,
+                y: e.clientY,
+              });
+            }}
           >
-            {!user?.avatar_url &&
-              (user?.display_name?.charAt(0)?.toUpperCase() || "?")}
-          </span>
-          <span className="user-panel-meta">
-            <strong>{user?.display_name || "User"}</strong>
-            <em>@{user?.username || "…"}</em>
-          </span>
-        </button>
+            <span
+              className="user-panel-avatar"
+              style={
+                user?.avatar_url
+                  ? { backgroundImage: mediaCssUrl(user.avatar_url) }
+                  : undefined
+              }
+            >
+              {!user?.avatar_url &&
+                (user?.display_name?.charAt(0)?.toUpperCase() || "?")}
+            </span>
+            <span className="user-panel-meta">
+              <strong>{user?.display_name || "User"}</strong>
+              <em>@{user?.username || "…"}</em>
+            </span>
+          </button>
+          <StatusPicker className="user-panel-status" />
+        </div>
 
         <div className="voice-icon-controls user-panel-controls">
           <button

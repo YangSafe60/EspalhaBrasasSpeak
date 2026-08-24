@@ -44,6 +44,9 @@ where
 #[derive(Deserialize)]
 pub struct CreateInviteReq {
     pub max_uses: Option<u32>,
+    /// Lifetime in seconds (preferred). `0` / omitted = never expires.
+    pub max_age: Option<i64>,
+    /// Legacy alias (hours). Used only when `max_age` is absent.
     pub expires_hours: Option<i64>,
 }
 
@@ -305,17 +308,11 @@ pub async fn list_presence(
     let ids = db::server_member_ids(&state.db, id).await?;
     // Refresh hub membership cache so presence fanout stays accurate.
     state.hub.set_server_members(id, ids.clone());
-    let online = state.hub.online_among(&ids);
-    let online_set: std::collections::HashSet<Uuid> = online.into_iter().collect();
     let out = ids
         .into_iter()
         .map(|user_id| PresenceView {
             user_id,
-            status: if online_set.contains(&user_id) {
-                speakapp_shared::PresenceStatus::Online
-            } else {
-                speakapp_shared::PresenceStatus::Offline
-            },
+            status: state.hub.public_status(user_id),
         })
         .collect();
     Ok(Json(out))
@@ -523,9 +520,14 @@ pub async fn create_invite(
             .collect::<String>()
     };
     let now = Utc::now();
-    let expires = body
-        .expires_hours
-        .map(|h| (now + Duration::hours(h)).to_rfc3339());
+    let expires = match body.max_age {
+        Some(secs) if secs > 0 => Some((now + Duration::seconds(secs)).to_rfc3339()),
+        Some(_) => None,
+        None => body
+            .expires_hours
+            .filter(|h| *h > 0)
+            .map(|h| (now + Duration::hours(h)).to_rfc3339()),
+    };
     sqlx::query(
         "INSERT INTO invites (code, server_id, creator_id, max_uses, uses, expires_at, created_at) VALUES (?, ?, ?, ?, 0, ?, ?)",
     )
@@ -558,14 +560,28 @@ pub async fn list_invites(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Vec<Invite>>> {
     let server = db::get_server(&state.db, id).await?;
-    db::require_perm(
+    // Creators can view the list; managers always can.
+    let ok = db::require_perm(
         &state.db,
         &server,
         None,
         user.id,
-        Permissions::MANAGE_SERVER,
+        Permissions::CREATE_INVITE,
     )
-    .await?;
+    .await
+    .is_ok()
+        || db::require_perm(
+            &state.db,
+            &server,
+            None,
+            user.id,
+            Permissions::MANAGE_SERVER,
+        )
+        .await
+        .is_ok();
+    if !ok {
+        return Err(AppError::Forbidden);
+    }
     #[derive(sqlx::FromRow)]
     struct Row {
         code: String,
@@ -576,7 +592,7 @@ pub async fn list_invites(
         expires_at: Option<String>,
     }
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT code, server_id, creator_id, max_uses, uses, expires_at FROM invites WHERE server_id = ?",
+        "SELECT code, server_id, creator_id, max_uses, uses, expires_at FROM invites WHERE server_id = ? ORDER BY created_at DESC",
     )
     .bind(id.to_string())
     .fetch_all(&state.db)
@@ -599,16 +615,121 @@ pub async fn list_invites(
     ))
 }
 
+pub async fn delete_invite(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path((id, code)): Path<(Uuid, String)>,
+) -> AppResult<Json<serde_json::Value>> {
+    let server = db::get_server(&state.db, id).await?;
+    db::require_perm(
+        &state.db,
+        &server,
+        None,
+        user.id,
+        Permissions::CREATE_INVITE,
+    )
+    .await?;
+    let res = sqlx::query("DELETE FROM invites WHERE server_id = ? AND code = ?")
+        .bind(id.to_string())
+        .bind(&code)
+        .execute(&state.db)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(AppError::NotFound);
+    }
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct InviteFriendReq {
+    pub user_id: Uuid,
+}
+
+/// Add an accepted friend to the server (Discord-style Invite People).
+pub async fn invite_friend(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<InviteFriendReq>,
+) -> AppResult<Json<Member>> {
+    if body.user_id == user.id {
+        return Err(AppError::BadRequest("cannot invite yourself".into()));
+    }
+    let server = db::get_server(&state.db, id).await?;
+    db::require_perm(
+        &state.db,
+        &server,
+        None,
+        user.id,
+        Permissions::CREATE_INVITE,
+    )
+    .await?;
+    if !crate::routes::friends::are_friends(&state.db, user.id, body.user_id).await? {
+        return Err(AppError::BadRequest("you can only invite friends".into()));
+    }
+    let banned: (i64,) =
+        sqlx::query_as("SELECT COUNT(1) FROM bans WHERE server_id = ? AND user_id = ?")
+            .bind(id.to_string())
+            .bind(body.user_id.to_string())
+            .fetch_one(&state.db)
+            .await?;
+    if banned.0 > 0 {
+        return Err(AppError::Forbidden);
+    }
+    if db::is_member(&state.db, id, body.user_id).await? {
+        return Ok(Json(db::get_member(&state.db, id, body.user_id).await?));
+    }
+    let now = Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT INTO members (server_id, user_id, joined_at, accepted_rules) VALUES (?, ?, ?, 0)",
+    )
+    .bind(id.to_string())
+    .bind(body.user_id.to_string())
+    .bind(&now)
+    .execute(&state.db)
+    .await?;
+
+    state.hub.add_server_member(id, body.user_id);
+    let member = db::get_member(&state.db, id, body.user_id).await?;
+    state
+        .hub
+        .broadcast_server(id, &WsEvent::MemberJoin { member: member.clone() });
+
+    let (member_count, online_count) = invite_presence_counts(&state, id).await?;
+    let invited_by = db::user_public(&state.db, user.id).await?;
+    state.hub.send_to_user(
+        body.user_id,
+        &WsEvent::ServerInvite {
+            server: server.clone(),
+            invited_by,
+            member_count,
+            online_count,
+        },
+    );
+
+    Ok(Json(member))
+}
+
 pub async fn invite_info(
     State(state): State<AppState>,
     Path(code): Path<String>,
 ) -> AppResult<Json<serde_json::Value>> {
     let invite = load_invite(&state, &code).await?;
     let server = db::get_server(&state.db, invite.server_id).await?;
+    let (member_count, online_count) = invite_presence_counts(&state, invite.server_id).await?;
     Ok(Json(serde_json::json!({
         "invite": invite,
         "server": server,
+        "member_count": member_count,
+        "online_count": online_count,
     })))
+}
+
+async fn invite_presence_counts(state: &AppState, server_id: Uuid) -> AppResult<(u32, u32)> {
+    let ids = db::server_member_ids(&state.db, server_id).await?;
+    let member_count = ids.len() as u32;
+    let online_count = state.hub.online_among(&ids).len() as u32;
+    Ok((member_count, online_count))
 }
 
 pub async fn join_invite(

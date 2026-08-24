@@ -1,3 +1,4 @@
+use crate::db;
 use crate::state::AppState;
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
@@ -21,6 +22,8 @@ pub struct WsHub {
     server_members: Arc<DashMap<Uuid, Vec<Uuid>>>,
     /// Bumped on each new connection so delayed voice-clear tasks can cancel.
     presence_generation: Arc<DashMap<Uuid, u64>>,
+    /// Chosen status while connected (`Offline` = appear invisible).
+    user_status: Arc<DashMap<Uuid, PresenceStatus>>,
 }
 
 impl WsHub {
@@ -51,12 +54,36 @@ impl WsHub {
         self.connection_count(user_id) > 0
     }
 
-    /// Online user ids among the given candidates.
+    pub fn set_status(&self, user_id: Uuid, status: PresenceStatus) {
+        self.user_status.insert(user_id, status);
+    }
+
+    pub fn chosen_status(&self, user_id: Uuid) -> Option<PresenceStatus> {
+        self.user_status.get(&user_id).map(|s| *s)
+    }
+
+    pub fn clear_status(&self, user_id: Uuid) {
+        self.user_status.remove(&user_id);
+    }
+
+    /// Status others should see. Disconnected or Invisible → Offline.
+    pub fn public_status(&self, user_id: Uuid) -> PresenceStatus {
+        if !self.is_online(user_id) {
+            return PresenceStatus::Offline;
+        }
+        match self.user_status.get(&user_id).map(|s| *s) {
+            Some(PresenceStatus::Offline) => PresenceStatus::Offline,
+            Some(status) => status,
+            None => PresenceStatus::Online,
+        }
+    }
+
+    /// Online user ids among the given candidates (connected, not invisible).
     pub fn online_among(&self, user_ids: &[Uuid]) -> Vec<Uuid> {
         user_ids
             .iter()
             .copied()
-            .filter(|id| self.is_online(*id))
+            .filter(|id| self.public_status(*id) != PresenceStatus::Offline)
             .collect()
     }
 
@@ -145,13 +172,17 @@ pub async fn handle_socket(
     let (mut sender, mut receiver) = socket.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
     let was_offline = hub.connection_count(user_id) == 0;
+    let preferred = db::get_user_status(&state.db, user_id)
+        .await
+        .unwrap_or(PresenceStatus::Online);
+    hub.set_status(user_id, preferred);
     hub.register(user_id, tx.clone());
     if was_offline {
         hub.broadcast_user_servers(
             user_id,
             &WsEvent::PresenceUpdate {
                 user_id,
-                status: PresenceStatus::Online,
+                status: hub.public_status(user_id),
             },
         );
     }
@@ -185,6 +216,7 @@ pub async fn handle_socket(
     // Hard quit / crash leaves voice_states behind. After a short grace (reconnects),
     // clear lobby presence so others don't see a ghost.
     if hub.connection_count(user_id) == 0 {
+        hub.clear_status(user_id);
         hub.broadcast_user_servers(
             user_id,
             &WsEvent::PresenceUpdate {

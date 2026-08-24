@@ -5,6 +5,9 @@ import {
   hasPerm,
   permBits,
   sameId,
+  isEveryoneRole,
+  channelAccessBits,
+  hasAnyAccessBit,
   Perm,
 } from "../lib/serverPerms";
 import {
@@ -47,6 +50,68 @@ function applyTri(allow: number, deny: number, bit: number, next: Tri) {
   if (next === "allow") a |= bit;
   if (next === "deny") d |= bit;
   return { allow: a, deny: d };
+}
+
+function normalizeOverwrite(o: PermissionOverwrite): PermissionOverwrite {
+  return {
+    ...o,
+    target_type:
+      String(o.target_type).toLowerCase() === "member" ? "member" : "role",
+    allow: permBits(o.allow),
+    deny: permBits(o.deny),
+  };
+}
+
+function findEveryoneRole(roles: Role[]): Role | undefined {
+  return roles.find((r) => isEveryoneRole(r));
+}
+
+/** Derive private-lock UI state from saved overwrites. */
+function lockStateFromOverwrites(
+  ows: PermissionOverwrite[],
+  roles: Role[],
+  channelType: string | undefined,
+): { locked: boolean; accessRoleIds: string[]; everyoneId: string | null } {
+  const accessBits = channelAccessBits(channelType);
+  const everyone = findEveryoneRole(roles);
+  const roleOws = ows.filter(
+    (o) => String(o.target_type).toLowerCase() === "role",
+  );
+
+  let everyoneOw = everyone
+    ? roleOws.find((o) => sameId(o.target_id, everyone.id))
+    : undefined;
+
+  // If @everyone wasn't matched by id, treat any role overwrite that denies
+  // access bits and isn't an allow-only grant as the lock row.
+  if (!everyoneOw) {
+    everyoneOw = roleOws.find((o) => {
+      const deny = permBits(o.deny);
+      const allow = permBits(o.allow);
+      return hasAnyAccessBit(deny, accessBits) && !hasAnyAccessBit(allow, accessBits);
+    });
+  }
+
+  const everyoneId = everyone?.id ?? everyoneOw?.target_id ?? null;
+  const locked = Boolean(
+    everyoneOw && hasAnyAccessBit(permBits(everyoneOw.deny), accessBits),
+  );
+
+  if (!locked) {
+    return { locked: false, accessRoleIds: [], everyoneId };
+  }
+
+  const accessRoleIds = roleOws
+    .filter((o) => {
+      if (everyoneId && sameId(o.target_id, everyoneId)) return false;
+      // Skip the everyone role even if ids mismatched.
+      const role = roles.find((r) => sameId(r.id, o.target_id));
+      if (isEveryoneRole(role)) return false;
+      return hasAnyAccessBit(permBits(o.allow), accessBits);
+    })
+    .map((o) => o.target_id);
+
+  return { locked: true, accessRoleIds, everyoneId };
 }
 
 export function ChannelSettingsModal() {
@@ -107,10 +172,7 @@ export function ChannelSettingsModal() {
 
   useEffect(() => {
     if (modal !== "channel-settings" || !channel) return;
-    if (!canManageChannels) {
-      setModal(null);
-      return;
-    }
+
     setTab("overview");
     setName(channel.name);
     setTopic(channel.topic || "");
@@ -121,64 +183,67 @@ export function ChannelSettingsModal() {
     setMsg(null);
     setErr(null);
     setConfirmName("");
+    setPrivateLocked(false);
+    setAccessRoleIds([]);
+    setOverwrites([]);
+    setSelectedRoleId(null);
 
     let cancelled = false;
     const serverId = channel.server_id;
     const channelId = channel.id;
+    const channelType = channel.channel_type;
 
     void (async () => {
       await loadRoles(serverId);
       if (cancelled) return;
-      const rolesNow =
-        useAppStore.getState().rolesByServer[serverId] ?? [];
-      const everyone =
-        rolesNow.find((r) => r.is_everyone) ||
-        rolesNow.find((r) => r.name === "@everyone");
-      const raw = await loadChannelOverwrites(channelId);
+
+      const store = useAppStore.getState();
+      const rolesNow = store.rolesByServer[serverId] ?? [];
+      const serverNow = store.servers.find((s) => s.id === serverId);
+      const membersNow = store.membersByServer[serverId] || [];
+      const meNow = membersNow.find((m) => m.user.id === store.user?.id);
+      const permsNow = effectiveServerPerms(
+        serverNow,
+        rolesNow,
+        meNow,
+        store.user?.id,
+      );
+      if (!hasPerm(permsNow, Perm.MANAGE_CHANNELS)) {
+        setModal(null);
+        return;
+      }
+
+      let raw: PermissionOverwrite[] = [];
+      try {
+        raw = await loadChannelOverwrites(channelId);
+      } catch (e) {
+        if (!cancelled) {
+          setErr(e instanceof Error ? e.message : "Failed to load permissions");
+        }
+        return;
+      }
       if (cancelled) return;
-      const ows = raw.map((o) => ({
-        ...o,
-        target_type:
-          String(o.target_type).toLowerCase() === "member" ? "member" : "role",
-        allow: permBits(o.allow),
-        deny: permBits(o.deny),
-      })) as PermissionOverwrite[];
+
+      const ows = raw.map(normalizeOverwrite);
       setOverwrites(ows);
-      const first =
-        ows.find((o) => o.target_type === "role")?.target_id ||
-        everyone?.id ||
-        null;
-      setSelectedRoleId(first);
-      const everyoneOw = everyone
-        ? ows.find(
-            (o) => o.target_type === "role" && sameId(o.target_id, everyone.id),
-          )
-        : ows.find(
-            (o) =>
-              o.target_type === "role" &&
-              (permBits(o.deny) & Perm.VIEW_CHANNEL) === Perm.VIEW_CHANNEL,
-          );
-      const deny = permBits(everyoneOw?.deny);
-      const locked = Boolean(
-        everyoneOw && (deny & Perm.VIEW_CHANNEL) === Perm.VIEW_CHANNEL,
+
+      const everyone = findEveryoneRole(rolesNow);
+      const { locked, accessRoleIds: accessIds } = lockStateFromOverwrites(
+        ows,
+        rolesNow,
+        channelType,
       );
       setPrivateLocked(locked);
-      if (locked) {
-        const everyoneId = everyone?.id ?? everyoneOw?.target_id;
-        setAccessRoleIds(
-          ows
-            .filter((o) => {
-              if (o.target_type !== "role") return false;
-              if (sameId(o.target_id, everyoneId)) return false;
-              return (
-                (permBits(o.allow) & Perm.VIEW_CHANNEL) === Perm.VIEW_CHANNEL
-              );
-            })
-            .map((o) => o.target_id),
-        );
-      } else {
-        setAccessRoleIds([]);
-      }
+      setAccessRoleIds(accessIds);
+
+      const preferred =
+        accessIds[0] ||
+        ows.find((o) => o.target_type === "role" && !sameId(o.target_id, everyone?.id))
+          ?.target_id ||
+        everyone?.id ||
+        rolesNow[0]?.id ||
+        null;
+      setSelectedRoleId(preferred);
     })();
 
     return () => {
@@ -296,7 +361,7 @@ export function ChannelSettingsModal() {
 
   async function onSavePrivateLock() {
     if (!channel) return;
-    const everyone = roles.find((r) => r.is_everyone);
+    const everyone = findEveryoneRole(roles);
     if (!everyone) {
       setErr("Missing @everyone role.");
       return;
@@ -305,10 +370,7 @@ export function ChannelSettingsModal() {
     setErr(null);
     setMsg(null);
     try {
-      const accessBits =
-        channel.channel_type === "voice"
-          ? Perm.VIEW_CHANNEL | Perm.CONNECT
-          : Perm.VIEW_CHANNEL;
+      const accessBits = channelAccessBits(channel.channel_type);
 
       let next: PermissionOverwrite[];
 
@@ -350,14 +412,14 @@ export function ChannelSettingsModal() {
             if (o.target_type !== "role") return o;
             return {
               ...o,
-              allow: permBits(o.allow) & ~accessBits,
-              deny: permBits(o.deny) & ~accessBits,
+              allow: (permBits(o.allow) & ~accessBits) >>> 0,
+              deny: (permBits(o.deny) & ~accessBits) >>> 0,
             };
           })
           .filter((o) => o.allow !== 0 || o.deny !== 0);
       }
 
-      const saved = await saveChannelOverwrites(
+      const saved = (await saveChannelOverwrites(
         channel.id,
         next.map((o) => ({
           target_type: o.target_type,
@@ -365,27 +427,17 @@ export function ChannelSettingsModal() {
           allow: o.allow,
           deny: o.deny,
         })),
-      );
+      )).map(normalizeOverwrite);
       setOverwrites(saved);
-      if (privateLocked) {
-        setAccessRoleIds(
-          saved
-            .filter((o) => {
-              if (String(o.target_type).toLowerCase() !== "role") return false;
-              if (sameId(o.target_id, everyone.id)) return false;
-              return (
-                (permBits(o.allow) & Perm.VIEW_CHANNEL) === Perm.VIEW_CHANNEL
-              );
-            })
-            .map((o) => o.target_id),
-        );
-        setPrivateLocked(true);
-      } else {
-        setAccessRoleIds([]);
-        setPrivateLocked(false);
-      }
+      const restored = lockStateFromOverwrites(
+        saved,
+        roles,
+        channel.channel_type,
+      );
+      setPrivateLocked(restored.locked);
+      setAccessRoleIds(restored.accessRoleIds);
       setMsg(
-        privateLocked
+        restored.locked
           ? "Channel locked — only selected roles can see it."
           : "Channel unlocked for @everyone.",
       );
@@ -664,7 +716,7 @@ export function ChannelSettingsModal() {
                       <div className="private-role-list">
                         <p className="muted tiny">Who can access:</p>
                         {roles
-                          .filter((r) => !r.is_everyone && r.name !== "@everyone")
+                          .filter((r) => !isEveryoneRole(r))
                           .map((role) => (
                             <label key={role.id} className="check-row">
                               <input
@@ -689,7 +741,7 @@ export function ChannelSettingsModal() {
                               <span>{role.name}</span>
                             </label>
                           ))}
-                        {roles.filter((r) => !r.is_everyone).length === 0 && (
+                        {roles.filter((r) => !isEveryoneRole(r)).length === 0 && (
                           <p className="muted tiny">
                             Create a role first, then grant it access here.
                           </p>

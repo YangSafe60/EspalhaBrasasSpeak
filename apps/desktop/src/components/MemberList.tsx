@@ -22,11 +22,13 @@ function MemberRow({
   member,
   status,
   color,
+  onOpen,
   onContext,
 }: {
   member: Member;
   status: PresenceStatus;
   color?: string;
+  onOpen: (e: MouseEvent, member: Member) => void;
   onContext: (e: MouseEvent, member: Member) => void;
 }) {
   const online = status === "online" || status === "idle" || status === "dnd";
@@ -35,6 +37,7 @@ function MemberRow({
   return (
     <li
       className={`member-list-row ${online ? "online" : "offline"}`}
+      onClick={(e) => onOpen(e, member)}
       onContextMenu={(e) => onContext(e, member)}
     >
       <div className="member-list-avatar-wrap">
@@ -43,6 +46,7 @@ function MemberRow({
             className="member-list-avatar"
             src={mediaUrl(member.user.avatar_url)}
             alt=""
+            referrerPolicy="no-referrer"
           />
         ) : (
           <span className="member-list-avatar placeholder">{initial}</span>
@@ -68,7 +72,9 @@ export function MemberList({ voice }: { voice?: MemberVoiceHandlers }) {
   const membersByServer = useAppStore((s) => s.membersByServer);
   const rolesByServer = useAppStore((s) => s.rolesByServer);
   const presenceByUser = useAppStore((s) => s.presenceByUser);
+  const myStatus = useAppStore((s) => s.myStatus);
   const user = useAppStore((s) => s.user);
+  const openMiniProfile = useAppStore((s) => s.openMiniProfile);
   const { openForMember, menuPortal } = useMemberContextMenu(voice);
 
   const members = activeServerId
@@ -82,7 +88,7 @@ export function MemberList({ voice }: { voice?: MemberVoiceHandlers }) {
     for (const m of members) {
       const status =
         m.user.id === user?.id
-          ? "online"
+          ? myStatus
           : presenceByUser[m.user.id] || "offline";
       if (status === "offline") off.push(m);
       else on.push(m);
@@ -94,9 +100,23 @@ export function MemberList({ voice }: { voice?: MemberVoiceHandlers }) {
     on.sort(byName);
     off.sort(byName);
     return { online: on, offline: off };
-  }, [members, presenceByUser, user?.id]);
+  }, [members, presenceByUser, user?.id, myStatus]);
 
   if (!activeServerId) return null;
+
+  function openProfile(e: MouseEvent, member: Member) {
+    openMiniProfile({
+      userId: member.user.id,
+      serverId: activeServerId,
+      x: e.clientX,
+      y: e.clientY,
+    });
+  }
+
+  function statusFor(member: Member): PresenceStatus {
+    if (member.user.id === user?.id) return myStatus;
+    return presenceByUser[member.user.id] || "offline";
+  }
 
   return (
     <aside className="member-list-panel" aria-label="Server members">
@@ -109,12 +129,9 @@ export function MemberList({ voice }: { voice?: MemberVoiceHandlers }) {
                 <MemberRow
                   key={m.user.id}
                   member={m}
-                  status={
-                    m.user.id === user?.id
-                      ? "online"
-                      : presenceByUser[m.user.id] || "online"
-                  }
+                  status={statusFor(m)}
                   color={highestRoleColor(m, roles)}
+                  onOpen={openProfile}
                   onContext={openForMember}
                 />
               ))}
@@ -131,6 +148,7 @@ export function MemberList({ voice }: { voice?: MemberVoiceHandlers }) {
                   member={m}
                   status="offline"
                   color={highestRoleColor(m, roles)}
+                  onOpen={openProfile}
                   onContext={openForMember}
                 />
               ))}

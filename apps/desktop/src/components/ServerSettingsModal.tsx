@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { CATBOX_UPLOAD_HINT } from "../lib/uploadHints";
-import { mediaCssUrl } from "../lib/mediaUrl";
+import { mediaCssUrl, mediaUrl } from "../lib/mediaUrl";
 import {
   effectiveServerPerms,
   hasPerm,
@@ -8,9 +8,45 @@ import {
 } from "../lib/serverPerms";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useAppStore } from "../store/appStore";
-import { ROLE_PERM_GROUPS } from "../types";
+import { ROLE_PERM_GROUPS, type Invite, type ServerEmoji } from "../types";
 
-type Tab = "branding" | "roles" | "invites" | "danger";
+type Tab = "branding" | "roles" | "emojis" | "invites" | "danger";
+
+const IMAGE_ACCEPT = "image/*,image/gif,.gif";
+const EMOJI_NAME_RE = /^[a-z0-9_]{2,32}$/;
+
+const INVITE_AGE_OPTIONS: { label: string; seconds: number }[] = [
+  { label: "Never", seconds: 0 },
+  { label: "30 minutes", seconds: 30 * 60 },
+  { label: "1 hour", seconds: 60 * 60 },
+  { label: "6 hours", seconds: 6 * 60 * 60 },
+  { label: "12 hours", seconds: 12 * 60 * 60 },
+  { label: "1 day", seconds: 24 * 60 * 60 },
+  { label: "7 days", seconds: 7 * 24 * 60 * 60 },
+];
+
+const INVITE_USES_OPTIONS: { label: string; uses: number }[] = [
+  { label: "Unlimited", uses: 0 },
+  { label: "1 use", uses: 1 },
+  { label: "5 uses", uses: 5 },
+  { label: "10 uses", uses: 10 },
+  { label: "25 uses", uses: 25 },
+  { label: "50 uses", uses: 50 },
+  { label: "100 uses", uses: 100 },
+];
+
+function formatInviteExpiry(iso: string | null): string {
+  if (!iso) return "Never";
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return "Never";
+  if (t <= Date.now()) return "Expired";
+  return new Date(iso).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 const DEFAULT_NEW_ROLE_PERMS =
   Perm.VIEW_CHANNEL |
@@ -34,8 +70,13 @@ export function ServerSettingsModal() {
   const updateRole = useAppStore((s) => s.updateRole);
   const deleteRole = useAppStore((s) => s.deleteRole);
   const createInvite = useAppStore((s) => s.createInvite);
+  const listInvites = useAppStore((s) => s.listInvites);
+  const deleteInvite = useAppStore((s) => s.deleteInvite);
   const loadRoles = useAppStore((s) => s.loadRoles);
   const uploadFile = useAppStore((s) => s.uploadFile);
+  const listServerEmojis = useAppStore((s) => s.listServerEmojis);
+  const createServerEmoji = useAppStore((s) => s.createServerEmoji);
+  const deleteServerEmoji = useAppStore((s) => s.deleteServerEmoji);
 
   const [tab, setTab] = useState<Tab>("branding");
   const [name, setName] = useState("");
@@ -48,7 +89,14 @@ export function ServerSettingsModal() {
   const [draftPerms, setDraftPerms] = useState(0);
   const [draftRoleName, setDraftRoleName] = useState("");
   const [draftRoleColor, setDraftRoleColor] = useState("#99a1b3");
-  const [inviteCode, setInviteCode] = useState<string | null>(null);
+  const [invites, setInvites] = useState<Invite[]>([]);
+  const [serverEmojis, setServerEmojis] = useState<ServerEmoji[]>([]);
+  const [emojiName, setEmojiName] = useState("");
+  const [emojiBusy, setEmojiBusy] = useState(false);
+  const [inviteMaxAge, setInviteMaxAge] = useState(0);
+  const [inviteMaxUses, setInviteMaxUses] = useState(0);
+  const [inviteBusy, setInviteBusy] = useState(false);
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [creatingRole, setCreatingRole] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -75,15 +123,17 @@ export function ServerSettingsModal() {
   );
   const canManageServer = hasPerm(myPerms, Perm.MANAGE_SERVER);
   const canManageRoles = hasPerm(myPerms, Perm.MANAGE_ROLES);
+  const canManageEmojis = hasPerm(myPerms, Perm.MANAGE_EXPRESSIONS);
   const canCreateInvite = hasPerm(myPerms, Perm.CREATE_INVITE);
   const allowedTabs = useMemo(() => {
     const tabs: Tab[] = [];
     if (canManageServer) tabs.push("branding");
     if (canManageRoles) tabs.push("roles");
+    if (canManageEmojis) tabs.push("emojis");
     if (canCreateInvite) tabs.push("invites");
     if (isOwner) tabs.push("danger");
     return tabs;
-  }, [canManageServer, canManageRoles, canCreateInvite, isOwner]);
+  }, [canManageServer, canManageRoles, canManageEmojis, canCreateInvite, isOwner]);
 
   const roles = useMemo(() => {
     const list = activeServerId ? rolesByServer[activeServerId] || [] : [];
@@ -102,7 +152,12 @@ export function ServerSettingsModal() {
     setAccent(server.accent_color || "#d4a017");
     setIconUrl(server.icon_url || "");
     setBannerUrl(server.banner_url || "");
-    setInviteCode(null);
+    setInvites([]);
+    setServerEmojis([]);
+    setEmojiName("");
+    setInviteMaxAge(0);
+    setInviteMaxUses(0);
+    setCopiedCode(null);
     setMsg(null);
     setErr(null);
     setBusy(false);
@@ -129,6 +184,36 @@ export function ServerSettingsModal() {
       setTab(allowedTabs[0]);
     }
   }, [allowedTabs, tab]);
+
+  useEffect(() => {
+    if (modal !== "server-settings" || tab !== "invites" || !activeServerId) return;
+    let cancelled = false;
+    void listInvites(activeServerId)
+      .then((list) => {
+        if (!cancelled) setInvites(list);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) setErr(e.message || "Failed to load invites");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [modal, tab, activeServerId, listInvites]);
+
+  useEffect(() => {
+    if (modal !== "server-settings" || tab !== "emojis" || !activeServerId) return;
+    let cancelled = false;
+    void listServerEmojis(activeServerId)
+      .then((list) => {
+        if (!cancelled) setServerEmojis(list);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) setErr(e.message || "Failed to load emojis");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [modal, tab, activeServerId, listServerEmojis]);
 
   useEffect(() => {
     if (!selectedRole) return;
@@ -285,6 +370,55 @@ export function ServerSettingsModal() {
     }
   }
 
+  async function onUploadEmoji(file: File | null) {
+    if (!file || !activeServerId) return;
+    const name = emojiName.trim().toLowerCase();
+    if (!EMOJI_NAME_RE.test(name)) {
+      setErr("Name must be 2–32 chars: a-z, 0-9, underscore.");
+      return;
+    }
+    setEmojiBusy(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      const up = await uploadFile(file);
+      const animated =
+        file.type === "image/gif" || /\.gif$/i.test(file.name || "");
+      const emoji = await createServerEmoji(activeServerId, {
+        name,
+        image_url: up.url,
+        animated,
+      });
+      setServerEmojis((prev) =>
+        [...prev.filter((e) => e.id !== emoji.id), emoji].sort((a, b) =>
+          a.name.localeCompare(b.name),
+        ),
+      );
+      setEmojiName("");
+      setMsg(`Added :${emoji.name}:`);
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : "Failed to add emoji");
+    } finally {
+      setEmojiBusy(false);
+    }
+  }
+
+  async function onDeleteEmoji(emoji: ServerEmoji) {
+    if (!activeServerId) return;
+    setEmojiBusy(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      await deleteServerEmoji(activeServerId, emoji.id);
+      setServerEmojis((prev) => prev.filter((e) => e.id !== emoji.id));
+      setMsg(`Removed :${emoji.name}:`);
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : "Failed to remove emoji");
+    } finally {
+      setEmojiBusy(false);
+    }
+  }
+
   return (
     <div className="modal-backdrop" onClick={() => setModal(null)}>
       <div
@@ -310,7 +444,11 @@ export function ServerSettingsModal() {
                 setErr(null);
               }}
             >
-              {t === "danger" ? "Delete server" : t}
+              {t === "danger"
+                ? "Delete server"
+                : t === "emojis"
+                  ? "Emojis"
+                  : t}
             </button>
           ))}
         </div>
@@ -536,23 +674,209 @@ export function ServerSettingsModal() {
           </div>
         )}
 
+        {tab === "emojis" && (
+          <div className="stack server-emoji-settings">
+            <p className="muted">
+              Upload custom emojis for this server. Members can use them in any
+              server or DM.
+            </p>
+            <div className="server-emoji-upload">
+              <label>
+                Name
+                <input
+                  value={emojiName}
+                  onChange={(e) =>
+                    setEmojiName(
+                      e.target.value
+                        .toLowerCase()
+                        .replace(/[^a-z0-9_]/g, "")
+                        .slice(0, 32),
+                    )
+                  }
+                  placeholder="brasas"
+                  maxLength={32}
+                />
+              </label>
+              <label className="btn">
+                {emojiBusy ? "Uploading…" : "Upload image / GIF"}
+                <input
+                  type="file"
+                  accept={IMAGE_ACCEPT}
+                  hidden
+                  disabled={emojiBusy || !emojiName.trim()}
+                  onChange={(e) => {
+                    void onUploadEmoji(e.target.files?.[0] || null);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+            </div>
+            <p className="muted tiny">
+              {CATBOX_UPLOAD_HINT} Max 50 emojis. GIFs animate.
+            </p>
+            {serverEmojis.length === 0 ? (
+              <p className="muted">No custom emojis yet.</p>
+            ) : (
+              <ul className="server-emoji-list">
+                {serverEmojis.map((e) => (
+                  <li key={e.id} className="server-emoji-row">
+                    <img
+                      className="server-emoji-preview"
+                      src={mediaUrl(e.image_url)}
+                      alt={`:${e.name}:`}
+                      referrerPolicy="no-referrer"
+                    />
+                    <div className="server-emoji-meta">
+                      <strong>:{e.name}:</strong>
+                      {e.animated && <span className="muted tiny">GIF</span>}
+                    </div>
+                    <button
+                      type="button"
+                      className="btn ghost sm"
+                      disabled={emojiBusy}
+                      onClick={() => void onDeleteEmoji(e)}
+                    >
+                      Delete
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {msg && <p className="form-ok">{msg}</p>}
+            {err && <p className="form-error">{err}</p>}
+          </div>
+        )}
+
         {tab === "invites" && (
-          <div className="stack">
-            <p className="muted">Generate an invite code for this server.</p>
+          <div className="stack invite-settings">
+            <p className="muted">
+              Create invite codes with an optional lifetime and use limit. Anyone with a
+              valid code can join this server.
+            </p>
+
+            <div className="invite-create-grid">
+              <label>
+                Expires after
+                <select
+                  value={inviteMaxAge}
+                  onChange={(e) => setInviteMaxAge(Number(e.target.value))}
+                >
+                  {INVITE_AGE_OPTIONS.map((o) => (
+                    <option key={o.seconds} value={o.seconds}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Max uses
+                <select
+                  value={inviteMaxUses}
+                  onChange={(e) => setInviteMaxUses(Number(e.target.value))}
+                >
+                  {INVITE_USES_OPTIONS.map((o) => (
+                    <option key={o.uses} value={o.uses}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
             <button
               type="button"
               className="btn primary"
-              onClick={() =>
-                void createInvite(activeServerId).then((inv) => setInviteCode(inv.code))
-              }
+              disabled={inviteBusy}
+              onClick={() => {
+                if (!activeServerId) return;
+                setInviteBusy(true);
+                setErr(null);
+                void createInvite(activeServerId, {
+                  max_age: inviteMaxAge > 0 ? inviteMaxAge : null,
+                  max_uses: inviteMaxUses > 0 ? inviteMaxUses : null,
+                })
+                  .then(async (inv) => {
+                    setInvites((prev) => [inv, ...prev.filter((i) => i.code !== inv.code)]);
+                    try {
+                      await navigator.clipboard.writeText(inv.code);
+                      setCopiedCode(inv.code);
+                    } catch {
+                      /* ignore */
+                    }
+                    setMsg(`Invite ${inv.code} created`);
+                  })
+                  .catch((e: Error) => setErr(e.message || "Failed to create invite"))
+                  .finally(() => setInviteBusy(false));
+              }}
             >
-              Create invite
+              {inviteBusy ? "Creating…" : "Create invite"}
             </button>
-            {inviteCode && (
-              <p className="invite-code">
-                Code: <code>{inviteCode}</code>
-              </p>
-            )}
+
+            <div className="invite-list">
+              <h4>Active invites</h4>
+              {invites.length === 0 ? (
+                <p className="muted tiny">No invite codes yet.</p>
+              ) : (
+                <ul className="invite-rows">
+                  {invites.map((inv) => {
+                    const expired =
+                      inv.expires_at != null &&
+                      new Date(inv.expires_at).getTime() <= Date.now();
+                    const exhausted =
+                      inv.max_uses != null && inv.uses >= inv.max_uses;
+                    return (
+                      <li
+                        key={inv.code}
+                        className={`invite-row${expired || exhausted ? " is-dead" : ""}`}
+                      >
+                        <div className="invite-row-main">
+                          <code className="invite-row-code">{inv.code}</code>
+                          <span className="muted tiny">
+                            {inv.uses}
+                            {inv.max_uses != null ? ` / ${inv.max_uses}` : ""} uses
+                            {" · "}
+                            {formatInviteExpiry(inv.expires_at)}
+                          </span>
+                        </div>
+                        <div className="invite-row-actions">
+                          <button
+                            type="button"
+                            className="btn ghost sm"
+                            onClick={() => {
+                              void navigator.clipboard.writeText(inv.code).then(() => {
+                                setCopiedCode(inv.code);
+                                setMsg(`Copied ${inv.code}`);
+                              });
+                            }}
+                          >
+                            {copiedCode === inv.code ? "Copied" : "Copy"}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn ghost sm danger-link"
+                            onClick={() => {
+                              if (!activeServerId) return;
+                              void deleteInvite(activeServerId, inv.code)
+                                .then(() => {
+                                  setInvites((prev) =>
+                                    prev.filter((i) => i.code !== inv.code),
+                                  );
+                                  setMsg(`Revoked ${inv.code}`);
+                                })
+                                .catch((e: Error) =>
+                                  setErr(e.message || "Failed to revoke invite"),
+                                );
+                            }}
+                          >
+                            Revoke
+                          </button>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
           </div>
         )}
 
