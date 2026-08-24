@@ -210,9 +210,11 @@ export default function App() {
     );
   }
   return (
-    <BrowserPreviewGate>
-      <MainApp />
+    <>
+      <BrowserPreviewGate>
+        <MainApp />
+      </BrowserPreviewGate>
       <UpdateOverlay />
-    </BrowserPreviewGate>
+    </>
   );
 }

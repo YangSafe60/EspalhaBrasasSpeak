@@ -25,6 +25,9 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
+  # First install can show the wizard; auto-update uses silent (/S) via quitAndInstall(true, true).
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false
 mac:
   icon: build/icon.png
   target:

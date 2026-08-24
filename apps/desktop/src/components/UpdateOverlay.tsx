@@ -4,22 +4,41 @@ import type { AppUpdateEvent } from "../lib/desktop";
 
 const SPARKS = Array.from({ length: 12 }, (_, i) => i);
 
+function applyUpdate(
+  payload: AppUpdateEvent | null | undefined,
+  setState: (value: AppUpdateEvent | null) => void,
+) {
+  if (!payload || payload.phase === "idle") {
+    setState(null);
+    return;
+  }
+  setState({
+    phase: payload.phase,
+    percent: payload.percent ?? 0,
+    version: payload.version || "",
+    error: payload.error,
+  });
+}
+
 export function UpdateOverlay() {
   const [state, setState] = useState<AppUpdateEvent | null>(null);
 
   useEffect(() => {
     const api = window.electronAPI;
     if (!api?.onAppUpdate) return;
+
+    void api.getAppUpdate?.().then((payload) => applyUpdate(payload, setState));
+
     return api.onAppUpdate((payload) => {
-      if (!payload || payload.phase === "idle") {
-        setState(null);
-        return;
-      }
-      setState((prev) => ({
-        phase: payload.phase,
-        percent: payload.percent ?? prev?.percent ?? 0,
-        version: payload.version || prev?.version || "",
-      }));
+      setState((prev) => {
+        if (!payload || payload.phase === "idle") return null;
+        return {
+          phase: payload.phase,
+          percent: payload.percent ?? prev?.percent ?? 0,
+          version: payload.version || prev?.version || "",
+          error: payload.error,
+        };
+      });
     });
   }, []);
 

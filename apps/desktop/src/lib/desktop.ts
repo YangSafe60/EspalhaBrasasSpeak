@@ -15,6 +15,7 @@ export type ElectronAPI = {
     platform: string;
     versions: { electron: string; chrome: string; node: string };
   }>;
+  getAppUpdate: () => Promise<AppUpdateEvent | null>;
   focusMain: () => Promise<boolean>;
   setBackgroundThrottling: (enabled: boolean) => Promise<boolean>;
   listShareSources: (opts?: {
@@ -37,6 +38,7 @@ export type AppUpdateEvent = {
   phase: "idle" | "downloading" | "ready";
   percent: number;
   version?: string;
+  error?: string;
 };
 
 declare global {

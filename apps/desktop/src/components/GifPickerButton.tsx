@@ -61,13 +61,16 @@ export function GifPickerButton({ onPick, placement = "up" }: Props) {
     <div className="emoji-picker-root" ref={rootRef}>
       <button
         type="button"
-        className="icon-btn emoji-picker-toggle"
+        className={`icon-btn gif-picker-toggle${open ? " is-open" : ""}`}
         title="GIF"
+        aria-label="Search GIFs"
         aria-expanded={open}
         aria-haspopup="dialog"
         onClick={() => setOpen((v) => !v)}
       >
-        GIF
+        <span className="gif-picker-mark" aria-hidden>
+          <span className="gif-picker-mark-text">GIF</span>
+        </span>
       </button>
       {open && (
         <div

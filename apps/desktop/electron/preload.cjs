@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   isElectron: true,
   apiBase,
   getInfo: () => ipcRenderer.invoke("desktop:info"),
+  getAppUpdate: () => ipcRenderer.invoke("app:update:get"),
   focusMain: () => ipcRenderer.invoke("window:focus-main"),
   setBackgroundThrottling: (enabled) =>
     ipcRenderer.invoke("window:set-background-throttling", enabled),

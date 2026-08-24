@@ -19,6 +19,8 @@ if (process.env.ELECTRON_USER_DATA) {
 
 let mainWindow = null;
 const popouts = new Map();
+/** Last update payload so the renderer can catch up if it mounted late. */
+let lastUpdatePayload = null;
 
 function preloadPath() {
   return path.join(__dirname, "preload.cjs");
@@ -103,6 +105,8 @@ function registerIpc() {
       node: process.versions.node,
     },
   }));
+
+  ipcMain.handle("app:update:get", () => lastUpdatePayload);
 
   ipcMain.handle("window:focus-main", () => {
     if (!mainWindow || mainWindow.isDestroyed()) return false;
@@ -206,6 +210,7 @@ function registerIpc() {
 }
 
 function sendAppUpdate(payload) {
+  lastUpdatePayload = payload;
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("app:update", payload);
   }
@@ -220,45 +225,93 @@ function setupAutoUpdate() {
     console.warn("electron-updater not available", e);
     return;
   }
+
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
+  // Prefer in-app fire overlay over OS toast notifications.
+
+  const restartWithUpdate = (info) => {
+    sendAppUpdate({
+      phase: "ready",
+      percent: 100,
+      version: info?.version || lastUpdatePayload?.version || "",
+    });
+    for (const win of popouts.values()) {
+      if (!win.isDestroyed()) win.close();
+    }
+    popouts.clear();
+    // Give the fire overlay a moment to show "restarting", then silent install + relaunch.
+    setTimeout(() => {
+      try {
+        // isSilent=true → no NSIS wizard / Finish button
+        // isForceRunAfter=true → open the app again when done
+        autoUpdater.quitAndInstall(true, true);
+      } catch (err) {
+        console.warn("quitAndInstall", err);
+        app.relaunch();
+        app.exit(0);
+      }
+    }, 1800);
+  };
+
+  autoUpdater.on("checking-for-update", () => {
+    // Keep idle until we know there is something to download.
+  });
 
   autoUpdater.on("update-available", (info) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.setBackgroundThrottling(false);
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
     sendAppUpdate({
       phase: "downloading",
       percent: 0,
       version: info?.version || "",
     });
   });
+
   autoUpdater.on("download-progress", (progress) => {
     sendAppUpdate({
       phase: "downloading",
-      percent: Math.max(0, Math.min(100, progress?.percent || 0)),
-      version: "",
+      percent: Math.max(0, Math.min(100, Number(progress?.percent) || 0)),
+      version: lastUpdatePayload?.version || "",
     });
-  });
-  autoUpdater.on("update-downloaded", (info) => {
-    sendAppUpdate({
-      phase: "ready",
-      percent: 100,
-      version: info?.version || "",
-    });
-    setTimeout(() => {
-      try {
-        autoUpdater.quitAndInstall(false, true);
-      } catch (err) {
-        console.warn("quitAndInstall", err);
-      }
-    }, 1400);
-  });
-  autoUpdater.on("error", (err) => {
-    console.warn("auto-update", err);
-    sendAppUpdate({ phase: "idle", percent: 0, version: "" });
   });
 
-  void autoUpdater.checkForUpdatesAndNotify().catch((err) => {
-    console.warn("checkForUpdates", err);
+  autoUpdater.on("update-downloaded", (info) => {
+    restartWithUpdate(info);
   });
+
+  autoUpdater.on("error", (err) => {
+    console.warn("auto-update", err);
+    sendAppUpdate({
+      phase: "idle",
+      percent: 0,
+      version: "",
+      error: String(err?.message || err || "update failed"),
+    });
+  });
+
+  const startCheck = () => {
+    void autoUpdater.checkForUpdates().catch((err) => {
+      console.warn("checkForUpdates", err);
+    });
+  };
+
+  // Wait until the UI can receive the fire-overlay events.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.webContents.isLoading()) {
+      mainWindow.webContents.once("did-finish-load", () => {
+        setTimeout(startCheck, 600);
+      });
+    } else {
+      setTimeout(startCheck, 600);
+    }
+  } else {
+    setTimeout(startCheck, 1200);
+  }
 }
 
 app.whenReady().then(() => {
