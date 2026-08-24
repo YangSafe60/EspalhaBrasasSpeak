@@ -136,6 +136,24 @@ jobs:
           NEW="${MAJ}.${MIN}.${PAT}"
           echo "Bumping ${VER} → ${NEW}"
           echo "version=${NEW}" >> "$GITHUB_OUTPUT"
+      - name: Create GitHub release tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.ver.outputs.version }}"
+          TAG="v${VERSION}"
+          # electron-builder needs an existing tag; creating the release first
+          # also avoids a race when Setup.exe + blockmap both try to create it.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists"
+          else
+            gh release create "$TAG" \
+              --title "Espalha Brasas ${VERSION}" \
+              --notes "Desktop auto-update release ${VERSION}." \
+              --latest
+          fi
       - name: Install and build Windows installer
         working-directory: apps/desktop
         env:
