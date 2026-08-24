@@ -26,4 +26,24 @@ export function hasPerm(bits: number, flag: number): boolean {
   return (bits & flag) === flag;
 }
 
+/** Coerce API permission values (number, numeric string, or `{ bits }`) to a bitfield. */
+export function permBits(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value >>> 0;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n >>> 0 : 0;
+  }
+  if (value && typeof value === "object" && "bits" in value) {
+    return permBits((value as { bits: unknown }).bits);
+  }
+  return 0;
+}
+
+export function sameId(a: string | undefined | null, b: string | undefined | null): boolean {
+  if (!a || !b) return false;
+  return a.toLowerCase() === b.toLowerCase();
+}
+
 export { Perm };

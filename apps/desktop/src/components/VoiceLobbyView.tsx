@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { useVoice } from "../hooks/useVoice";
 import { openScreenPopout } from "../lib/popout";
+import { mediaCssUrl } from "../lib/mediaUrl";
 import { useAppStore } from "../store/appStore";
 import { useMemberContextMenu } from "./MemberUserMenu";
 
@@ -201,7 +202,7 @@ export function VoiceLobbyView({ voice }: Props) {
                     className={`voice-lobby-tile-avatar${voice.speakingIds.includes(u.user_id) ? " speaking" : ""}`}
                     style={
                       u.avatar
-                        ? { backgroundImage: `url(${u.avatar})` }
+                        ? { backgroundImage: mediaCssUrl(u.avatar) }
                         : undefined
                     }
                   >

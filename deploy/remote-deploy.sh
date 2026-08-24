@@ -15,6 +15,7 @@ LIVEKIT_URL="${LIVEKIT_URL:-ws://127.0.0.1:7880}"
 LIVEKIT_API_KEY="${LIVEKIT_API_KEY:-devkey}"
 LIVEKIT_API_SECRET="${LIVEKIT_API_SECRET:-espalha_brasas_dev_livekit_secret_32b}"
 MAX_UPLOAD_BYTES="${MAX_UPLOAD_BYTES:-26214400}"
+IMGBB_API_KEY="${IMGBB_API_KEY:-}"
 
 # Hostnames for Caddy (strip scheme + path).
 api_host() {
@@ -32,6 +33,7 @@ LIVEKIT_URL=${LIVEKIT_URL}
 LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
 LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
 MAX_UPLOAD_BYTES=${MAX_UPLOAD_BYTES}
+IMGBB_API_KEY=${IMGBB_API_KEY}
 EOF
 
 # Caddy: real domains get automatic HTTPS; IP/localhost stays plain HTTP.

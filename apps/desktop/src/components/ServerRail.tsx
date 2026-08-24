@@ -1,4 +1,5 @@
 import { useAppStore } from "../store/appStore";
+import { mediaCssUrl } from "../lib/mediaUrl";
 import logoMark from "../assets/logo-mark.png";
 
 export function ServerRail() {
@@ -35,7 +36,7 @@ export function ServerRail() {
               className={`server-orb ${active ? "active" : ""}`}
               style={
                 server.icon_url
-                  ? { backgroundImage: `url(${server.icon_url})` }
+                  ? { backgroundImage: mediaCssUrl(server.icon_url) }
                   : { backgroundColor: server.accent_color || "var(--accent)" }
               }
               title={server.name}

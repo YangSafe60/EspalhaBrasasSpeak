@@ -8,6 +8,7 @@ import {
   type MouseEvent,
 } from "react";
 import { useAppStore } from "../store/appStore";
+import { mediaCssUrl } from "../lib/mediaUrl";
 import {
   effectiveServerPerms,
   hasPerm,
@@ -478,7 +479,7 @@ export function ChannelSidebar({
                     <span
                       className={`voice-user-avatar${speakingIds.includes(u.user_id) ? " speaking" : ""}`}
                       style={
-                        avatar ? { backgroundImage: `url(${avatar})` } : undefined
+                        avatar ? { backgroundImage: mediaCssUrl(avatar) } : undefined
                       }
                     >
                       {!avatar && (u.name.charAt(0) || "?").toUpperCase()}

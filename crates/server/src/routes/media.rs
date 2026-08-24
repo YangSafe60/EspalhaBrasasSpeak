@@ -6,7 +6,6 @@ use axum::{
     Json,
 };
 use serde::Serialize;
-use std::path::Path;
 use uuid::Uuid;
 
 #[derive(Serialize)]
@@ -46,14 +45,12 @@ pub async fn upload(
         return Err(AppError::BadRequest("file too large".into()));
     }
 
-    // Prefer catbox; fall back to local /media when the host is unreachable.
-    let url = match upload_catbox(&filename, &content_type, &data).await {
-        Ok(url) => url,
-        Err(err) => {
-            tracing::warn!(error = %err, "catbox upload failed; storing file locally");
-            store_local(&state, &filename, &data).await?
-        }
-    };
+    let key = state.config.imgbb_api_key.as_deref().ok_or_else(|| {
+        AppError::BadRequest("image upload is not configured (set IMGBB_API_KEY)".into())
+    })?;
+    let url = upload_imgbb(key, &filename, &content_type, &data)
+        .await
+        .map_err(|e| AppError::BadRequest(format!("ImgBB upload failed: {e}")))?;
 
     let id = Uuid::new_v4();
     sqlx::query(
@@ -76,69 +73,37 @@ pub async fn upload(
     }))
 }
 
-fn sanitize_filename(name: &str) -> String {
-    let base = Path::new(name)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("upload.bin");
-    let cleaned: String = base
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if cleaned.is_empty() {
-        "upload.bin".into()
-    } else {
-        cleaned
-    }
-}
-
-async fn store_local(state: &AppState, filename: &str, data: &[u8]) -> AppResult<String> {
-    let id = Uuid::new_v4();
-    let safe = sanitize_filename(filename);
-    let stored = format!("{id}_{safe}");
-    let path = state.config.media_dir.join(&stored);
-    tokio::fs::create_dir_all(&state.config.media_dir)
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
-    tokio::fs::write(&path, data)
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
-    let base = state.config.public_url.trim_end_matches('/');
-    Ok(format!("{base}/media/{stored}"))
-}
-
-async fn upload_catbox(filename: &str, content_type: &str, data: &[u8]) -> Result<String, String> {
+async fn upload_imgbb(
+    api_key: &str,
+    filename: &str,
+    content_type: &str,
+    data: &[u8],
+) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .user_agent("EspalhaBrasas/0.1")
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(45))
         .build()
         .map_err(|e| e.to_string())?;
     let part = reqwest::multipart::Part::bytes(data.to_vec())
         .file_name(filename.to_string())
         .mime_str(content_type)
         .map_err(|e| e.to_string())?;
-    let form = reqwest::multipart::Form::new()
-        .text("reqtype", "fileupload")
-        .part("fileToUpload", part);
-
+    let form = reqwest::multipart::Form::new().part("image", part);
     let res = client
-        .post("https://catbox.moe/user/api.php")
+        .post("https://api.imgbb.com/1/upload")
+        .query(&[("key", api_key)])
         .multipart(form)
         .send()
         .await
         .map_err(|e| e.to_string())?;
-
     let status = res.status();
-    let text = res.text().await.map_err(|e| e.to_string())?.trim().to_string();
-
-    if !status.is_success() || !text.starts_with("http") {
-        return Err(format!("image host rejected upload: {text}"));
+    let body: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+    if !status.is_success() || body["success"].as_bool() != Some(true) {
+        return Err(format!("rejected ({status}): {body}"));
     }
-    Ok(text)
+    body["data"]["url"]
+        .as_str()
+        .or_else(|| body["data"]["display_url"].as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "ImgBB response missing url".into())
 }

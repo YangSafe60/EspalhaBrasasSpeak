@@ -3,6 +3,8 @@ import { useAppStore } from "../store/appStore";
 import {
   effectiveServerPerms,
   hasPerm,
+  permBits,
+  sameId,
   Perm,
 } from "../lib/serverPerms";
 import {
@@ -119,9 +121,6 @@ export function ChannelSettingsModal() {
     setMsg(null);
     setErr(null);
     setConfirmName("");
-    setPrivateLocked(false);
-    setAccessRoleIds([]);
-    setOverwrites([]);
 
     let cancelled = false;
     const serverId = channel.server_id;
@@ -132,9 +131,18 @@ export function ChannelSettingsModal() {
       if (cancelled) return;
       const rolesNow =
         useAppStore.getState().rolesByServer[serverId] ?? [];
-      const everyone = rolesNow.find((r) => r.is_everyone);
-      const ows = await loadChannelOverwrites(channelId);
+      const everyone =
+        rolesNow.find((r) => r.is_everyone) ||
+        rolesNow.find((r) => r.name === "@everyone");
+      const raw = await loadChannelOverwrites(channelId);
       if (cancelled) return;
+      const ows = raw.map((o) => ({
+        ...o,
+        target_type:
+          String(o.target_type).toLowerCase() === "member" ? "member" : "role",
+        allow: permBits(o.allow),
+        deny: permBits(o.deny),
+      })) as PermissionOverwrite[];
       setOverwrites(ows);
       const first =
         ows.find((o) => o.target_type === "role")?.target_id ||
@@ -143,22 +151,27 @@ export function ChannelSettingsModal() {
       setSelectedRoleId(first);
       const everyoneOw = everyone
         ? ows.find(
-            (o) => o.target_type === "role" && o.target_id === everyone.id,
+            (o) => o.target_type === "role" && sameId(o.target_id, everyone.id),
           )
-        : undefined;
-      const deny = Number(everyoneOw?.deny ?? 0);
+        : ows.find(
+            (o) =>
+              o.target_type === "role" &&
+              (permBits(o.deny) & Perm.VIEW_CHANNEL) === Perm.VIEW_CHANNEL,
+          );
+      const deny = permBits(everyoneOw?.deny);
       const locked = Boolean(
         everyoneOw && (deny & Perm.VIEW_CHANNEL) === Perm.VIEW_CHANNEL,
       );
       setPrivateLocked(locked);
       if (locked) {
+        const everyoneId = everyone?.id ?? everyoneOw?.target_id;
         setAccessRoleIds(
           ows
             .filter((o) => {
               if (o.target_type !== "role") return false;
-              if (o.target_id === everyone?.id) return false;
+              if (sameId(o.target_id, everyoneId)) return false;
               return (
-                (Number(o.allow) & Perm.VIEW_CHANNEL) === Perm.VIEW_CHANNEL
+                (permBits(o.allow) & Perm.VIEW_CHANNEL) === Perm.VIEW_CHANNEL
               );
             })
             .map((o) => o.target_id),
@@ -171,7 +184,7 @@ export function ChannelSettingsModal() {
     return () => {
       cancelled = true;
     };
-  }, [modal, channel?.id, loadRoles, loadChannelOverwrites, canManageChannels, setModal]);
+  }, [modal, channel?.id, loadRoles, loadChannelOverwrites, setModal]);
 
   useEffect(() => {
     if (!selectedRoleId) {
@@ -180,10 +193,10 @@ export function ChannelSettingsModal() {
       return;
     }
     const ow = overwrites.find(
-      (o) => o.target_type === "role" && o.target_id === selectedRoleId,
+      (o) => o.target_type === "role" && sameId(o.target_id, selectedRoleId),
     );
-    setDraftAllow(ow?.allow ?? 0);
-    setDraftDeny(ow?.deny ?? 0);
+    setDraftAllow(permBits(ow?.allow));
+    setDraftDeny(permBits(ow?.deny));
   }, [selectedRoleId, overwrites]);
 
   if (modal !== "channel-settings" || !channel || !canManageChannels) return null;
@@ -250,7 +263,8 @@ export function ChannelSettingsModal() {
     setMsg(null);
     try {
       const next = overwrites.filter(
-        (o) => !(o.target_type === "role" && o.target_id === selectedRoleId),
+        (o) =>
+          !(o.target_type === "role" && sameId(o.target_id, selectedRoleId)),
       );
       if (draftAllow !== 0 || draftDeny !== 0) {
         next.push({
@@ -301,8 +315,8 @@ export function ChannelSettingsModal() {
       if (privateLocked) {
         next = overwrites.filter((o) => {
           if (o.target_type !== "role") return true;
-          if (o.target_id === everyone.id) return false;
-          if (accessRoleIds.includes(o.target_id)) return false;
+          if (sameId(o.target_id, everyone.id)) return false;
+          if (accessRoleIds.some((id) => sameId(id, o.target_id))) return false;
           return true;
         });
         next.push({
@@ -315,10 +329,11 @@ export function ChannelSettingsModal() {
         });
         for (const roleId of accessRoleIds) {
           const prev = overwrites.find(
-            (o) => o.target_type === "role" && o.target_id === roleId,
+            (o) => o.target_type === "role" && sameId(o.target_id, roleId),
           );
-          const allow = ((prev?.allow ?? 0) & ~accessBits) | accessBits;
-          const deny = (prev?.deny ?? 0) & ~accessBits;
+          const allow =
+            ((permBits(prev?.allow) & ~accessBits) | accessBits) >>> 0;
+          const deny = (permBits(prev?.deny) & ~accessBits) >>> 0;
           next.push({
             id: `access-${roleId}`,
             channel_id: channel.id,
@@ -335,8 +350,8 @@ export function ChannelSettingsModal() {
             if (o.target_type !== "role") return o;
             return {
               ...o,
-              allow: o.allow & ~accessBits,
-              deny: o.deny & ~accessBits,
+              allow: permBits(o.allow) & ~accessBits,
+              deny: permBits(o.deny) & ~accessBits,
             };
           })
           .filter((o) => o.allow !== 0 || o.deny !== 0);
@@ -356,10 +371,10 @@ export function ChannelSettingsModal() {
         setAccessRoleIds(
           saved
             .filter((o) => {
-              if (o.target_type !== "role") return false;
-              if (o.target_id === everyone.id) return false;
+              if (String(o.target_type).toLowerCase() !== "role") return false;
+              if (sameId(o.target_id, everyone.id)) return false;
               return (
-                (Number(o.allow) & Perm.VIEW_CHANNEL) === Perm.VIEW_CHANNEL
+                (permBits(o.allow) & Perm.VIEW_CHANNEL) === Perm.VIEW_CHANNEL
               );
             })
             .map((o) => o.target_id),
@@ -649,17 +664,21 @@ export function ChannelSettingsModal() {
                       <div className="private-role-list">
                         <p className="muted tiny">Who can access:</p>
                         {roles
-                          .filter((r) => !r.is_everyone)
+                          .filter((r) => !r.is_everyone && r.name !== "@everyone")
                           .map((role) => (
                             <label key={role.id} className="check-row">
                               <input
                                 type="checkbox"
-                                checked={accessRoleIds.includes(role.id)}
+                                checked={accessRoleIds.some((id) =>
+                                  sameId(id, role.id),
+                                )}
                                 onChange={(e) => {
                                   setAccessRoleIds((ids) =>
                                     e.target.checked
-                                      ? [...ids, role.id]
-                                      : ids.filter((id) => id !== role.id),
+                                      ? ids.some((id) => sameId(id, role.id))
+                                        ? ids
+                                        : [...ids, role.id]
+                                      : ids.filter((id) => !sameId(id, role.id)),
                                   );
                                 }}
                               />

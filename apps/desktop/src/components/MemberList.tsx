@@ -1,5 +1,6 @@
 import { useMemo, type MouseEvent } from "react";
 import { useAppStore } from "../store/appStore";
+import { mediaUrl } from "../lib/mediaUrl";
 import type { Member, PresenceStatus, Role } from "../types";
 import {
   useMemberContextMenu,
@@ -40,7 +41,7 @@ function MemberRow({
         {member.user.avatar_url ? (
           <img
             className="member-list-avatar"
-            src={member.user.avatar_url}
+            src={mediaUrl(member.user.avatar_url)}
             alt=""
           />
         ) : (

@@ -7,6 +7,7 @@ import {
   Perm,
 } from "../lib/serverPerms";
 import { CATBOX_UPLOAD_HINT } from "../lib/uploadHints";
+import { mediaUrl } from "../lib/mediaUrl";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { EmojiPickerButton } from "./EmojiPickerButton";
 import { useAppStore } from "../store/appStore";
@@ -252,7 +253,7 @@ export function MessageView() {
                 {isGroupStart ? (
                   <div className="avatar">
                     {author?.avatar_url ? (
-                      <img src={author.avatar_url} alt="" />
+                      <img src={mediaUrl(author.avatar_url)} alt="" />
                     ) : (
                       <span>
                         {(author?.display_name || "?").charAt(0).toUpperCase()}
@@ -334,11 +335,11 @@ export function MessageView() {
                   <div className="attachments">
                     {m.attachments.map((a) =>
                       a.content_type.startsWith("image/") ? (
-                        <a key={a.id} href={a.url} target="_blank" rel="noreferrer">
-                          <img src={a.url} alt={a.filename} />
+                        <a key={a.id} href={mediaUrl(a.url)} target="_blank" rel="noreferrer">
+                          <img src={mediaUrl(a.url)} alt={a.filename} />
                         </a>
                       ) : (
-                        <a key={a.id} href={a.url} target="_blank" rel="noreferrer">
+                        <a key={a.id} href={mediaUrl(a.url)} target="_blank" rel="noreferrer">
                           {a.filename}
                         </a>
                       ),

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { CATBOX_UPLOAD_HINT } from "../lib/uploadHints";
+import { mediaCssUrl } from "../lib/mediaUrl";
 import { getElectronAPI } from "../lib/desktop";
 import { useAppStore } from "../store/appStore";
 import { VoiceVideoSettingsPanel } from "./VoiceVideoSettingsPanel";
@@ -183,7 +184,7 @@ export function UserSettingsModal() {
                   className="avatar-edit"
                   style={
                     avatarUrl
-                      ? { backgroundImage: `url(${avatarUrl})` }
+                      ? { backgroundImage: mediaCssUrl(avatarUrl) }
                       : undefined
                   }
                   onClick={() => fileRef.current?.click()}

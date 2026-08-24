@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { useVoice } from "../hooks/useVoice";
+import { mediaCssUrl } from "../lib/mediaUrl";
 import { useAppStore } from "../store/appStore";
 import { ScreenSharePicker } from "./ScreenSharePicker";
 
@@ -200,7 +201,7 @@ export function VoicePanel({ voice }: Props) {
             className="user-panel-avatar"
             style={
               user?.avatar_url
-                ? { backgroundImage: `url(${user.avatar_url})` }
+                ? { backgroundImage: mediaCssUrl(user.avatar_url) }
                 : undefined
             }
           >

@@ -1,3 +1,3 @@
-/** Shown next to image upload controls — files are hosted publicly on catbox.moe. */
+/** Shown next to image upload controls. */
 export const CATBOX_UPLOAD_HINT =
-  "Images are uploaded to catbox.moe and get a public link anyone with the URL can open.";
+  "Images are uploaded to ImgBB — anyone with the link can open them.";

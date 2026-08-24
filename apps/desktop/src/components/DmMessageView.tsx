@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import logoMark from "../assets/logo-mark.png";
 import { insertAtCursor } from "../lib/emojis";
+import { mediaUrl } from "../lib/mediaUrl";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { EmojiPickerButton } from "./EmojiPickerButton";
 import { useAppStore } from "../store/appStore";
@@ -176,7 +177,7 @@ export function DmMessageView() {
                 {isGroupStart ? (
                   <div className="avatar">
                     {author?.avatar_url ? (
-                      <img src={author.avatar_url} alt="" />
+                      <img src={mediaUrl(author.avatar_url)} alt="" />
                     ) : (
                       <span>
                         {(author?.display_name || "?").charAt(0).toUpperCase()}

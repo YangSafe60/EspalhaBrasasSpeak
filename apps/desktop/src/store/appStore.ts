@@ -35,6 +35,7 @@ import type {
   VoiceStateView,
   WsEvent,
 } from "../types";
+import { permBits } from "../lib/serverPerms";
 
 export type ModalKind =
   | null
@@ -753,14 +754,33 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   loadChannelOverwrites: async (channelId) => {
-    return api<PermissionOverwrite[]>(`/api/channels/${channelId}/overwrites`);
+    const rows = await api<PermissionOverwrite[]>(
+      `/api/channels/${channelId}/overwrites`,
+    );
+    return rows.map((o) => ({
+      ...o,
+      target_type:
+        String(o.target_type).toLowerCase() === "member" ? "member" : "role",
+      allow: permBits(o.allow),
+      deny: permBits(o.deny),
+    }));
   },
 
   saveChannelOverwrites: async (channelId, overwrites) => {
-    return api<PermissionOverwrite[]>(`/api/channels/${channelId}/overwrites`, {
-      method: "PUT",
-      body: { overwrites },
-    });
+    const rows = await api<PermissionOverwrite[]>(
+      `/api/channels/${channelId}/overwrites`,
+      {
+        method: "PUT",
+        body: { overwrites },
+      },
+    );
+    return rows.map((o) => ({
+      ...o,
+      target_type:
+        String(o.target_type).toLowerCase() === "member" ? "member" : "role",
+      allow: permBits(o.allow),
+      deny: permBits(o.deny),
+    }));
   },
 
   loadMessages: async (channelId) => {

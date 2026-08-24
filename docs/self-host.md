@@ -58,6 +58,7 @@ Repo → **Settings → Secrets and variables → Actions**:
 | `LIVEKIT_API_KEY` | no* | same key on API **and** LiveKit container |
 | `LIVEKIT_API_SECRET` | no* | ≥32 chars; same secret on API **and** LiveKit container |
 | `MAX_UPLOAD_BYTES` | no | `26214400` |
+| `IMGBB_API_KEY` | yes for images | ImgBB API key (chat, avatars, icons) |
 
 \*If these are missing or empty, the deploy script and Compose keep **localhost / local-dev defaults** (same as `.env.example`). Set them for a real public VPS.
 
@@ -136,7 +137,9 @@ VITE_API_BASE=https://your.domain npm run desktop
 
 ## Backups
 
-SQLite + media live in the `speakapp-data` volume:
+Images go to ImgBB (`IMGBB_API_KEY`), not the VPS disk.
+
+SQLite lives in the `speakapp-data` volume:
 
 ```bash
 docker compose exec api sqlite3 /data/speakapp.db ".backup '/data/speakapp-backup.db'"

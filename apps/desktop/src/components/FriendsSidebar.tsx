@@ -1,5 +1,6 @@
 import { useCallback, useState, type FormEvent, type MouseEvent } from "react";
 import { ApiError } from "../api/client";
+import { mediaUrl } from "../lib/mediaUrl";
 import { useAppStore } from "../store/appStore";
 import type { DmChannel, Friendship, UserPublic } from "../types";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
@@ -15,7 +16,7 @@ function FriendAvatar({ user }: { user: UserPublic }) {
     return (
       <img
         className="friends-avatar"
-        src={fresh.avatar_url}
+        src={mediaUrl(fresh.avatar_url)}
         alt=""
         referrerPolicy="no-referrer"
       />

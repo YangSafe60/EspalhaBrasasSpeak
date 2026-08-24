@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { CATBOX_UPLOAD_HINT } from "../lib/uploadHints";
+import { mediaCssUrl } from "../lib/mediaUrl";
 import {
   effectiveServerPerms,
   hasPerm,
@@ -331,7 +332,7 @@ export function ServerSettingsModal() {
                   className="avatar-edit"
                   style={
                     iconUrl
-                      ? { backgroundImage: `url(${iconUrl})`, pointerEvents: "none" }
+                      ? { backgroundImage: mediaCssUrl(iconUrl), pointerEvents: "none" }
                       : { pointerEvents: "none" }
                   }
                   aria-hidden
@@ -365,7 +366,7 @@ export function ServerSettingsModal() {
                 {bannerUrl ? (
                   <div
                     className="banner-preview"
-                    style={{ backgroundImage: `url(${bannerUrl})` }}
+                    style={{ backgroundImage: mediaCssUrl(bannerUrl) }}
                   />
                 ) : (
                   <p className="muted tiny">No banner yet.</p>
