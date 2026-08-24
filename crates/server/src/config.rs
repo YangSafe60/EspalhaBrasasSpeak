@@ -14,6 +14,7 @@ pub struct Config {
     pub livekit_api_secret: String,
     pub max_upload_bytes: u64,
     pub imgbb_api_key: Option<String>,
+    pub klipy_api_key: Option<String>,
 }
 
 impl Config {
@@ -40,6 +41,10 @@ impl Config {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(25 * 1024 * 1024),
             imgbb_api_key: env::var("IMGBB_API_KEY")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            klipy_api_key: env::var("KLIPY_API_KEY")
                 .ok()
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty()),

@@ -1273,7 +1273,7 @@ html[data-compact="1"] .message {
 
 .composer {
   display: grid;
-  grid-template-columns: auto auto 1fr auto;
+  grid-template-columns: auto auto auto 1fr auto;
   gap: 0.5rem;
   align-items: end;
   padding: 0.55rem;
@@ -1320,12 +1320,61 @@ html[data-compact="1"] .message {
   left: 0;
 }
 
+.emoji-picker-search {
+  width: 100%;
+  margin-bottom: 0.4rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.35);
+  color: inherit;
+  font-size: 0.8rem;
+}
+
+.gif-picker-panel {
+  width: min(320px, calc(100vw - 24px));
+}
+
+.gif-picker-status {
+  margin: 0 0 0.35rem;
+}
+
+.gif-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.35rem;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.gif-picker-cell {
+  border: none;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  aspect-ratio: 1.3;
+}
+
+.gif-picker-cell img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.gif-picker-cell:hover {
+  outline: 1px solid var(--accent, #e8b86d);
+}
+
 .emoji-picker-tabs {
   display: flex;
   gap: 0.2rem;
   margin-bottom: 0.4rem;
   padding-bottom: 0.35rem;
   border-bottom: 1px solid var(--border);
+  overflow-x: auto;
 }
 
 .emoji-picker-tabs button {

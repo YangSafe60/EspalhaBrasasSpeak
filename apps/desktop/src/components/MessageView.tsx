@@ -10,6 +10,7 @@ import { CATBOX_UPLOAD_HINT } from "../lib/uploadHints";
 import { mediaUrl } from "../lib/mediaUrl";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { EmojiPickerButton } from "./EmojiPickerButton";
+import { GifPickerButton, type GifHit } from "./GifPickerButton";
 import { useAppStore } from "../store/appStore";
 import type { Atmosphere, Channel, Message } from "../types";
 
@@ -56,6 +57,7 @@ export function MessageView() {
   const sendTyping = useAppStore((s) => s.sendTyping);
   const toggleReaction = useAppStore((s) => s.toggleReaction);
   const uploadFile = useAppStore((s) => s.uploadFile);
+  const attachRemoteMedia = useAppStore((s) => s.attachRemoteMedia);
   const setModal = useAppStore((s) => s.setModal);
   const servers = useAppStore((s) => s.servers);
   const membersByServer = useAppStore((s) => s.membersByServer);
@@ -151,6 +153,21 @@ export function MessageView() {
       typingTimer.current = window.setTimeout(() => {
         typingTimer.current = null;
       }, 2500);
+    }
+  }
+
+  async function onPickGif(gif: GifHit) {
+    if (!activeChannelId) return;
+    setBusy(true);
+    try {
+      const att = await attachRemoteMedia({
+        url: gif.url,
+        filename: `${gif.title || "gif"}.gif`,
+        content_type: "image/gif",
+      });
+      await sendMessage(activeChannelId, "", [att.id]);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -435,6 +452,7 @@ export function MessageView() {
             onChange={(e) => void onPickFile(e.target.files?.[0] || null)}
           />
           <EmojiPickerButton onPick={insertEmoji} />
+          <GifPickerButton onPick={(g) => void onPickGif(g)} />
           <textarea
             ref={draftRef}
             rows={1}

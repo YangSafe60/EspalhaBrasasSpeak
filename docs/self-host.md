@@ -59,6 +59,7 @@ Repo → **Settings → Secrets and variables → Actions**:
 | `LIVEKIT_API_SECRET` | no* | ≥32 chars; same secret on API **and** LiveKit container |
 | `MAX_UPLOAD_BYTES` | no | `26214400` |
 | `IMGBB_API_KEY` | yes for images | ImgBB API key (chat, avatars, icons) |
+| `KLIPY_API_KEY` | yes for GIFs | Klipy API key ([partner.klipy.com](https://partner.klipy.com)) |
 
 \*If these are missing or empty, the deploy script and Compose keep **localhost / local-dev defaults** (same as `.env.example`). Set them for a real public VPS.
 
@@ -137,7 +138,7 @@ VITE_API_BASE=https://your.domain npm run desktop
 
 ## Backups
 
-Images go to ImgBB (`IMGBB_API_KEY`), not the VPS disk.
+Images go to ImgBB (`IMGBB_API_KEY`). GIFs stay on Klipy (`KLIPY_API_KEY`); the VPS only stores the URL.
 
 SQLite lives in the `speakapp-data` volume:
 

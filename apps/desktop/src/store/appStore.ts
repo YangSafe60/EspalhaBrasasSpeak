@@ -240,6 +240,11 @@ interface AppState {
   sendDmTyping: (dmId: string) => Promise<void>;
 
   uploadFile: (file: File) => Promise<{ id: string; url: string }>;
+  attachRemoteMedia: (body: {
+    url: string;
+    filename?: string;
+    content_type?: string;
+  }) => Promise<{ id: string; url: string }>;
   applyWsEvent: (event: WsEvent) => void;
 }
 
@@ -1203,6 +1208,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       formData: fd,
     });
     return res;
+  },
+
+  attachRemoteMedia: async (body) => {
+    return api<{ id: string; url: string }>("/api/media/remote", {
+      method: "POST",
+      body,
+    });
   },
 
   applyWsEvent: (event) => {

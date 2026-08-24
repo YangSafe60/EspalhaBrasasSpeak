@@ -18,6 +18,7 @@
 #   LIVEKIT_API_SECRET
 #   MAX_UPLOAD_BYTES
 #   IMGBB_API_KEY        — ImgBB key for chat/avatar images (required for uploads)
+#   KLIPY_API_KEY        — Klipy key for GIF search (Tenor API is shut down)
 
 name: deploy
 
@@ -51,13 +52,14 @@ jobs:
           LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET }}
           MAX_UPLOAD_BYTES: ${{ secrets.MAX_UPLOAD_BYTES }}
           IMGBB_API_KEY: ${{ secrets.IMGBB_API_KEY }}
+          KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
           command_timeout: 45m
-          envs: DEPLOY_PATH,GIT_REF,JWT_SECRET,PUBLIC_URL,LIVEKIT_URL,LIVEKIT_API_KEY,LIVEKIT_API_SECRET,MAX_UPLOAD_BYTES,IMGBB_API_KEY
+          envs: DEPLOY_PATH,GIT_REF,JWT_SECRET,PUBLIC_URL,LIVEKIT_URL,LIVEKIT_API_KEY,LIVEKIT_API_SECRET,MAX_UPLOAD_BYTES,IMGBB_API_KEY,KLIPY_API_KEY
           script: |
             set -euo pipefail
 
