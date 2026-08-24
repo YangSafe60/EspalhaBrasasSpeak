@@ -114,10 +114,10 @@ impl WsHub {
     }
 
     pub fn add_server_member(&self, server_id: Uuid, user_id: Uuid) {
-        self.server_members
-            .entry(server_id)
-            .or_default()
-            .push(user_id);
+        let mut entry = self.server_members.entry(server_id).or_default();
+        if !entry.contains(&user_id) {
+            entry.push(user_id);
+        }
     }
 
     pub fn remove_server_member(&self, server_id: Uuid, user_id: Uuid) {

@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { useVoice } from "../hooks/useVoice";
+import {
+  getFullscreenElement,
+  isElementFullscreen,
+  onFullscreenChange,
+  toggleElementFullscreen,
+} from "../lib/fullscreen";
 import { openScreenPopout } from "../lib/popout";
 import { mediaCssUrl } from "../lib/mediaUrl";
 import { useAppStore } from "../store/appStore";
@@ -31,6 +37,7 @@ export function VoiceLobbyView({ voice }: Props) {
   const activeServerId = useAppStore((s) => s.activeServerId);
   const openMiniProfile = useAppStore((s) => s.openMiniProfile);
   const [popoutBusy, setPopoutBusy] = useState<string | null>(null);
+  const [popoutError, setPopoutError] = useState<string | null>(null);
   const { openForUserId, menuPortal } = useMemberContextMenu({
     applyUserMic: voice.applyUserMic,
     applyUserVideoHide: voice.applyUserVideoHide,
@@ -84,8 +91,13 @@ export function VoiceLobbyView({ voice }: Props) {
 
   async function openPopout(trackSid: string, title: string) {
     setPopoutBusy(trackSid);
+    setPopoutError(null);
     try {
       await openScreenPopout({ trackSid, title });
+    } catch (e) {
+      setPopoutError(
+        e instanceof Error ? e.message : "Could not open pop-out window",
+      );
     } finally {
       setPopoutBusy(null);
     }
@@ -113,6 +125,9 @@ export function VoiceLobbyView({ voice }: Props) {
       </header>
 
       <div className="voice-lobby-body">
+        {popoutError && (
+          <p className="form-error voice-lobby-popout-error">{popoutError}</p>
+        )}
         {hasStage && (
           <section className="voice-lobby-stage">
             {voice.localScreens.map((s, i) => (
@@ -305,30 +320,43 @@ function LobbyScreenTile({
   }, [track]);
 
   useEffect(() => {
-    const onFs = () => {
-      setIsFullscreen(document.fullscreenElement === tileRef.current);
+    const sync = () => {
+      const video = ref.current;
+      const tile = tileRef.current;
+      setIsFullscreen(
+        isElementFullscreen(video) || isElementFullscreen(tile),
+      );
     };
-    document.addEventListener("fullscreenchange", onFs);
-    return () => document.removeEventListener("fullscreenchange", onFs);
+    return onFullscreenChange(sync);
   }, []);
 
   async function toggleFullscreen() {
-    const el = tileRef.current;
-    if (!el) return;
-    try {
-      if (document.fullscreenElement === el) {
-        await document.exitFullscreen();
-      } else {
-        await el.requestFullscreen();
-      }
-    } catch {
+    const video = ref.current;
+    const tile = tileRef.current;
+    if (!video && !tile) return;
+
+    if (getFullscreenElement()) {
+      await toggleElementFullscreen(getFullscreenElement());
+      return;
+    }
+
+    const ok =
+      (video && (await toggleElementFullscreen(video))) ||
+      (tile && (await toggleElementFullscreen(tile)));
+    if (!ok) {
       /* fullscreen may be blocked */
     }
   }
 
   return (
     <div className="lobby-screen-tile" ref={tileRef}>
-      <video ref={ref} autoPlay playsInline muted />
+      <video
+        ref={ref}
+        autoPlay
+        playsInline
+        muted
+        onDoubleClick={() => void toggleFullscreen()}
+      />
       <div className="lobby-screen-hover">
         <button
           type="button"
@@ -338,7 +366,11 @@ function LobbyScreenTile({
           {hoverActionLabel}
         </button>
       </div>
-      <div className="lobby-screen-meta">
+      <div
+        className="lobby-screen-meta"
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
         <span>
           {badge && <em className="you-badge">{badge}</em>}
           {name}

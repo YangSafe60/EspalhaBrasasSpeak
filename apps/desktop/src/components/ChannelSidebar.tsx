@@ -7,6 +7,7 @@ import {
   type FormEvent,
   type MouseEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   channelIsMuted,
   formatMuteRemaining,
@@ -14,10 +15,12 @@ import {
 } from "../lib/channelMutePrefs";
 import { mediaCssUrl } from "../lib/mediaUrl";
 import {
+  effectiveChannelPerms,
   effectiveServerPerms,
   hasPerm,
   isChannelLocked,
   Perm,
+  sameId,
 } from "../lib/serverPerms";
 import { useAppStore } from "../store/appStore";
 import type { Channel } from "../types";
@@ -191,13 +194,38 @@ export function ChannelSidebar({
     hasPerm(myPerms, Perm.MANAGE_ROLES) ||
     hasPerm(myPerms, Perm.MANAGE_EXPRESSIONS) ||
     canInvitePeople;
-  const channels = useMemo(
-    () =>
-      (activeServerId ? channelsByServer[activeServerId] || [] : [])
-        .slice()
-        .sort((a, b) => a.position - b.position),
-    [activeServerId, channelsByServer],
-  );
+
+  function overwritesFor(channelId: string) {
+    const key = Object.keys(overwritesByChannel).find((id) =>
+      sameId(id, channelId),
+    );
+    return key ? overwritesByChannel[key] || [] : [];
+  }
+
+  function canManageChannel(channelId: string) {
+    return hasPerm(
+      effectiveChannelPerms(
+        server,
+        roles,
+        me,
+        user?.id,
+        overwritesFor(channelId),
+      ),
+      Perm.MANAGE_CHANNELS,
+    );
+  }
+
+  const channels = useMemo(() => {
+    const raw = activeServerId ? channelsByServer[activeServerId] || [] : [];
+    const seen = new Set<string>();
+    const unique = raw.filter((c) => {
+      const key = c.id.replace(/-/g, "").toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    return unique.slice().sort((a, b) => a.position - b.position);
+  }, [activeServerId, channelsByServer]);
 
   const categories = channels.filter((c) => c.channel_type === "category");
   const uncategorized = channels.filter(
@@ -262,27 +290,34 @@ export function ChannelSidebar({
     e.preventDefault();
     if (!canManageChannels) return;
     if (!activeServerId || !draft || !name.trim() || creatingRef.current) return;
+
+    const mode = draft.mode;
+    const categoryId = draft.categoryId;
+    const trimmed = name.trim();
     creatingRef.current = true;
     setBusy(true);
     setError(null);
+    setDraft(null);
+    setName("");
+
     try {
-      if (draft.mode === "category") {
+      if (mode === "category") {
         await createChannel(activeServerId, {
-          name: name.trim(),
+          name: trimmed,
           channel_type: "category",
         });
       } else {
         const ch = await createChannel(activeServerId, {
-          name: name.trim(),
+          name: trimmed,
           channel_type: channelType,
-          category_id: draft.categoryId,
+          category_id: categoryId,
         });
         if (ch.channel_type === "text") await selectChannel(ch.id);
       }
-      setDraft(null);
-      setName("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create");
+      setDraft({ mode, categoryId });
+      setName(trimmed);
     } finally {
       creatingRef.current = false;
       setBusy(false);
@@ -292,7 +327,7 @@ export function ChannelSidebar({
   function openSettings(e: MouseEvent, channelId: string) {
     e.preventDefault();
     e.stopPropagation();
-    if (!canManageChannels) return;
+    if (!canManageChannel(channelId)) return;
     setModal("channel-settings", channelId);
   }
 
@@ -553,7 +588,7 @@ export function ChannelSidebar({
             </svg>
           </button>
         )}
-        {canManageChannels && (
+        {canManageChannel(ch.id) && (
           <button
             type="button"
             className="channel-gear"
@@ -756,7 +791,7 @@ export function ChannelSidebar({
             >
               +
             </button>
-            {categoryId && (
+            {categoryId && canManageChannel(categoryId) && (
               <button
                 type="button"
                 className="category-add"
@@ -893,92 +928,96 @@ export function ChannelSidebar({
         )}
       </div>
 
-      {draft && (
-        <div className="modal-backdrop" onClick={() => setDraft(null)}>
-          <div
-            className="modal create-channel-modal"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <header className="modal-header">
-              <h3>
-                {draft.mode === "category" ? "Create Category" : "Create Channel"}
-              </h3>
-              <button
-                type="button"
-                className="icon-btn"
-                onClick={() => setDraft(null)}
-              >
-                ✕
-              </button>
-            </header>
-            <form className="stack" onSubmit={(e) => void submitCreate(e)}>
-              {draft.mode === "channel" && (
-                <>
-                  <p className="muted tiny">
-                    {categoryName
-                      ? `In category “${categoryName}”`
-                      : "No category (top-level channel)"}
-                  </p>
-                  <div className="channel-type-picker">
-                    <button
-                      type="button"
-                      className={channelType === "text" ? "active" : ""}
-                      onClick={() => setChannelType("text")}
-                    >
-                      <span className="ch-icon">#</span>
-                      <span>
-                        <strong>Text</strong>
-                        <em>Chat, links, images</em>
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      className={channelType === "voice" ? "active" : ""}
-                      onClick={() => setChannelType("voice")}
-                    >
-                      <span className="ch-icon">◎</span>
-                      <span>
-                        <strong>Voice</strong>
-                        <em>Talk and screen share</em>
-                      </span>
-                    </button>
-                  </div>
-                </>
-              )}
-              <label>
-                {draft.mode === "category" ? "Category name" : "Channel name"}
-                <input
-                  autoFocus
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder={
-                    draft.mode === "category" ? "new-category" : "new-channel"
-                  }
-                  required
-                  maxLength={64}
-                />
-              </label>
-              {error && <p className="form-error">{error}</p>}
-              <div className="row" style={{ justifyContent: "flex-end" }}>
+      {draft &&
+        createPortal(
+          <div className="modal-backdrop" onClick={() => setDraft(null)}>
+            <div
+              className="modal create-channel-modal"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <header className="modal-header">
+                <h3>
+                  {draft.mode === "category"
+                    ? "Create Category"
+                    : "Create Channel"}
+                </h3>
                 <button
                   type="button"
-                  className="btn ghost"
+                  className="icon-btn"
                   onClick={() => setDraft(null)}
                 >
-                  Cancel
+                  ✕
                 </button>
-                <button
-                  type="submit"
-                  className="btn primary"
-                  disabled={busy || !name.trim()}
-                >
-                  {busy ? "Creating…" : "Create"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+              </header>
+              <form className="stack" onSubmit={(e) => void submitCreate(e)}>
+                {draft.mode === "channel" && (
+                  <>
+                    <p className="muted tiny">
+                      {categoryName
+                        ? `In category “${categoryName}”`
+                        : "No category (top-level channel)"}
+                    </p>
+                    <div className="channel-type-picker">
+                      <button
+                        type="button"
+                        className={channelType === "text" ? "active" : ""}
+                        onClick={() => setChannelType("text")}
+                      >
+                        <span className="ch-icon">#</span>
+                        <span>
+                          <strong>Text</strong>
+                          <em>Chat, links, images</em>
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className={channelType === "voice" ? "active" : ""}
+                        onClick={() => setChannelType("voice")}
+                      >
+                        <span className="ch-icon">◎</span>
+                        <span>
+                          <strong>Voice</strong>
+                          <em>Talk and screen share</em>
+                        </span>
+                      </button>
+                    </div>
+                  </>
+                )}
+                <label>
+                  {draft.mode === "category" ? "Category name" : "Channel name"}
+                  <input
+                    autoFocus
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder={
+                      draft.mode === "category" ? "new-category" : "new-channel"
+                    }
+                    required
+                    maxLength={64}
+                  />
+                </label>
+                {error && <p className="form-error">{error}</p>}
+                <div className="row" style={{ justifyContent: "flex-end" }}>
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    onClick={() => setDraft(null)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn primary"
+                    disabled={busy || !name.trim()}
+                  >
+                    {busy ? "Creating…" : "Create"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>,
+          document.body,
+        )}
       {menuPortal}
       {channelMenu && (
         <ContextMenu
@@ -1002,7 +1041,7 @@ export function ChannelSidebar({
                 onClick: () => muteChannel(ch.id, d.ms),
               })),
             });
-            if (canManageChannels) {
+            if (canManageChannel(ch.id)) {
               items.push({
                 label: "Edit Channel",
                 onClick: () => setModal("channel-settings", ch.id),

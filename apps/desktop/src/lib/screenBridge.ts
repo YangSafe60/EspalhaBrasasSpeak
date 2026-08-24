@@ -125,7 +125,12 @@ function startRelay(trackSid: string, track: MediaStreamTrack) {
     }
   })();
   video.srcObject = new MediaStream([cloned]);
-  void video.play().catch(() => undefined);
+  const kickPlay = () => {
+    void video.play().catch(() => undefined);
+  };
+  kickPlay();
+  video.addEventListener("loadeddata", kickPlay);
+  video.addEventListener("resize", kickPlay);
 
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d", { alpha: false });
@@ -155,6 +160,11 @@ function startRelay(trackSid: string, track: MediaStreamTrack) {
     timer = window.setTimeout(tick, FRAME_INTERVAL_MS);
   };
 
+  const onEnded = () => {
+    relays.get(trackSid)?.stop();
+  };
+  cloned.addEventListener("ended", onEnded);
+
   timer = window.setTimeout(tick, 50);
 
   relays.set(trackSid, {
@@ -162,6 +172,9 @@ function startRelay(trackSid: string, track: MediaStreamTrack) {
     stop: () => {
       stopped = true;
       if (timer != null) window.clearTimeout(timer);
+      cloned.removeEventListener("ended", onEnded);
+      video.removeEventListener("loadeddata", kickPlay);
+      video.removeEventListener("resize", kickPlay);
       try {
         if (cloned !== track) cloned.stop();
       } catch {
@@ -200,6 +213,11 @@ async function ensureHost() {
     });
   })();
   return hostReady;
+}
+
+/** Main window must call this before opening a pop-out so relay IPC is listening. */
+export async function ensureScreenBridgeHost(): Promise<void> {
+  await ensureHost();
 }
 
 export function registerScreenTrack(trackSid: string, track: MediaStreamTrack) {

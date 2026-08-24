@@ -1,4 +1,5 @@
 import { getElectronAPI, isDesktopApp } from "./desktop";
+import { ensureScreenBridgeHost } from "./screenBridge";
 
 export type PopoutParams = {
   trackSid: string;
@@ -15,22 +16,30 @@ function buildPopoutUrl(trackSid: string): string {
 
 /** Open a dedicated window for a remote screen-share track. */
 export async function openScreenPopout(params: PopoutParams): Promise<void> {
+  await ensureScreenBridgeHost();
+
   const url = buildPopoutUrl(params.trackSid);
   const title = params.title || `Screen · ${params.trackSid.slice(0, 8)}`;
   const label = `screen-${params.trackSid}`;
 
   const electron = getElectronAPI();
   if (electron) {
-    await electron.openPopout({
+    const result = await electron.openPopout({
       title,
       trackSid: params.trackSid,
       url,
     });
+    if (!result?.ok) {
+      throw new Error("Could not open pop-out window");
+    }
     return;
   }
 
   if (!isDesktopApp()) {
-    window.open(url, label, "popup=yes,width=960,height=540");
+    const win = window.open(url, label, "popup=yes,width=960,height=540");
+    if (!win) {
+      throw new Error("Pop-up blocked — allow pop-ups for this app");
+    }
   }
 }
 

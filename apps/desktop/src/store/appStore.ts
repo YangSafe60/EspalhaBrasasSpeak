@@ -45,7 +45,7 @@ import {
   type ChannelMuteMap,
 } from "../lib/channelMutePrefs";
 import { playMessageNotify } from "../lib/messageNotify";
-import { permBits } from "../lib/serverPerms";
+import { permBits, sameId } from "../lib/serverPerms";
 
 export type ModalKind =
   | null
@@ -117,6 +117,40 @@ function normalizeOverwrite(o: PermissionOverwrite): PermissionOverwrite {
     allow: permBits(o.allow),
     deny: permBits(o.deny),
   };
+}
+
+function upsertChannelList(list: Channel[], channel: Channel): Channel[] {
+  return [
+    ...list.filter((c) => !sameId(c.id, channel.id)),
+    channel,
+  ];
+}
+
+function dedupeChannelList(list: Channel[]): Channel[] {
+  const out: Channel[] = [];
+  for (const ch of list) {
+    if (!out.some((c) => sameId(c.id, ch.id))) out.push(ch);
+  }
+  return out;
+}
+
+/** Coalesce duplicate in-flight creates (double submit / WS + HTTP races). */
+const pendingChannelCreates = new Map<string, Promise<Channel>>();
+
+function channelCreateKey(
+  serverId: string,
+  body: {
+    name: string;
+    channel_type: string;
+    category_id?: string | null;
+  },
+): string {
+  return [
+    serverId,
+    body.channel_type,
+    body.name.trim().toLowerCase(),
+    body.category_id ?? "",
+  ].join("\0");
 }
 
 interface AppState {
@@ -313,6 +347,11 @@ interface AppState {
   blockFriend: (friendshipId: string) => Promise<void>;
   blockUser: (userId: string) => Promise<void>;
   kickMember: (serverId: string, userId: string) => Promise<void>;
+  setMemberRoles: (
+    serverId: string,
+    userId: string,
+    roleIds: string[],
+  ) => Promise<Member>;
   banMember: (serverId: string, userId: string, reason?: string) => Promise<void>;
   moderateMemberVoice: (
     serverId: string,
@@ -744,7 +783,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
         Object.assign(overwritesByChannel, owsByChannel);
         return {
-          channelsByServer: { ...s.channelsByServer, [serverId]: channels },
+          channelsByServer: { ...s.channelsByServer, [serverId]: dedupeChannelList(channels) },
           membersByServer: { ...s.membersByServer, [serverId]: members },
           rolesByServer: { ...s.rolesByServer, [serverId]: roles },
           rulesByServer: { ...s.rulesByServer, [serverId]: rules },
@@ -1014,21 +1053,33 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   createChannel: async (serverId, body) => {
-    const channel = await api<Channel>(`/api/servers/${serverId}/channels`, {
-      method: "POST",
-      body,
-    });
-    // Dedupe: WS channel_create often arrives before this HTTP response lands.
-    set((s) => {
-      const list = s.channelsByServer[serverId] || [];
-      return {
-        channelsByServer: {
-          ...s.channelsByServer,
-          [serverId]: [...list.filter((c) => c.id !== channel.id), channel],
-        },
-      };
-    });
-    return channel;
+    const key = channelCreateKey(serverId, body);
+    const inflight = pendingChannelCreates.get(key);
+    if (inflight) return inflight;
+
+    const promise = (async () => {
+      const channel = await api<Channel>(`/api/servers/${serverId}/channels`, {
+        method: "POST",
+        body,
+      });
+      set((s) => {
+        const list = s.channelsByServer[serverId] || [];
+        return {
+          channelsByServer: {
+            ...s.channelsByServer,
+            [serverId]: upsertChannelList(list, channel),
+          },
+        };
+      });
+      return channel;
+    })();
+
+    pendingChannelCreates.set(key, promise);
+    try {
+      return await promise;
+    } finally {
+      pendingChannelCreates.delete(key);
+    }
   },
 
   updateChannel: async (id, body) => {
@@ -1351,6 +1402,29 @@ export const useAppStore = create<AppState>((set, get) => ({
     }));
   },
 
+  setMemberRoles: async (serverId, userId, roleIds) => {
+    const member = await api<Member>(
+      `/api/servers/${serverId}/members/${userId}/roles`,
+      {
+        method: "PUT",
+        body: { role_ids: roleIds },
+      },
+    );
+    set((s) => ({
+      authors: { ...s.authors, [member.user.id]: member.user },
+      membersByServer: {
+        ...s.membersByServer,
+        [serverId]: [
+          ...(s.membersByServer[serverId] || []).filter(
+            (m) => m.user.id !== userId,
+          ),
+          member,
+        ],
+      },
+    }));
+    return member;
+  },
+
   banMember: async (serverId, userId, reason) => {
     await api(`/api/servers/${serverId}/bans`, {
       method: "POST",
@@ -1671,12 +1745,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         set((s) => ({
           channelsByServer: {
             ...s.channelsByServer,
-            [event.channel.server_id]: [
-              ...(s.channelsByServer[event.channel.server_id] || []).filter(
-                (c) => c.id !== event.channel.id,
-              ),
+            [event.channel.server_id]: upsertChannelList(
+              s.channelsByServer[event.channel.server_id] || [],
               event.channel,
-            ],
+            ),
           },
         }));
         // Overwrite saves rebroadcast as channel_create — refresh lock state.
@@ -1685,15 +1757,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       case "channel_update":
         set((s) => {
           const list = s.channelsByServer[event.channel.server_id] || [];
-          const exists = list.some((c) => c.id === event.channel.id);
           return {
             channelsByServer: {
               ...s.channelsByServer,
-              [event.channel.server_id]: exists
-                ? list.map((c) =>
-                    c.id === event.channel.id ? event.channel : c,
-                  )
-                : [...list, event.channel],
+              [event.channel.server_id]: upsertChannelList(
+                list,
+                event.channel,
+              ),
             },
           };
         });

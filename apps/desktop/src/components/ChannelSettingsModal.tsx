@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useAppStore } from "../store/appStore";
 import {
-  effectiveServerPerms,
+  effectiveChannelPerms,
   hasPerm,
   permBits,
   sameId,
@@ -120,6 +120,7 @@ export function ChannelSettingsModal() {
   const setModal = useAppStore((s) => s.setModal);
   const channelsByServer = useAppStore((s) => s.channelsByServer);
   const rolesByServer = useAppStore((s) => s.rolesByServer);
+  const overwritesByChannel = useAppStore((s) => s.overwritesByChannel);
   const loadRoles = useAppStore((s) => s.loadRoles);
   const updateChannel = useAppStore((s) => s.updateChannel);
   const deleteChannel = useAppStore((s) => s.deleteChannel);
@@ -128,7 +129,7 @@ export function ChannelSettingsModal() {
 
   const channel = Object.values(channelsByServer)
     .flat()
-    .find((c) => c.id === settingsChannelId);
+    .find((c) => sameId(c.id, settingsChannelId));
 
   const user = useAppStore((s) => s.user);
   const servers = useAppStore((s) => s.servers);
@@ -146,11 +147,27 @@ export function ChannelSettingsModal() {
     : undefined;
   const members = channel ? membersByServer[channel.server_id] || [] : [];
   const me = members.find((m) => m.user.id === user?.id);
-  const myPerms = useMemo(
-    () => effectiveServerPerms(server, roles, me, user?.id),
-    [server, roles, me, user?.id],
+  const overwritesForChannel = useMemo(() => {
+    if (!settingsChannelId) return [];
+    const key = Object.keys(overwritesByChannel).find((id) =>
+      sameId(id, settingsChannelId),
+    );
+    return key ? overwritesByChannel[key] || [] : [];
+  }, [settingsChannelId, overwritesByChannel]);
+  const canManageThisChannel = useMemo(
+    () =>
+      hasPerm(
+        effectiveChannelPerms(
+          server,
+          roles,
+          me,
+          user?.id,
+          overwritesForChannel,
+        ),
+        Perm.MANAGE_CHANNELS,
+      ),
+    [server, roles, me, user?.id, overwritesForChannel],
   );
-  const canManageChannels = hasPerm(myPerms, Perm.MANAGE_CHANNELS);
 
   const [tab, setTab] = useState<Tab>("overview");
   const [name, setName] = useState("");
@@ -202,16 +219,6 @@ export function ChannelSettingsModal() {
       const serverNow = store.servers.find((s) => s.id === serverId);
       const membersNow = store.membersByServer[serverId] || [];
       const meNow = membersNow.find((m) => m.user.id === store.user?.id);
-      const permsNow = effectiveServerPerms(
-        serverNow,
-        rolesNow,
-        meNow,
-        store.user?.id,
-      );
-      if (!hasPerm(permsNow, Perm.MANAGE_CHANNELS)) {
-        setModal(null);
-        return;
-      }
 
       let raw: PermissionOverwrite[] = [];
       try {
@@ -225,6 +232,18 @@ export function ChannelSettingsModal() {
       if (cancelled) return;
 
       const ows = raw.map(normalizeOverwrite);
+      const permsNow = effectiveChannelPerms(
+        serverNow,
+        rolesNow,
+        meNow,
+        store.user?.id,
+        ows,
+      );
+      if (!hasPerm(permsNow, Perm.MANAGE_CHANNELS)) {
+        setModal(null);
+        return;
+      }
+
       setOverwrites(ows);
 
       const everyone = findEveryoneRole(rolesNow);
@@ -264,7 +283,9 @@ export function ChannelSettingsModal() {
     setDraftDeny(permBits(ow?.deny));
   }, [selectedRoleId, overwrites]);
 
-  if (modal !== "channel-settings" || !channel || !canManageChannels) return null;
+  if (modal !== "channel-settings" || !channel || !canManageThisChannel) {
+    return null;
+  }
 
   const isVoice = channel.channel_type === "voice";
   const isText = channel.channel_type === "text";
