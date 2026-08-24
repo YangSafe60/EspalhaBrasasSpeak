@@ -7,6 +7,14 @@ use speakapp_shared::{
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct UserMe {
+    #[serde(flatten)]
+    pub profile: UserPublic,
+    pub email: String,
+    pub disabled: bool,
+}
+
 #[allow(dead_code)]
 pub fn parse_uuid(s: &str) -> AppResult<Uuid> {
     Uuid::parse_str(s).map_err(|_| AppError::BadRequest("invalid uuid".into()))
@@ -21,6 +29,123 @@ pub async fn user_public(db: &SqlitePool, id: Uuid) -> AppResult<UserPublic> {
     .await?
     .ok_or(AppError::NotFound)?;
     Ok(row.into())
+}
+
+pub async fn user_me(db: &SqlitePool, id: Uuid) -> AppResult<UserMe> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        id: String,
+        username: String,
+        display_name: String,
+        email: String,
+        avatar_url: Option<String>,
+        banner_url: Option<String>,
+        created_at: String,
+        disabled_at: Option<String>,
+    }
+    let row = sqlx::query_as::<_, Row>(
+        "SELECT id, username, display_name, email, avatar_url, banner_url, created_at, disabled_at FROM users WHERE id = ?",
+    )
+    .bind(id.to_string())
+    .fetch_optional(db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    Ok(UserMe {
+        profile: UserPublic {
+            id: Uuid::parse_str(&row.id).unwrap(),
+            username: row.username,
+            display_name: row.display_name,
+            avatar_url: row.avatar_url,
+            banner_url: row.banner_url,
+            created_at: DateTime::parse_from_rfc3339(&row.created_at)
+                .map(|d| d.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now()),
+        },
+        email: row.email,
+        disabled: row.disabled_at.is_some(),
+    })
+}
+
+pub async fn is_user_disabled(db: &SqlitePool, id: Uuid) -> AppResult<bool> {
+    let row: Option<Option<String>> =
+        sqlx::query_scalar("SELECT disabled_at FROM users WHERE id = ?")
+            .bind(id.to_string())
+            .fetch_optional(db)
+            .await?;
+    Ok(matches!(row, Some(Some(_))))
+}
+
+pub async fn user_password_hash(db: &SqlitePool, id: Uuid) -> AppResult<String> {
+    sqlx::query_scalar("SELECT password_hash FROM users WHERE id = ?")
+        .bind(id.to_string())
+        .fetch_optional(db)
+        .await?
+        .ok_or(AppError::NotFound)
+}
+
+pub async fn revoke_refresh_tokens(db: &SqlitePool, user_id: Uuid) -> AppResult<()> {
+    sqlx::query("DELETE FROM refresh_tokens WHERE user_id = ?")
+        .bind(user_id.to_string())
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+pub async fn disable_user(db: &SqlitePool, user_id: Uuid) -> AppResult<()> {
+    let now = Utc::now().to_rfc3339();
+    let res = sqlx::query("UPDATE users SET disabled_at = ? WHERE id = ? AND disabled_at IS NULL")
+        .bind(&now)
+        .bind(user_id.to_string())
+        .execute(db)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(AppError::NotFound);
+    }
+    revoke_refresh_tokens(db, user_id).await?;
+    Ok(())
+}
+
+pub async fn delete_user_account(db: &SqlitePool, user_id: Uuid) -> AppResult<()> {
+    let uid = user_id.to_string();
+    let mut tx = db.begin().await?;
+    sqlx::query("DELETE FROM messages WHERE author_id = ?")
+        .bind(&uid)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM reactions WHERE user_id = ?")
+        .bind(&uid)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM invites WHERE creator_id = ?")
+        .bind(&uid)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM bans WHERE banned_by = ? OR user_id = ?")
+        .bind(&uid)
+        .bind(&uid)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM servers WHERE owner_id = ?")
+        .bind(&uid)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM refresh_tokens WHERE user_id = ?")
+        .bind(&uid)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM voice_states WHERE user_id = ?")
+        .bind(&uid)
+        .execute(&mut *tx)
+        .await?;
+    let res = sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(&uid)
+        .execute(&mut *tx)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(AppError::NotFound);
+    }
+    tx.commit().await?;
+    Ok(())
 }
 
 #[derive(sqlx::FromRow)]

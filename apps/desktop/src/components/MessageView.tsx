@@ -510,17 +510,16 @@ export function MessageView() {
                   ))}
                   <EmojiPickerButton
                     className="msg-react-picker"
+                    variant="reaction"
                     title="Add reaction"
-                    placement="up"
+                    placement="auto"
                     onPick={(emoji) => {
                       const existing = m.reactions.find(
                         (r) => r.emoji === emoji,
                       );
                       void toggleReaction(m.id, emoji, !!existing?.me);
                     }}
-                  >
-                    +
-                  </EmojiPickerButton>
+                  />
                   {mine && !editing && (
                     <>
                       <button
@@ -578,17 +577,16 @@ export function MessageView() {
                     })}
                     <EmojiPickerButton
                       className="reaction-add-picker"
+                      variant="reaction"
                       title="Add reaction"
-                      placement="up"
+                      placement="auto"
                       onPick={(emoji) => {
                         const existing = m.reactions.find(
                           (r) => r.emoji === emoji,
                         );
                         void toggleReaction(m.id, emoji, !!existing?.me);
                       }}
-                    >
-                      +
-                    </EmojiPickerButton>
+                    />
                   </div>
                 )}
               </div>

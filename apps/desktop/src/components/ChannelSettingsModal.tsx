@@ -727,8 +727,21 @@ export function ChannelSettingsModal() {
                         type="checkbox"
                         checked={privateLocked}
                         onChange={(e) => {
-                          setPrivateLocked(e.target.checked);
-                          if (!e.target.checked) setAccessRoleIds([]);
+                          const checked = e.target.checked;
+                          setPrivateLocked(checked);
+                          if (!checked) {
+                            setAccessRoleIds([]);
+                            return;
+                          }
+                          setAccessRoleIds((ids) => {
+                            if (ids.length > 0) return ids;
+                            const myRole = roles.find(
+                              (r) =>
+                                !isEveryoneRole(r) &&
+                                me?.role_ids.some((id) => sameId(id, r.id)),
+                            );
+                            return myRole ? [myRole.id] : ids;
+                          });
                         }}
                       />
                       <span>Make private / locked</span>

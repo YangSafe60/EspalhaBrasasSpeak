@@ -1410,13 +1410,20 @@ button.avatar {
   background: transparent;
   color: var(--text-dim);
   border-radius: 6px;
-  padding: 0.15rem 0.4rem;
+  padding: 0.15rem 0.35rem;
   font-size: 0.85rem;
   font-weight: 700;
   line-height: 1;
   width: auto;
   height: auto;
   min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.message-actions .msg-react-picker .react-face-icon {
+  display: block;
 }
 
 .message-actions .msg-react-picker .emoji-picker-toggle:hover {
@@ -1427,6 +1434,7 @@ button.avatar {
 .message-actions .msg-react-picker .emoji-picker-panel {
   right: 0;
   left: auto;
+  z-index: 50;
 }
 
 .msg-action:hover {
@@ -1521,7 +1529,7 @@ button.avatar {
   border: 1px solid var(--border);
   background: rgba(8, 16, 20, 0.55);
   border-radius: 999px;
-  padding: 0.15rem 0.5rem;
+  padding: 0.12rem 0.4rem;
   font-size: 0.85rem;
   font-weight: 700;
   color: var(--text-dim);
@@ -1529,6 +1537,9 @@ button.avatar {
   width: auto;
   height: auto;
   min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .reactions .reaction-add-picker .emoji-picker-toggle:hover {
@@ -2006,7 +2017,8 @@ html[data-compact="1"] .message {
   position: absolute;
   left: 22px;
   bottom: 2px;
-  z-index: 1;
+  z-index: 3;
+  pointer-events: auto;
 }
 
 .status-dot {
@@ -2112,6 +2124,11 @@ html[data-compact="1"] .message {
   font-style: normal;
   font-size: 0.75rem;
   color: var(--text-dim);
+}
+
+.status-picker-error {
+  margin: 0.35rem 0.45rem 0.15rem;
+  font-size: 0.75rem;
 }
 
 .user-panel-meta {
@@ -3858,6 +3875,40 @@ html[data-compact="1"] .message {
   overflow: auto;
 }
 
+.account-settings-sections {
+  gap: 1.25rem;
+}
+
+.account-settings-sections .settings-section {
+  padding-top: 0.25rem;
+  border-top: 1px solid var(--border);
+}
+
+.account-settings-sections .settings-section h4,
+.account-settings-sections .danger-zone h4 {
+  margin: 0 0 0.65rem;
+  font-size: 0.95rem;
+}
+
+.account-danger-backdrop {
+  z-index: 120;
+}
+
+.account-danger-modal {
+  width: min(400px, calc(100vw - 32px));
+  padding: 1.1rem 1.2rem;
+}
+
+.account-danger-modal h3 {
+  margin: 0 0 0.35rem;
+}
+
+.account-danger-modal label {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.75rem;
+}
+
 .profile-banner {
   display: flex;
   align-items: center;
@@ -5364,4 +5415,129 @@ html.is-screen-popout #root {
 .mini-profile-edit {
   width: 100%;
   justify-content: center;
+}
+
+.message-toast-stack {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.message-toast {
+  pointer-events: auto;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.65rem;
+  align-items: start;
+  width: 100%;
+  padding: 0.7rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(10, 18, 22, 0.96);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(12px);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  animation: message-toast-in 0.22s ease-out;
+}
+
+.message-toast:hover {
+  border-color: rgba(227, 27, 35, 0.45);
+  background: rgba(14, 24, 28, 0.98);
+}
+
+@keyframes message-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.message-toast-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: var(--bg-2);
+  border: 1px solid rgba(227, 27, 35, 0.35);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.message-toast-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.message-toast-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.message-toast-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.message-toast-meta strong {
+  font-size: 0.88rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.message-toast-meta em {
+  font-style: normal;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.message-toast-preview {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.message-toast-close {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0.1rem 0.25rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.message-toast-close:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
 }

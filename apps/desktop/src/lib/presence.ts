@@ -30,3 +30,12 @@ export const PRESENCE_OPTIONS: {
 export function presenceLabel(status: PresenceStatus): string {
   return PRESENCE_OPTIONS.find((o) => o.status === status)?.label || status;
 }
+
+/** Coerce API / WS values to a known presence status. */
+export function normalizePresenceStatus(raw: unknown): PresenceStatus {
+  const s = String(raw ?? "online").trim().toLowerCase();
+  if (s === "idle") return "idle";
+  if (s === "dnd" || s === "busy") return "dnd";
+  if (s === "offline" || s === "invisible") return "offline";
+  return "online";
+}

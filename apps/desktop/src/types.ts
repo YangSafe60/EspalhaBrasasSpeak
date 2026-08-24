@@ -2,6 +2,17 @@ export type ChannelType = "text" | "voice" | "category";
 export type PresenceStatus = "online" | "idle" | "dnd" | "offline";
 export type Atmosphere = "focus" | "chill" | "gaming";
 
+export type MessageToast = {
+  id: string;
+  kind: "channel" | "dm";
+  channelId: string;
+  serverId?: string;
+  channelName?: string;
+  authorName: string;
+  authorAvatar?: string | null;
+  preview: string;
+};
+
 export interface UserPublic {
   id: string;
   username: string;
@@ -9,6 +20,12 @@ export interface UserPublic {
   avatar_url: string | null;
   banner_url?: string | null;
   created_at: string;
+}
+
+/** Authenticated user's profile (includes private fields). */
+export interface UserAccount extends UserPublic {
+  email: string;
+  disabled?: boolean;
 }
 
 export interface Server {

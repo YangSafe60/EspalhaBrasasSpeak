@@ -25,6 +25,7 @@ import type {
   Invite,
   Member,
   Message,
+  MessageToast,
   PermissionOverwrite,
   PresenceStatus,
   Role,
@@ -32,11 +33,15 @@ import type {
   ServerEmoji,
   ServerRule,
   UserIdentityKey,
+  UserAccount,
   UserPublic,
   VoiceStateView,
   WsEvent,
 } from "../types";
 import { extractCustomEmojiIds } from "../lib/customEmoji";
+import { isAppFocused } from "../lib/appFocus";
+import { messagePreview } from "../lib/messagePreview";
+import { focusMainWindow } from "../lib/screenBridge";
 import {
   channelIsMuted,
   loadChannelMutes,
@@ -46,6 +51,7 @@ import {
 } from "../lib/channelMutePrefs";
 import { playMessageNotify } from "../lib/messageNotify";
 import { permBits, sameId } from "../lib/serverPerms";
+import { normalizePresenceStatus } from "../lib/presence";
 
 export type ModalKind =
   | null
@@ -112,11 +118,56 @@ function upsertFriendship(list: Friendship[], f: Friendship): Friendship[] {
 function normalizeOverwrite(o: PermissionOverwrite): PermissionOverwrite {
   return {
     ...o,
+    channel_id: String(o.channel_id),
+    target_id: String(o.target_id),
     target_type:
       String(o.target_type).toLowerCase() === "member" ? "member" : "role",
     allow: permBits(o.allow),
     deny: permBits(o.deny),
   };
+}
+
+function canonicalChannelId(
+  channelId: string,
+  channelsByServer: Record<string, Channel[]>,
+): string {
+  for (const list of Object.values(channelsByServer)) {
+    const ch = list.find((c) => sameId(c.id, channelId));
+    if (ch) return ch.id;
+  }
+  return channelId;
+}
+
+function setChannelOverwrites(
+  overwritesByChannel: Record<string, PermissionOverwrite[]>,
+  channelId: string,
+  overwrites: PermissionOverwrite[],
+  channelsByServer: Record<string, Channel[]>,
+): Record<string, PermissionOverwrite[]> {
+  const canonical = canonicalChannelId(channelId, channelsByServer);
+  const next = { ...overwritesByChannel };
+  for (const key of Object.keys(next)) {
+    if (sameId(key, channelId) && key !== canonical) delete next[key];
+  }
+  next[canonical] = overwrites;
+  return next;
+}
+
+function indexOverwritesByChannel(
+  overwrites: PermissionOverwrite[],
+  channels: Channel[],
+): Record<string, PermissionOverwrite[]> {
+  const owsByChannel: Record<string, PermissionOverwrite[]> = {};
+  for (const c of channels) {
+    owsByChannel[c.id] = [];
+  }
+  for (const o of overwrites) {
+    const ch = channels.find((c) => sameId(c.id, o.channel_id));
+    const key = ch?.id ?? String(o.channel_id);
+    if (!owsByChannel[key]) owsByChannel[key] = [];
+    owsByChannel[key].push(o);
+  }
+  return owsByChannel;
 }
 
 function upsertChannelList(list: Channel[], channel: Channel): Channel[] {
@@ -154,7 +205,7 @@ function channelCreateKey(
 }
 
 interface AppState {
-  user: UserPublic | null;
+  user: UserAccount | null;
   servers: Server[];
   channelsByServer: Record<string, Channel[]>;
   membersByServer: Record<string, Member[]>;
@@ -172,6 +223,8 @@ interface AppState {
   presenceByUser: Record<string, PresenceStatus>;
   /** My chosen status (offline = invisible while connected). */
   myStatus: PresenceStatus;
+  /** Bumped on each manual status change so stale loads cannot overwrite. */
+  myStatusRevision: number;
 
   friendsHome: boolean;
   friends: Friendship[];
@@ -215,6 +268,7 @@ interface AppState {
   channelMutes: ChannelMuteMap;
   /** Unread text-message counts (suppressed while muted). */
   unreadByChannel: Record<string, number>;
+  messageToasts: MessageToast[];
   bootstrapped: boolean;
   connecting: boolean;
   error: string | null;
@@ -254,15 +308,23 @@ interface AppState {
   logout: () => void;
   updateProfile: (body: {
     display_name?: string;
+    email?: string;
     avatar_url?: string | null;
     banner_url?: string | null;
   }) => Promise<void>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
+  disableAccount: (password: string) => Promise<void>;
+  deleteAccount: (password: string) => Promise<void>;
   setMyStatus: (status: PresenceStatus) => Promise<void>;
   loadMyStatus: () => Promise<void>;
 
   loadServers: () => Promise<void>;
   selectServer: (serverId: string) => Promise<void>;
   selectChannel: (channelId: string) => Promise<void>;
+  navigateToChannel: (serverId: string, channelId: string) => Promise<void>;
+  pushMessageToast: (toast: MessageToast) => void;
+  dismissMessageToast: (id: string) => void;
+  openMessageToast: (id: string) => Promise<void>;
   createServer: (name: string) => Promise<Server>;
   joinInvite: (code: string) => Promise<Server>;
   updateServer: (id: string, body: Partial<Server>) => Promise<void>;
@@ -410,7 +472,10 @@ function upsertDm(list: DmMessage[], message: DmMessage): DmMessage[] {
 
 function applyAuth(set: (p: Partial<AppState>) => void, data: AuthResponse) {
   setTokens(data.access_token, data.refresh_token);
-  set({ user: data.user, error: null });
+  set({
+    user: { ...data.user, email: "" },
+    error: null,
+  });
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -429,6 +494,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   typing: {},
   presenceByUser: {},
   myStatus: "online",
+  myStatusRevision: 0,
 
   friendsHome: false,
   friends: [],
@@ -456,6 +522,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   pendingChannelInvite: null,
   channelMutes: loadChannelMutes(),
   unreadByChannel: {},
+  messageToasts: [],
   bootstrapped: false,
   connecting: false,
   error: null,
@@ -528,9 +595,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     set({ connecting: true });
     try {
-      const user = await api<UserPublic>("/api/auth/me");
-      set({ user });
-      void get().loadMyStatus();
+      const account = await api<UserAccount>("/api/auth/me");
+      set({ user: account });
+      await get().loadMyStatus();
       // Hard quit leaves a stale voice_states row; we are never in LiveKit on cold start.
       try {
         await api("/api/voice/state", {
@@ -543,12 +610,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({
         voiceChannelId: null,
         streaming: false,
-        voiceStates: get().voiceStates.filter((v) => v.user_id !== user.id),
+        voiceStates: get().voiceStates.filter((v) => v.user_id !== account.id),
       });
       await get().loadServers();
       void get().loadMyEmojis();
       try {
-        const id = await ensureIdentity(user.id);
+        const id = await ensureIdentity(account.id);
         set({ identityPublicKey: id.publicKeyB64 });
         await Promise.all([get().loadFriends(), get().loadDms()]);
       } catch {
@@ -571,7 +638,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     applyAuth(set, data);
     identityPair = null;
     clearIdentityCache();
-    void get().loadMyStatus();
+    const account = await api<UserAccount>("/api/auth/me");
+    set({ user: account });
+    await get().loadMyStatus();
     await get().loadServers();
     try {
       const id = await ensureIdentity(data.user.id);
@@ -596,7 +665,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     applyAuth(set, data);
     identityPair = null;
     clearIdentityCache();
-    void get().loadMyStatus();
+    const account = await api<UserAccount>("/api/auth/me");
+    set({ user: account });
+    await get().loadMyStatus();
     await get().loadServers();
     try {
       const id = await ensureIdentity(data.user.id);
@@ -626,6 +697,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       voiceStates: [],
       presenceByUser: {},
       myStatus: "online",
+      myStatusRevision: 0,
       friendsHome: false,
       friends: [],
       pendingInbound: [],
@@ -645,11 +717,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       pendingChannelInvite: null,
       inviteChannelId: null,
       unreadByChannel: {},
+      messageToasts: [],
     });
   },
 
   updateProfile: async (body) => {
-    const user = await api<UserPublic>("/api/auth/me", {
+    const account = await api<UserAccount>("/api/auth/me", {
       method: "PATCH",
       body,
     });
@@ -657,54 +730,102 @@ export const useAppStore = create<AppState>((set, get) => ({
       const membersByServer: Record<string, Member[]> = {};
       for (const [sid, members] of Object.entries(s.membersByServer)) {
         membersByServer[sid] = members.map((m) =>
-          m.user.id === user.id ? { ...m, user } : m,
+          m.user.id === account.id ? { ...m, user: account } : m,
         );
       }
       return {
-        user,
-        authors: { ...s.authors, [user.id]: user },
+        user: account,
+        authors: { ...s.authors, [account.id]: account },
         membersByServer,
         friends: s.friends.map((f) =>
-          f.peer.id === user.id ? { ...f, peer: user } : f,
+          f.peer.id === account.id ? { ...f, peer: account } : f,
         ),
         dmChannels: s.dmChannels.map((d) =>
-          d.peer.id === user.id ? { ...d, peer: user } : d,
+          d.peer.id === account.id ? { ...d, peer: account } : d,
         ),
       };
     });
   },
 
+  changePassword: async (currentPassword, newPassword) => {
+    await api("/api/users/me/password", {
+      method: "PUT",
+      body: {
+        current_password: currentPassword,
+        new_password: newPassword,
+      },
+    });
+  },
+
+  disableAccount: async (password) => {
+    await api("/api/users/me/disable", {
+      method: "POST",
+      body: { password },
+    });
+  },
+
+  deleteAccount: async (password) => {
+    await api("/api/users/me", {
+      method: "DELETE",
+      body: { password },
+    });
+  },
+
   loadMyStatus: async () => {
+    const revAtStart = get().myStatusRevision;
     try {
       const res = await api<{ status: PresenceStatus }>("/api/users/me/presence");
-      const status = res.status || "online";
+      if (get().myStatusRevision !== revAtStart) return;
+      const status = normalizePresenceStatus(res.status);
       set((s) => ({
         myStatus: status,
         presenceByUser: s.user
           ? {
               ...s.presenceByUser,
-              // Invisible still shows as offline to others; keep local truth for self.
-              [s.user.id]: status === "offline" ? "offline" : status,
+              [s.user.id]: status,
             }
           : s.presenceByUser,
       }));
     } catch {
-      /* older servers */
+      /* older servers without presence API */
     }
   },
 
   setMyStatus: async (status) => {
-    const res = await api<{ status: PresenceStatus }>("/api/users/me/presence", {
-      method: "PUT",
-      body: { status },
-    });
-    const next = res.status || status;
+    const normalized = normalizePresenceStatus(status);
+    const prev = get().myStatus;
+    const rev = get().myStatusRevision + 1;
     set((s) => ({
-      myStatus: next,
+      myStatusRevision: rev,
+      myStatus: normalized,
       presenceByUser: s.user
-        ? { ...s.presenceByUser, [s.user.id]: next }
+        ? { ...s.presenceByUser, [s.user.id]: normalized }
         : s.presenceByUser,
     }));
+    try {
+      const res = await api<{ status: PresenceStatus }>("/api/users/me/presence", {
+        method: "PUT",
+        body: { status: normalized },
+      });
+      const next = normalizePresenceStatus(res.status || normalized);
+      set((s) => ({
+        myStatus: next,
+        presenceByUser: s.user
+          ? { ...s.presenceByUser, [s.user.id]: next }
+          : s.presenceByUser,
+      }));
+    } catch (error) {
+      if (get().myStatusRevision === rev) {
+        set((s) => ({
+          myStatusRevision: rev - 1,
+          myStatus: prev,
+          presenceByUser: s.user
+            ? { ...s.presenceByUser, [s.user.id]: prev }
+            : s.presenceByUser,
+        }));
+      }
+      throw error;
+    }
   },
 
   loadServers: async () => {
@@ -756,14 +877,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
 
       const normalizedOws = overwrites.map(normalizeOverwrite);
-      const owsByChannel: Record<string, PermissionOverwrite[]> = {};
-      for (const o of normalizedOws) {
-        (owsByChannel[o.channel_id] ||= []).push(o);
-      }
-      // Ensure every loaded channel has an entry (even empty) so lock checks are stable.
-      for (const c of channels) {
-        if (!(c.id in owsByChannel)) owsByChannel[c.id] = [];
-      }
+      const owsByChannel = indexOverwritesByChannel(normalizedOws, channels);
 
       set((s) => {
         const keepIds = new Set(channels.map((c) => c.id));
@@ -817,6 +931,40 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (channel?.channel_type === "text") {
       await get().loadMessages(channelId);
     }
+  },
+
+  navigateToChannel: async (serverId, channelId) => {
+    set({ friendsHome: false });
+    if (get().activeServerId !== serverId) {
+      await get().selectServer(serverId);
+    }
+    await get().selectChannel(channelId);
+  },
+
+  pushMessageToast: (toast) => {
+    set((s) => {
+      const withoutDup = s.messageToasts.filter((t) => t.id !== toast.id);
+      const next = [...withoutDup, toast].slice(-5);
+      return { messageToasts: next };
+    });
+  },
+
+  dismissMessageToast: (id) => {
+    set((s) => ({
+      messageToasts: s.messageToasts.filter((t) => t.id !== id),
+    }));
+  },
+
+  openMessageToast: async (id) => {
+    const toast = get().messageToasts.find((t) => t.id === id);
+    if (!toast) return;
+    get().dismissMessageToast(id);
+    if (toast.kind === "channel" && toast.serverId) {
+      await get().navigateToChannel(toast.serverId, toast.channelId);
+    } else if (toast.kind === "dm") {
+      await get().selectDm(toast.channelId);
+    }
+    await focusMainWindow();
   },
 
   createServer: async (name) => {
@@ -1164,10 +1312,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     );
     const normalized = rows.map(normalizeOverwrite);
     set((s) => ({
-      overwritesByChannel: {
-        ...s.overwritesByChannel,
-        [channelId]: normalized,
-      },
+      overwritesByChannel: setChannelOverwrites(
+        s.overwritesByChannel,
+        channelId,
+        normalized,
+        s.channelsByServer,
+      ),
     }));
     return normalized;
   },
@@ -1182,10 +1332,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     );
     const normalized = rows.map(normalizeOverwrite);
     set((s) => ({
-      overwritesByChannel: {
-        ...s.overwritesByChannel,
-        [channelId]: normalized,
-      },
+      overwritesByChannel: setChannelOverwrites(
+        s.overwritesByChannel,
+        channelId,
+        normalized,
+        s.channelsByServer,
+      ),
     }));
     return normalized;
   },
@@ -1647,7 +1799,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     switch (event.type) {
       case "ready":
         set({
-          user: event.user,
+          user: {
+            ...event.user,
+            email: state.user?.email ?? "",
+          },
           servers: event.servers,
           authors: { ...state.authors, [event.user.id]: event.user },
         });
@@ -1687,6 +1842,28 @@ export const useAppStore = create<AppState>((set, get) => ({
         });
         if (!isSelf && !isActive && !muted) {
           playMessageNotify();
+        }
+        if (
+          !isSelf &&
+          !muted &&
+          (!isAppFocused() || !isActive || state.friendsHome)
+        ) {
+          const channel = Object.values(state.channelsByServer)
+            .flat()
+            .find((c) => c.id === cid);
+          if (channel?.channel_type === "text" && channel.server_id) {
+            get().pushMessageToast({
+              id: event.message.id,
+              kind: "channel",
+              channelId: cid,
+              serverId: channel.server_id,
+              channelName: channel.name,
+              authorName:
+                event.author.display_name || event.author.username,
+              authorAvatar: event.author.avatar_url,
+              preview: messagePreview(event.message.content || ""),
+            });
+          }
         }
         break;
       }
@@ -1734,12 +1911,16 @@ export const useAppStore = create<AppState>((set, get) => ({
         break;
       }
       case "presence_update":
-        set((s) => ({
-          presenceByUser: {
-            ...s.presenceByUser,
-            [event.user_id]: event.status,
-          },
-        }));
+        set((s) => {
+          const status = normalizePresenceStatus(event.status);
+          const isSelf = Boolean(s.user && sameId(s.user.id, event.user_id));
+          return {
+            presenceByUser: {
+              ...s.presenceByUser,
+              [event.user_id]: isSelf ? s.myStatus : status,
+            },
+          };
+        });
         break;
       case "channel_create":
         set((s) => ({
@@ -1770,9 +1951,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         break;
       case "channel_delete":
         set((s) => {
-          const { [event.channel_id]: _ow, ...overwritesByChannel } =
-            s.overwritesByChannel;
-          void _ow;
+          const overwritesByChannel = Object.fromEntries(
+            Object.entries(s.overwritesByChannel).filter(
+              ([id]) => !sameId(id, event.channel_id),
+            ),
+          );
           return {
             channelsByServer: {
               ...s.channelsByServer,

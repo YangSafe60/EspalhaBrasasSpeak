@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { customEmojiToken } from "../lib/customEmoji";
 import { loadEmojiCatalog, searchEmojis } from "../lib/emojiCatalog";
 import { EMOJI_CATEGORIES, type EmojiCategory } from "../lib/emojis";
@@ -6,14 +6,81 @@ import { mediaUrl } from "../lib/mediaUrl";
 import { useAppStore } from "../store/appStore";
 import type { ServerEmoji } from "../types";
 
+type Placement = "up" | "down";
+type PlacementProp = Placement | "auto";
+
 type Props = {
   onPick: (emoji: string) => void;
-  placement?: "up" | "down";
+  placement?: PlacementProp;
   className?: string;
   title?: string;
-  /** Overrides the default 🙂 trigger label. */
+  /** Default 🙂 for composer; reaction uses a Discord-style smile icon. */
+  variant?: "default" | "reaction";
+  /** Overrides the trigger label/icon. */
   children?: React.ReactNode;
 };
+
+const PANEL_EST_HEIGHT = 420;
+const PANEL_GAP = 8;
+
+function findScrollParent(el: HTMLElement | null): HTMLElement | null {
+  let node = el?.parentElement ?? null;
+  while (node) {
+    const style = getComputedStyle(node);
+    const oy = style.overflowY;
+    if (oy === "auto" || oy === "scroll" || oy === "overlay") return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
+function resolveAutoPlacement(
+  toggleEl: HTMLElement,
+  panelHeight: number,
+): Placement {
+  const rect = toggleEl.getBoundingClientRect();
+  const scrollParent = findScrollParent(toggleEl);
+  const bounds = scrollParent?.getBoundingClientRect() ?? {
+    top: 0,
+    bottom: window.innerHeight,
+  };
+  const spaceAbove = rect.top - bounds.top;
+  const spaceBelow = bounds.bottom - rect.bottom;
+  const need = panelHeight + PANEL_GAP;
+  if (spaceAbove >= need) return "up";
+  if (spaceBelow >= need) return "down";
+  return spaceBelow >= spaceAbove ? "down" : "up";
+}
+
+export function ReactionSmileIcon() {
+  return (
+    <svg
+      className="react-face-icon"
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      aria-hidden
+    >
+      <circle
+        cx="12"
+        cy="12"
+        r="9"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+      />
+      <circle cx="9" cy="10" r="1.2" fill="currentColor" />
+      <circle cx="15" cy="10" r="1.2" fill="currentColor" />
+      <path
+        d="M8.5 14.2c1.1 1.4 2.6 2.1 3.5 2.1s2.4-.7 3.5-2.1"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
 
 type CustomGroup = {
   serverId: string;
@@ -26,15 +93,20 @@ export function EmojiPickerButton({
   placement = "up",
   className,
   title = "Emoji",
+  variant = "default",
   children,
 }: Props) {
   const [open, setOpen] = useState(false);
+  const [resolvedPlacement, setResolvedPlacement] = useState<Placement>(
+    placement === "auto" ? "up" : placement,
+  );
   const [query, setQuery] = useState("");
   const [categories, setCategories] = useState<EmojiCategory[]>(EMOJI_CATEGORIES);
   const [categoryId, setCategoryId] = useState(
     EMOJI_CATEGORIES[0]?.id ?? "smileys-emotion",
   );
   const rootRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
 
@@ -88,6 +160,27 @@ export function EmojiPickerButton({
   }, [customEmojis, servers]);
 
   const searching = query.trim().length > 0;
+
+  useLayoutEffect(() => {
+    if (!open || !rootRef.current) return;
+    const toggle = rootRef.current.querySelector(
+      ".emoji-picker-toggle",
+    ) as HTMLElement | null;
+    if (!toggle) return;
+
+    const updatePlacement = () => {
+      const panelHeight = panelRef.current?.offsetHeight ?? PANEL_EST_HEIGHT;
+      if (placement === "auto") {
+        setResolvedPlacement(resolveAutoPlacement(toggle, panelHeight));
+      } else {
+        setResolvedPlacement(placement);
+      }
+    };
+
+    updatePlacement();
+    requestAnimationFrame(updatePlacement);
+  }, [open, placement, query, searching, customGroups.length]);
+
   const searchHits = useMemo(
     () => (searching ? searchEmojis(categories, query) : []),
     [categories, query, searching],
@@ -136,11 +229,12 @@ export function EmojiPickerButton({
         aria-haspopup="dialog"
         onClick={() => setOpen((v) => !v)}
       >
-        {children ?? "🙂"}
+        {children ?? (variant === "reaction" ? <ReactionSmileIcon /> : "🙂")}
       </button>
       {open && (
         <div
-          className={`emoji-picker-panel ${placement === "up" ? "up" : "down"}`}
+          ref={panelRef}
+          className={`emoji-picker-panel ${resolvedPlacement === "up" ? "up" : "down"}`}
           role="dialog"
           aria-label="Emoji picker"
         >

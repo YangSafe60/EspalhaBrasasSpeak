@@ -42,6 +42,9 @@ impl FromRequestParts<AppState> for AuthUser {
         if claims.typ != "access" {
             return Err(AppError::Unauthorized);
         }
+        if crate::db::is_user_disabled(&state.db, claims.sub).await? {
+            return Err(AppError::BadRequest("account disabled".into()));
+        }
         Ok(AuthUser { id: claims.sub })
     }
 }

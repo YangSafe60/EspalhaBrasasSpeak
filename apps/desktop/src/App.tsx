@@ -5,6 +5,7 @@ import { DmMessageView } from "./components/DmMessageView";
 import { FriendsSidebar } from "./components/FriendsSidebar";
 import { MemberList } from "./components/MemberList";
 import { MessageView } from "./components/MessageView";
+import { MessageToastStack } from "./components/MessageToastStack";
 import { MiniProfileCard } from "./components/MiniProfileCard";
 import {
   MicConsentModal,
@@ -236,6 +237,7 @@ export default function App() {
       <BrowserPreviewGate>
         <MainApp />
       </BrowserPreviewGate>
+      <MessageToastStack />
       <UpdateOverlay />
     </>
   );

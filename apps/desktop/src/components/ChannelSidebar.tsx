@@ -480,7 +480,7 @@ export function ChannelSidebar({
     const isDraggingSelf =
       dragging?.kind === "channel" && dragging.id === ch.id;
     const locked = isChannelLocked(
-      overwritesByChannel[ch.id],
+      overwritesFor(ch.id),
       roles,
       ch.channel_type,
     );

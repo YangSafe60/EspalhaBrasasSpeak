@@ -6,6 +6,7 @@ import { useAppStore } from "../store/appStore";
 import { VoiceVideoSettingsPanel } from "./VoiceVideoSettingsPanel";
 
 type Tab = "account" | "voice" | "appearance";
+type DangerAction = "disable" | "delete" | null;
 
 const STORAGE_COMPACT = "eb_compact_messages";
 const STORAGE_NOTIFY = "eb_notify_sound";
@@ -22,13 +23,22 @@ export function UserSettingsModal() {
   const setModal = useAppStore((s) => s.setModal);
   const user = useAppStore((s) => s.user);
   const updateProfile = useAppStore((s) => s.updateProfile);
+  const changePassword = useAppStore((s) => s.changePassword);
+  const disableAccount = useAppStore((s) => s.disableAccount);
+  const deleteAccount = useAppStore((s) => s.deleteAccount);
   const uploadFile = useAppStore((s) => s.uploadFile);
   const logout = useAppStore((s) => s.logout);
 
   const [tab, setTab] = useState<Tab>("account");
   const [displayName, setDisplayName] = useState("");
+  const [email, setEmail] = useState("");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [bannerUrl, setBannerUrl] = useState<string | null>(null);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [dangerPassword, setDangerPassword] = useState("");
+  const [dangerAction, setDangerAction] = useState<DangerAction>(null);
   const [compact, setCompact] = useState(() => readBool(STORAGE_COMPACT, false));
   const [notifySound, setNotifySound] = useState(() =>
     readBool(STORAGE_NOTIFY, true),
@@ -52,8 +62,14 @@ export function UserSettingsModal() {
   useEffect(() => {
     if (modal !== "user-settings" || !user) return;
     setDisplayName(user.display_name || "");
+    setEmail(user.email || "");
     setAvatarUrl(user.avatar_url || null);
     setBannerUrl(user.banner_url || null);
+    setCurrentPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+    setDangerPassword("");
+    setDangerAction(null);
     setTab("account");
     setMsg(null);
     setErr(null);
@@ -79,10 +95,33 @@ export function UserSettingsModal() {
     try {
       await updateProfile({
         display_name: displayName.trim() || user.display_name,
+        email: email.trim() || user.email,
       });
       setMsg("Profile saved.");
     } catch (error) {
       setErr(error instanceof Error ? error.message : "Failed to save");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function savePassword(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      if (newPassword.length < 6) {
+        throw new Error("New password must be at least 6 characters.");
+      }
+      if (newPassword !== confirmPassword) {
+        throw new Error("New passwords do not match.");
+      }
+      await changePassword(currentPassword, newPassword);
+      setModal(null);
+      logout();
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : "Password change failed");
     } finally {
       setBusy(false);
     }
@@ -145,6 +184,26 @@ export function UserSettingsModal() {
       setMsg("Banner removed.");
     } catch (error) {
       setErr(error instanceof Error ? error.message : "Failed to remove banner");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmDanger() {
+    if (!dangerAction || !dangerPassword) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      if (dangerAction === "disable") {
+        await disableAccount(dangerPassword);
+      } else {
+        await deleteAccount(dangerPassword);
+      }
+      setDangerAction(null);
+      setModal(null);
+      logout();
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : "Request failed");
     } finally {
       setBusy(false);
     }
@@ -218,118 +277,231 @@ export function UserSettingsModal() {
           </header>
 
           {tab === "account" && (
-            <form className="stack" onSubmit={saveAccount}>
-              <div className="user-profile-editor">
-                <button
-                  type="button"
-                  className={`user-profile-banner-edit${bannerUrl ? "" : " is-empty"}`}
-                  style={
-                    bannerUrl
-                      ? { backgroundImage: mediaCssUrl(bannerUrl) }
-                      : undefined
-                  }
-                  onClick={() => bannerRef.current?.click()}
-                  title="Change banner"
-                  disabled={busy}
-                >
-                  {!bannerUrl && <span>Change banner</span>}
-                </button>
-                <div className="user-profile-avatar-edit-wrap">
+            <div className="stack account-settings-sections">
+              <form className="stack" onSubmit={saveAccount}>
+                <div className="user-profile-editor">
                   <button
                     type="button"
-                    className="user-profile-avatar-edit"
-                    onClick={() => avatarRef.current?.click()}
-                    title="Change avatar"
-                    disabled={busy}
-                  >
-                    {avatarUrl ? (
-                      <img
-                        src={mediaUrl(avatarUrl)}
-                        alt=""
-                        referrerPolicy="no-referrer"
-                      />
-                    ) : (
-                      <span>{initial}</span>
-                    )}
-                  </button>
-                </div>
-                <div className="user-profile-edit-actions">
-                  <button
-                    type="button"
-                    className="btn sm"
-                    disabled={busy}
+                    className={`user-profile-banner-edit${bannerUrl ? "" : " is-empty"}`}
+                    style={
+                      bannerUrl
+                        ? { backgroundImage: mediaCssUrl(bannerUrl) }
+                        : undefined
+                    }
                     onClick={() => bannerRef.current?.click()}
+                    title="Change banner"
+                    disabled={busy}
                   >
-                    Change banner
+                    {!bannerUrl && <span>Change banner</span>}
                   </button>
-                  {bannerUrl && (
+                  <div className="user-profile-avatar-edit-wrap">
+                    <button
+                      type="button"
+                      className="user-profile-avatar-edit"
+                      onClick={() => avatarRef.current?.click()}
+                      title="Change avatar"
+                      disabled={busy}
+                    >
+                      {avatarUrl ? (
+                        <img
+                          src={mediaUrl(avatarUrl)}
+                          alt=""
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <span>{initial}</span>
+                      )}
+                    </button>
+                  </div>
+                  <div className="user-profile-edit-actions">
                     <button
                       type="button"
                       className="btn sm"
                       disabled={busy}
-                      onClick={() => void removeBanner()}
+                      onClick={() => bannerRef.current?.click()}
                     >
-                      Remove banner
+                      Change banner
                     </button>
-                  )}
+                    {bannerUrl && (
+                      <button
+                        type="button"
+                        className="btn sm"
+                        disabled={busy}
+                        onClick={() => void removeBanner()}
+                      >
+                        Remove banner
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="btn sm"
+                      disabled={busy}
+                      onClick={() => avatarRef.current?.click()}
+                    >
+                      Change avatar
+                    </button>
+                    {avatarUrl && (
+                      <button
+                        type="button"
+                        className="btn sm"
+                        disabled={busy}
+                        onClick={() => void removeAvatar()}
+                      >
+                        Remove avatar
+                      </button>
+                    )}
+                  </div>
+                  <p className="muted tiny">{CATBOX_UPLOAD_HINT} GIFs allowed.</p>
+                  <input
+                    ref={bannerRef}
+                    type="file"
+                    accept={IMAGE_ACCEPT}
+                    hidden
+                    onChange={(e) =>
+                      void onBannerFile(e.target.files?.[0] ?? null)
+                    }
+                  />
+                  <input
+                    ref={avatarRef}
+                    type="file"
+                    accept={IMAGE_ACCEPT}
+                    hidden
+                    onChange={(e) =>
+                      void onAvatarFile(e.target.files?.[0] ?? null)
+                    }
+                  />
+                </div>
+
+                <label>
+                  Display name
+                  <input
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
+                    maxLength={64}
+                    required
+                  />
+                </label>
+                <label>
+                  Username
+                  <input value={`@${user.username}`} readOnly disabled />
+                </label>
+                <p className="muted tiny">
+                  Your @username is permanent and shown to others.
+                </p>
+                <label>
+                  Email
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    autoComplete="email"
+                    required
+                  />
+                </label>
+                {msg && <p className="form-ok">{msg}</p>}
+                {err && tab === "account" && !dangerAction && (
+                  <p className="form-error">{err}</p>
+                )}
+                <div className="row">
+                  <button type="submit" className="btn primary" disabled={busy}>
+                    {busy ? "Saving…" : "Save profile"}
+                  </button>
+                </div>
+              </form>
+
+              <form className="stack settings-section" onSubmit={savePassword}>
+                <h4>Password</h4>
+                <label>
+                  Current password
+                  <input
+                    type="password"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    autoComplete="current-password"
+                    required
+                  />
+                </label>
+                <label>
+                  New password
+                  <input
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    autoComplete="new-password"
+                    minLength={6}
+                    required
+                  />
+                </label>
+                <label>
+                  Confirm new password
+                  <input
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    autoComplete="new-password"
+                    minLength={6}
+                    required
+                  />
+                </label>
+                <p className="muted tiny">
+                  You will be signed out on all devices after changing your password.
+                </p>
+                {err && !dangerAction && currentPassword && (
+                  <p className="form-error">{err}</p>
+                )}
+                <div className="row">
+                  <button type="submit" className="btn" disabled={busy}>
+                    {busy ? "Updating…" : "Change password"}
+                  </button>
+                </div>
+              </form>
+
+              <div className="stack settings-form danger-zone">
+                <h4>Danger zone</h4>
+                <div className="danger-card">
+                  <div>
+                    <strong>Disable account</strong>
+                    <p className="muted tiny">
+                      Temporarily lock your account. You can contact support to
+                      re-enable it later.
+                    </p>
+                  </div>
                   <button
                     type="button"
-                    className="btn sm"
+                    className="btn danger sm"
                     disabled={busy}
-                    onClick={() => avatarRef.current?.click()}
+                    onClick={() => {
+                      setErr(null);
+                      setDangerPassword("");
+                      setDangerAction("disable");
+                    }}
                   >
-                    Change avatar
+                    Disable
                   </button>
-                  {avatarUrl && (
-                    <button
-                      type="button"
-                      className="btn sm"
-                      disabled={busy}
-                      onClick={() => void removeAvatar()}
-                    >
-                      Remove avatar
-                    </button>
-                  )}
                 </div>
-                <p className="muted tiny">{CATBOX_UPLOAD_HINT} GIFs allowed.</p>
-                <input
-                  ref={bannerRef}
-                  type="file"
-                  accept={IMAGE_ACCEPT}
-                  hidden
-                  onChange={(e) =>
-                    void onBannerFile(e.target.files?.[0] ?? null)
-                  }
-                />
-                <input
-                  ref={avatarRef}
-                  type="file"
-                  accept={IMAGE_ACCEPT}
-                  hidden
-                  onChange={(e) =>
-                    void onAvatarFile(e.target.files?.[0] ?? null)
-                  }
-                />
+                <div className="danger-card">
+                  <div>
+                    <strong>Delete account</strong>
+                    <p className="muted tiny">
+                      Permanently delete your account, owned servers, and
+                      messages. This cannot be undone.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn danger sm"
+                    disabled={busy}
+                    onClick={() => {
+                      setErr(null);
+                      setDangerPassword("");
+                      setDangerAction("delete");
+                    }}
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
-
-              <label>
-                Display name
-                <input
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  maxLength={64}
-                  required
-                />
-              </label>
-              <p className="muted tiny">Username can’t be changed yet.</p>
-              {msg && <p className="form-ok">{msg}</p>}
-              {err && <p className="form-error">{err}</p>}
-              <div className="row">
-                <button type="submit" className="btn primary" disabled={busy}>
-                  {busy ? "Saving…" : "Save changes"}
-                </button>
-              </div>
-            </form>
+            </div>
           )}
 
           {tab === "voice" && <VoiceVideoSettingsPanel />}
@@ -359,6 +531,67 @@ export function UserSettingsModal() {
           )}
         </section>
       </div>
+
+      {dangerAction && (
+        <div
+          className="modal-backdrop account-danger-backdrop"
+          onClick={() => !busy && setDangerAction(null)}
+        >
+          <div
+            className="modal account-danger-modal"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-label="Confirm account action"
+          >
+            <h3>
+              {dangerAction === "disable"
+                ? "Disable your account?"
+                : "Delete your account?"}
+            </h3>
+            <p className="muted tiny">
+              {dangerAction === "disable"
+                ? "You will be signed out and unable to log in until the account is re-enabled."
+                : "This permanently deletes your account, owned servers, and messages."}
+            </p>
+            <label>
+              Password
+              <input
+                type="password"
+                value={dangerPassword}
+                onChange={(e) => setDangerPassword(e.target.value)}
+                autoComplete="current-password"
+                autoFocus
+              />
+            </label>
+            {err && <p className="form-error">{err}</p>}
+            <div className="row">
+              <button
+                type="button"
+                className="btn ghost"
+                disabled={busy}
+                onClick={() => {
+                  setErr(null);
+                  setDangerAction(null);
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn danger"
+                disabled={busy || !dangerPassword}
+                onClick={() => void confirmDanger()}
+              >
+                {busy
+                  ? "Working…"
+                  : dangerAction === "disable"
+                    ? "Disable account"
+                    : "Delete forever"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

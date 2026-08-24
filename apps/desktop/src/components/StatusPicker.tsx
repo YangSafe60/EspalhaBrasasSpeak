@@ -14,6 +14,7 @@ export function StatusPicker({ className }: Props) {
   const setMyStatus = useAppStore((s) => s.setMyStatus);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ bottom: number; left: number } | null>(null);
 
@@ -58,9 +59,14 @@ export function StatusPicker({ className }: Props) {
       return;
     }
     setBusy(true);
+    setErr(null);
     try {
       await setMyStatus(status);
       setOpen(false);
+    } catch (error) {
+      setErr(
+        error instanceof Error ? error.message : "Could not update status",
+      );
     } finally {
       setBusy(false);
     }
@@ -81,6 +87,7 @@ export function StatusPicker({ className }: Props) {
         disabled={busy}
         onClick={(e) => {
           e.stopPropagation();
+          setErr(null);
           setOpen((v) => !v);
         }}
       >
@@ -111,6 +118,7 @@ export function StatusPicker({ className }: Props) {
                 </span>
               </button>
             ))}
+            {err && <p className="form-error status-picker-error">{err}</p>}
           </div>,
           document.body,
         )}

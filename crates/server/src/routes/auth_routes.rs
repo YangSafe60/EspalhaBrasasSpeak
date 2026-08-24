@@ -32,11 +32,23 @@ pub struct RefreshReq {
 #[derive(Deserialize)]
 pub struct UpdateMeReq {
     pub display_name: Option<String>,
+    pub email: Option<String>,
     /// Absent = leave unchanged; JSON `null` = clear; string = set.
     #[serde(default, deserialize_with = "deserialize_optional_string")]
     pub avatar_url: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_optional_string")]
     pub banner_url: Option<Option<String>>,
+}
+
+#[derive(Deserialize)]
+pub struct PasswordChangeReq {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+#[derive(Deserialize)]
+pub struct PasswordConfirmReq {
+    pub password: String,
 }
 
 fn deserialize_optional_string<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
@@ -117,6 +129,9 @@ pub async fn login(
         return Err(AppError::Unauthorized);
     }
     let id = Uuid::parse_str(&row.id).unwrap();
+    if db::is_user_disabled(&state.db, id).await? {
+        return Err(AppError::BadRequest("account disabled".into()));
+    }
     issue_pair(&state, id).await
 }
 
@@ -153,21 +168,44 @@ pub async fn refresh(
     issue_pair(&state, user_id).await
 }
 
-pub async fn me(State(state): State<AppState>, user: AuthUser) -> AppResult<Json<speakapp_shared::UserPublic>> {
-    Ok(Json(db::user_public(&state.db, user.id).await?))
+pub async fn me(State(state): State<AppState>, user: AuthUser) -> AppResult<Json<db::UserMe>> {
+    Ok(Json(db::user_me(&state.db, user.id).await?))
 }
 
 pub async fn update_me(
     State(state): State<AppState>,
     user: AuthUser,
     Json(body): Json<UpdateMeReq>,
-) -> AppResult<Json<speakapp_shared::UserPublic>> {
+) -> AppResult<Json<db::UserMe>> {
     if let Some(name) = body.display_name {
+        let name = name.trim();
+        if name.is_empty() || name.len() > 64 {
+            return Err(AppError::BadRequest(
+                "display name must be 1-64 characters".into(),
+            ));
+        }
         sqlx::query("UPDATE users SET display_name = ? WHERE id = ?")
-            .bind(name.trim())
+            .bind(name)
             .bind(user.id.to_string())
             .execute(&state.db)
             .await?;
+    }
+    if let Some(email) = body.email {
+        let email = email.trim().to_lowercase();
+        if !email.contains('@') || email.len() > 254 {
+            return Err(AppError::BadRequest("invalid email".into()));
+        }
+        let res = sqlx::query("UPDATE users SET email = ? WHERE id = ?")
+            .bind(&email)
+            .bind(user.id.to_string())
+            .execute(&state.db)
+            .await;
+        if let Err(sqlx::Error::Database(e)) = &res {
+            if e.is_unique_violation() {
+                return Err(AppError::Conflict("email already in use".into()));
+            }
+        }
+        res?;
     }
     if let Some(avatar) = body.avatar_url {
         sqlx::query("UPDATE users SET avatar_url = ? WHERE id = ?")
@@ -183,12 +221,62 @@ pub async fn update_me(
             .execute(&state.db)
             .await?;
     }
-    // Prefer a clear auth error if the JWT is valid but the user row is gone (e.g. DB reset).
-    match db::user_public(&state.db, user.id).await {
+    match db::user_me(&state.db, user.id).await {
         Ok(u) => Ok(Json(u)),
         Err(AppError::NotFound) => Err(AppError::Unauthorized),
         Err(e) => Err(e),
     }
+}
+
+async fn verify_current_password(
+    state: &AppState,
+    user_id: Uuid,
+    password: &str,
+) -> AppResult<()> {
+    let hash = db::user_password_hash(&state.db, user_id).await?;
+    if !verify_password(password, &hash)? {
+        return Err(AppError::Unauthorized);
+    }
+    Ok(())
+}
+
+pub async fn change_password(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Json(body): Json<PasswordChangeReq>,
+) -> AppResult<Json<serde_json::Value>> {
+    if body.new_password.len() < 6 {
+        return Err(AppError::BadRequest("password too short".into()));
+    }
+    verify_current_password(&state, user.id, &body.current_password).await?;
+    let hash = hash_password(&body.new_password)?;
+    sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
+        .bind(&hash)
+        .bind(user.id.to_string())
+        .execute(&state.db)
+        .await?;
+    db::revoke_refresh_tokens(&state.db, user.id).await?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+pub async fn disable_account(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Json(body): Json<PasswordConfirmReq>,
+) -> AppResult<Json<serde_json::Value>> {
+    verify_current_password(&state, user.id, &body.password).await?;
+    db::disable_user(&state.db, user.id).await?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+pub async fn delete_account(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Json(body): Json<PasswordConfirmReq>,
+) -> AppResult<Json<serde_json::Value>> {
+    verify_current_password(&state, user.id, &body.password).await?;
+    db::delete_user_account(&state.db, user.id).await?;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 async fn issue_pair(state: &AppState, user_id: Uuid) -> AppResult<Json<AuthResponse>> {

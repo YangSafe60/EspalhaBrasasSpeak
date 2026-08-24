@@ -36,7 +36,18 @@ pub fn router(state: AppState) -> Router {
             "/api/auth/me",
             get(auth_routes::me).patch(auth_routes::update_me),
         )
-        .route("/api/users/me", patch(auth_routes::update_me))
+        .route(
+            "/api/users/me",
+            patch(auth_routes::update_me).delete(auth_routes::delete_account),
+        )
+        .route(
+            "/api/users/me/password",
+            put(auth_routes::change_password),
+        )
+        .route(
+            "/api/users/me/disable",
+            post(auth_routes::disable_account),
+        )
         .route(
             "/api/users/by-username/{username}",
             get(friends::user_by_username),

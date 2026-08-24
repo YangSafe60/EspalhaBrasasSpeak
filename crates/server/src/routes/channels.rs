@@ -313,14 +313,10 @@ pub async fn set_overwrites(
 ) -> AppResult<Json<Vec<PermissionOverwrite>>> {
     let channel = db::get_channel(&state.db, id).await?;
     let server = db::get_server(&state.db, channel.server_id).await?;
-    db::require_perm(
-        &state.db,
-        &server,
-        Some(id),
-        user.id,
-        Permissions::MANAGE_ROLES,
-    )
-    .await?;
+    let perms = db::effective_permissions(&state.db, &server, Some(id), user.id).await?;
+    if !perms.has(Permissions::MANAGE_ROLES) && !perms.has(Permissions::MANAGE_CHANNELS) {
+        return Err(AppError::Forbidden);
+    }
     sqlx::query("DELETE FROM permission_overwrites WHERE channel_id = ?")
         .bind(id.to_string())
         .execute(&state.db)
