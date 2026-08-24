@@ -35,3 +35,6 @@ linux:
   target:
     - AppImage
   category: Network
+publish:
+  provider: github
+  releaseType: release

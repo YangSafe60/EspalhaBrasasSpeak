@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { CATBOX_UPLOAD_HINT } from "../lib/uploadHints";
+import { getElectronAPI } from "../lib/desktop";
 import { useAppStore } from "../store/appStore";
 import { VoiceVideoSettingsPanel } from "./VoiceVideoSettingsPanel";
 
@@ -32,7 +33,17 @@ export function UserSettingsModal() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState("dev");
   const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    void getElectronAPI()
+      ?.getInfo()
+      .then((info) => {
+        if (info.appVersion) setAppVersion(info.appVersion);
+      })
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     if (modal !== "user-settings" || !user) return;
@@ -139,6 +150,9 @@ export function UserSettingsModal() {
             </button>
           ))}
           <div className="settings-nav-spacer" />
+          <p className="muted tiny settings-app-version">
+            App v{appVersion}
+          </p>
           <button type="button" className="danger-link" onClick={doLogout}>
             Log Out
           </button>

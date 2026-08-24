@@ -1,7 +1,9 @@
 import { app, BrowserWindow, desktopCapturer, ipcMain, session, shell } from "electron";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
 const DEV_URL = process.env.VITE_DEV_SERVER_URL || "http://127.0.0.1:1420";
@@ -93,6 +95,7 @@ function installSessionHandlers() {
 function registerIpc() {
   ipcMain.handle("desktop:info", () => ({
     isElectron: true,
+    appVersion: app.getVersion(),
     platform: process.platform,
     versions: {
       electron: process.versions.electron,
@@ -202,10 +205,30 @@ function registerIpc() {
   });
 }
 
+function setupAutoUpdate() {
+  if (isDev) return;
+  let autoUpdater;
+  try {
+    ({ autoUpdater } = require("electron-updater"));
+  } catch (e) {
+    console.warn("electron-updater not available", e);
+    return;
+  }
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on("error", (err) => {
+    console.warn("auto-update", err);
+  });
+  void autoUpdater.checkForUpdatesAndNotify().catch((err) => {
+    console.warn("checkForUpdates", err);
+  });
+}
+
 app.whenReady().then(() => {
   installSessionHandlers();
   registerIpc();
   createMainWindow();
+  setupAutoUpdate();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();

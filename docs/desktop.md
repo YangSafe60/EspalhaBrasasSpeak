@@ -33,7 +33,9 @@ Root shortcut: `npm run desktop:dist`
 
 Targets are defined in `electron-builder.yml` (Win NSIS, macOS DMG, Linux AppImage).
 
-**Upgrade:** install a newer Setup over the existing app (close Espalha Brasas first). Same `appId` → overwrite install. No silent auto-update yet.
+**Upgrade:** each push to `main` builds a Windows installer, bumps the patch version, and publishes a [GitHub Release](https://github.com/YangSafe60/EspalhaBrasasSpeak/releases). Installed apps check that feed on startup and download/install when you quit if a newer version exists.
+
+Dev (`npm run desktop`) does not auto-update.
 
 ## Multi-account (same machine)
 

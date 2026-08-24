@@ -11,6 +11,7 @@ export type ElectronAPI = {
   apiBase?: string;
   getInfo: () => Promise<{
     isElectron: boolean;
+    appVersion?: string;
     platform: string;
     versions: { electron: string; chrome: string; node: string };
   }>;

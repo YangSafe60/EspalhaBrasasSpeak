@@ -29,6 +29,9 @@ concurrency:
   group: deploy-production
   cancel-in-progress: false
 
+permissions:
+  contents: write
+
 jobs:
   deploy:
     name: Deploy to Oracle VPS
@@ -79,3 +82,52 @@ jobs:
             chmod +x deploy/remote-deploy.sh deploy/open-oracle-ports.sh || true
             # Actions SSH has no TTY; docker group must already apply, or passwordless sudo.
             deploy/remote-deploy.sh
+
+  release-desktop:
+    name: GitHub Release + installer
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Next patch version
+        id: ver
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd apps/desktop
+          BASE=$(node -p "require('./package.json').version")
+          TAG=$(gh release view --json tagName -q .tagName 2>/dev/null || true)
+          if [ -n "$TAG" ]; then
+            VER="${TAG#v}"
+          else
+            VER="$BASE"
+          fi
+          MAJ="${VER%%.*}"
+          REST="${VER#*.}"
+          MIN="${REST%%.*}"
+          PAT="${REST#*.}"
+          PAT="${PAT%%-*}"
+          PAT=$((PAT + 1))
+          NEW="${MAJ}.${MIN}.${PAT}"
+          echo "Bumping ${VER} → ${NEW}"
+          echo "version=${NEW}" >> "$GITHUB_OUTPUT"
+      - name: Install and build Windows installer
+        working-directory: apps/desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          VITE_API_BASE: ${{ secrets.PUBLIC_URL }}
+        shell: bash
+        run: |
+          npm ci
+          npm version "${{ steps.ver.outputs.version }}" --no-git-tag-version --allow-same-version
+          npm run dist -- --win --publish always
