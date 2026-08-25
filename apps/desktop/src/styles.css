@@ -3375,7 +3375,7 @@ html[data-compact="1"] .message {
   width: 100%;
   height: 100%;
   display: grid;
-  grid-template-columns: 232px minmax(0, 1fr);
+  grid-template-columns: clamp(200px, 16vw, 280px) minmax(0, 1fr);
   min-height: 0;
 }
 
@@ -3405,7 +3405,7 @@ html[data-compact="1"] .message {
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
-  padding: 1.35rem 2rem 1rem;
+  padding: clamp(1rem, 2vw, 1.75rem) clamp(1.25rem, 4vw, 3.5rem) 1rem;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
@@ -3458,8 +3458,11 @@ html[data-compact="1"] .message {
 .user-settings-content {
   flex: 1;
   overflow: auto;
-  padding: 1.5rem 2rem 2.5rem;
-  max-width: 740px;
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+  padding: clamp(1.15rem, 2.2vw, 2rem) clamp(1.25rem, 4vw, 3.5rem)
+    clamp(2rem, 4vw, 3.5rem);
 }
 
 .user-settings-content .stack,
@@ -3468,6 +3471,17 @@ html[data-compact="1"] .message {
 .user-settings-content .theme-settings,
 .user-settings-content .voice-video-settings {
   gap: 1.5rem;
+  width: 100%;
+  max-width: none;
+}
+
+.user-settings-content .settings-form,
+.user-settings-content .friends-add-panel {
+  max-width: none;
+}
+
+.user-settings-content .camera-preview-wrap {
+  max-width: min(640px, 100%);
 }
 
 .user-settings-content .settings-section,
@@ -3518,6 +3532,27 @@ html[data-compact="1"] .message {
   .user-settings-content {
     max-width: none;
     padding: 1rem 1rem 2rem;
+  }
+
+  .user-settings-header {
+    padding: 1rem 1rem 0.85rem;
+  }
+}
+
+@media (min-width: 1200px) {
+  .user-settings-page .theme-color-grid {
+    grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+  }
+
+  .user-settings-page .theme-base-swatch {
+    width: 76px;
+    height: 76px;
+  }
+}
+
+@media (min-width: 1600px) {
+  .user-settings-page .theme-color-grid {
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
   }
 }
 
@@ -4212,7 +4247,7 @@ html[data-compact="1"] .message {
 
 .user-profile-banner-edit {
   width: 100%;
-  height: 100px;
+  height: clamp(100px, 12vw, 160px);
   border: none;
   padding: 0;
   background: linear-gradient(135deg, #1a1a1a, #0d0d0d) center/cover no-repeat;
