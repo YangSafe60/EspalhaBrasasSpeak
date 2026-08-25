@@ -96,43 +96,55 @@ export function FriendsSidebar({ onOpenFriends, friendsViewActive }: Props) {
 
   return (
     <aside className="channel-sidebar friends-sidebar">
-      <div className="friends-sidebar-search-wrap">
-        <input
-          id="friends-sidebar-search"
-          className="friends-sidebar-search"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Find or start a conversation"
-          aria-label="Find or start a conversation"
-        />
-      </div>
-
-      <div className="channel-scroll friends-sidebar-scroll">
-        <nav className="friends-sidebar-nav">
+      <header className="sidebar-header">
+        <h2>Friends</h2>
+        <div className="sidebar-header-actions">
           <button
             type="button"
-            className={`friends-nav-item${friendsViewActive ? " active" : ""}`}
-            onClick={() => onOpenFriends("online")}
+            className="icon-btn"
+            title="Add friend"
+            onClick={() => onOpenFriends("add")}
           >
-            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden>
-              <path
-                fill="currentColor"
-                d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5C15 14.17 10.33 13 8 13zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"
-              />
-            </svg>
-            <span>Friends</span>
-            {pendingCount > 0 ? (
-              <span className="friends-tab-badge">{pendingCount}</span>
-            ) : null}
+            +
           </button>
-        </nav>
+          <button
+            type="button"
+            className="icon-btn"
+            title="User settings"
+            onClick={() => setModal("user-settings")}
+          >
+            ⚙
+          </button>
+        </div>
+      </header>
+
+      <div className="channel-scroll friends-sidebar-scroll">
+        <label className="friends-sidebar-search-wrap" htmlFor="friends-sidebar-search">
+          <input
+            id="friends-sidebar-search"
+            className="friends-sidebar-search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search conversations"
+            aria-label="Search conversations"
+          />
+        </label>
+
+        <button
+          type="button"
+          className={`friends-nav-item${friendsViewActive ? " active" : ""}`}
+          onClick={() => onOpenFriends("online")}
+        >
+          <span>Friends</span>
+          {pendingCount > 0 ? (
+            <span className="friends-tab-badge">{pendingCount}</span>
+          ) : null}
+        </button>
 
         {search.trim() && filteredFriends.length > 0 && (
-          <section className="friends-dm-section">
-            <header className="friends-dm-header">
-              <h3>Friends</h3>
-            </header>
-            <ul className="friends-dm-list">
+          <section className="friends-section">
+            <h3>Friends</h3>
+            <ul className="friends-list">
               {filteredFriends.map((f) => (
                 <li key={f.id}>
                   <button
@@ -146,6 +158,7 @@ export function FriendsSidebar({ onOpenFriends, friendsViewActive }: Props) {
                     />
                     <span className="friends-dm-name">
                       {f.peer.display_name}
+                      <span className="muted">@{f.peer.username}</span>
                     </span>
                   </button>
                 </li>
@@ -154,18 +167,8 @@ export function FriendsSidebar({ onOpenFriends, friendsViewActive }: Props) {
           </section>
         )}
 
-        <section className="friends-dm-section">
-          <header className="friends-dm-header">
-            <h3>Direct Messages</h3>
-            <button
-              type="button"
-              className="friends-dm-add"
-              title="Add Friend"
-              onClick={() => onOpenFriends("add")}
-            >
-              +
-            </button>
-          </header>
+        <section className="friends-section">
+          <h3>Direct messages</h3>
           {filteredDms.length === 0 ? (
             <p className="muted friends-empty">
               {search.trim()
@@ -173,7 +176,7 @@ export function FriendsSidebar({ onOpenFriends, friendsViewActive }: Props) {
                 : "No direct messages yet."}
             </p>
           ) : (
-            <ul className="friends-dm-list">
+            <ul className="friends-list">
               {filteredDms.map((dm) => (
                 <li key={dm.id}>
                   <button
@@ -192,8 +195,9 @@ export function FriendsSidebar({ onOpenFriends, friendsViewActive }: Props) {
                     />
                     <span className="friends-dm-name">
                       {dm.peer.display_name}
+                      <span className="muted">@{dm.peer.username}</span>
                       {!dm.friendship_id && (
-                        <span className="muted friends-dm-tag"> closed</span>
+                        <span className="friends-dm-tag"> closed</span>
                       )}
                     </span>
                   </button>
@@ -202,17 +206,6 @@ export function FriendsSidebar({ onOpenFriends, friendsViewActive }: Props) {
             </ul>
           )}
         </section>
-      </div>
-
-      <div className="friends-sidebar-footer">
-        <button
-          type="button"
-          className="icon-btn"
-          title="User settings"
-          onClick={() => setModal("user-settings")}
-        >
-          ⚙
-        </button>
       </div>
 
       {menu && (

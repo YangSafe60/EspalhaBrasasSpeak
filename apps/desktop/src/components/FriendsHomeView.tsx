@@ -164,15 +164,10 @@ export function FriendsHomeView({ tab, onTabChange }: Props) {
 
   return (
     <main className="friends-home">
-      <header className="friends-home-header">
-        <div className="friends-home-title">
-          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden>
-            <path
-              fill="currentColor"
-              d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5C15 14.17 10.33 13 8 13zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"
-            />
-          </svg>
+      <header className="message-header friends-home-header">
+        <div>
           <h2>Friends</h2>
+          <p className="topic">People and private chats</p>
         </div>
         <nav className="friends-home-tabs" aria-label="Friends filters">
           {(
@@ -180,6 +175,7 @@ export function FriendsHomeView({ tab, onTabChange }: Props) {
               ["online", "Online"],
               ["all", "All"],
               ["pending", "Pending"],
+              ["add", "Add"],
             ] as const
           ).map(([id, label]) => (
             <button
@@ -194,21 +190,14 @@ export function FriendsHomeView({ tab, onTabChange }: Props) {
               ) : null}
             </button>
           ))}
-          <button
-            type="button"
-            className={`friends-add-friend-btn${tab === "add" ? " on" : ""}`}
-            onClick={() => onTabChange("add")}
-          >
-            Add Friend
-          </button>
         </nav>
       </header>
 
       {tab === "add" ? (
         <div className="friends-add-panel">
-          <h3>Add Friend</h3>
+          <h3>Add friend</h3>
           <p className="muted">
-            You can add friends with their SpeakApp username.
+            Send a request with their SpeakApp username.
           </p>
           <form className="friends-add-form" onSubmit={(e) => void onAdd(e)}>
             <input
@@ -218,7 +207,7 @@ export function FriendsHomeView({ tab, onTabChange }: Props) {
                 setError(null);
                 setMsg(null);
               }}
-              placeholder="Enter a username"
+              placeholder="@username"
               autoComplete="off"
               spellCheck={false}
               autoFocus
@@ -228,7 +217,7 @@ export function FriendsHomeView({ tab, onTabChange }: Props) {
               className="btn primary"
               disabled={busy || !username.trim()}
             >
-              {busy ? "Sending…" : "Send Friend Request"}
+              {busy ? "Sending…" : "Send request"}
             </button>
           </form>
           {error && <p className="form-error">{error}</p>}
@@ -243,19 +232,19 @@ export function FriendsHomeView({ tab, onTabChange }: Props) {
           ) : (
             <>
               {pendingInbound.length > 0 && (
-                <section className="friends-home-section">
+                <section className="friends-section">
                   <h3>Incoming — {pendingInbound.length}</h3>
-                  <ul className="friends-home-list">
+                  <ul className="friends-list">
                     {pendingInbound.map((f) => (
-                      <li key={f.id} className="friends-home-row">
-                        <div className="friends-home-peer">
+                      <li key={f.id} className="friends-row">
+                        <div className="friends-peer">
                           <FriendAvatar user={f.peer} />
                           <div>
                             <strong>{f.peer.display_name}</strong>
                             <span className="muted">@{f.peer.username}</span>
                           </div>
                         </div>
-                        <div className="friends-home-actions">
+                        <div className="friends-actions">
                           <button
                             type="button"
                             className="btn primary sm"
@@ -268,7 +257,7 @@ export function FriendsHomeView({ tab, onTabChange }: Props) {
                             className="btn ghost sm"
                             onClick={() => void declineFriend(f.id)}
                           >
-                            Ignore
+                            Decline
                           </button>
                         </div>
                       </li>
@@ -277,18 +266,16 @@ export function FriendsHomeView({ tab, onTabChange }: Props) {
                 </section>
               )}
               {pendingOutbound.length > 0 && (
-                <section className="friends-home-section">
+                <section className="friends-section">
                   <h3>Outgoing — {pendingOutbound.length}</h3>
-                  <ul className="friends-home-list">
+                  <ul className="friends-list">
                     {pendingOutbound.map((f) => (
-                      <li key={f.id} className="friends-home-row">
-                        <div className="friends-home-peer">
+                      <li key={f.id} className="friends-row">
+                        <div className="friends-peer">
                           <FriendAvatar user={f.peer} />
                           <div>
                             <strong>{f.peer.display_name}</strong>
-                            <span className="muted">
-                              Outgoing Friend Request
-                            </span>
+                            <span className="muted">@{f.peer.username}</span>
                           </div>
                         </div>
                         <button
@@ -308,22 +295,17 @@ export function FriendsHomeView({ tab, onTabChange }: Props) {
         </div>
       ) : (
         <div className="friends-home-body">
-          <label className="friends-home-search">
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden>
-              <path
-                fill="currentColor"
-                d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"
-              />
-            </svg>
+          <label className="friends-home-search" htmlFor="friends-home-search">
             <input
+              id="friends-home-search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search"
+              placeholder="Search friends"
               aria-label="Search friends"
             />
           </label>
 
-          <section className="friends-home-section">
+          <section className="friends-section">
             <h3>
               {tab === "online" ? "Online" : "All friends"} —{" "}
               {listFriends.length}
@@ -332,17 +314,17 @@ export function FriendsHomeView({ tab, onTabChange }: Props) {
               <p className="friends-home-empty muted">
                 {tab === "online"
                   ? "No friends are online right now."
-                  : "No friends yet. Add someone with Add Friend."}
+                  : "No friends yet. Use Add to send a request."}
               </p>
             ) : (
-              <ul className="friends-home-list">
+              <ul className="friends-list">
                 {listFriends.map((f) => {
                   const status = presenceFor(f.peer.id);
                   return (
-                    <li key={f.id} className="friends-home-row">
+                    <li key={f.id} className="friends-row">
                       <button
                         type="button"
-                        className="friends-home-peer clickable"
+                        className="friends-peer clickable"
                         onClick={() => void openDmWithPeer(f.peer.id)}
                         onContextMenu={(e: MouseEvent) => {
                           e.preventDefault();
@@ -367,28 +349,17 @@ export function FriendsHomeView({ tab, onTabChange }: Props) {
                           <span className="muted">{statusLabel(status)}</span>
                         </div>
                       </button>
-                      <div className="friends-home-actions">
+                      <div className="friends-actions">
                         <button
                           type="button"
-                          className="friends-icon-action"
-                          title="Message"
+                          className="btn ghost sm"
                           onClick={() => void openDmWithPeer(f.peer.id)}
                         >
-                          <svg
-                            viewBox="0 0 24 24"
-                            width="18"
-                            height="18"
-                            aria-hidden
-                          >
-                            <path
-                              fill="currentColor"
-                              d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.17L4 17.17V4h16v12z"
-                            />
-                          </svg>
+                          Message
                         </button>
                         <button
                           type="button"
-                          className="friends-icon-action"
+                          className="icon-btn"
                           title="More"
                           onClick={(e) => {
                             const rect = (
@@ -401,17 +372,7 @@ export function FriendsHomeView({ tab, onTabChange }: Props) {
                             });
                           }}
                         >
-                          <svg
-                            viewBox="0 0 24 24"
-                            width="18"
-                            height="18"
-                            aria-hidden
-                          >
-                            <path
-                              fill="currentColor"
-                              d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"
-                            />
-                          </svg>
+                          ···
                         </button>
                       </div>
                     </li>

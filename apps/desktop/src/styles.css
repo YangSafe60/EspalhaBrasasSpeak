@@ -4829,30 +4829,10 @@ html.is-screen-popout #root {
   }
 }
 
-/* Friends + E2E DMs */
+/* Friends + E2E DMs ? match channel sidebar / message chrome */
 .friends-sidebar {
   display: flex;
   flex-direction: column;
-}
-
-.friends-sidebar-search-wrap {
-  padding: 0.75rem 0.65rem 0.5rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.friends-sidebar-search {
-  width: 100%;
-  box-sizing: border-box;
-  border: none;
-  border-radius: 8px;
-  background: var(--bg-0);
-  color: var(--text);
-  padding: 0.55rem 0.7rem;
-  font-size: 0.82rem;
-}
-
-.friends-sidebar-search::placeholder {
-  color: var(--text-dim);
 }
 
 .friends-sidebar-scroll {
@@ -4860,90 +4840,138 @@ html.is-screen-popout #root {
   min-height: 0;
 }
 
-.friends-sidebar-nav {
-  padding: 0.5rem 0.5rem 0.25rem;
+.friends-sidebar-search-wrap {
+  display: block;
+  margin: 0 0 0.65rem;
+}
+
+.friends-sidebar-search {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-2);
+  color: var(--text);
+  padding: 0.45rem 0.6rem;
+  font-size: 0.85rem;
+}
+
+.friends-sidebar-search::placeholder {
+  color: var(--text-dim);
 }
 
 .friends-nav-item {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 0.65rem;
-  padding: 0.55rem 0.65rem;
-  border: none;
+  gap: 0.5rem;
+  padding: 0.45rem 0.55rem;
+  margin-bottom: 0.65rem;
+  border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
   color: var(--text-dim);
   font-weight: 600;
-  font-size: 0.95rem;
+  font-size: 0.92rem;
   cursor: pointer;
   text-align: left;
 }
 
 .friends-nav-item:hover {
-  background: rgba(255, 255, 255, 0.04);
   color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .friends-nav-item.active {
-  background: rgba(255, 255, 255, 0.08);
   color: var(--text);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
 .friends-tab-badge {
   margin-left: auto;
   min-width: 1.1rem;
-  padding: 0.05rem 0.35rem;
+  height: 1.1rem;
+  padding: 0 0.3rem;
   border-radius: 999px;
   background: var(--accent);
-  color: #fff;
-  font-size: 0.7rem;
+  color: #1a1205;
+  font-size: 0.68rem;
   font-weight: 700;
-  text-align: center;
-}
-
-.friends-dm-section {
-  padding: 0.35rem 0.5rem 0.75rem;
-}
-
-.friends-dm-header {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0.35rem 0.4rem;
+  justify-content: center;
 }
 
-.friends-dm-header h3 {
-  margin: 0;
-  font-size: 0.7rem;
+.friends-section {
+  margin-bottom: 1rem;
+}
+
+.friends-section h3 {
+  margin: 0 0 0.45rem;
+  font-size: 0.72rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-dim);
 }
 
-.friends-dm-add {
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: 1.1rem;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0.1rem 0.35rem;
-  border-radius: 4px;
-}
-
-.friends-dm-add:hover {
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.friends-dm-list {
+.friends-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.1rem;
+  gap: 0.25rem;
+}
+
+.friends-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0.45rem;
+  border-radius: 8px;
+}
+
+.friends-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.friends-peer {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+  text-align: left;
+  background: none;
+  border: none;
+  color: inherit;
+  padding: 0;
+}
+
+.friends-peer.clickable {
+  cursor: pointer;
+  flex: 1;
+}
+
+.friends-peer strong,
+.friends-dm-name {
+  display: block;
+  font-size: 0.92rem;
+}
+
+.friends-peer .muted,
+.friends-dm-name .muted {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+
+.friends-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
 }
 
 .friends-dm-btn {
@@ -4962,42 +4990,40 @@ html.is-screen-popout #root {
 
 .friends-dm-btn:hover,
 .friends-dm-btn.active {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
 .friends-dm-name {
   flex: 1;
   min-width: 0;
-  display: block;
-  font-size: 0.92rem;
-  font-weight: 600;
-  white-space: nowrap;
   overflow: hidden;
+}
+
+.friends-dm-name > :first-child,
+.friends-dm-btn .friends-dm-name {
+  white-space: nowrap;
   text-overflow: ellipsis;
+  overflow: hidden;
 }
 
 .friends-dm-tag,
 .friends-empty,
-.friends-mute-tag {
+.friends-mute-tag,
+.friends-hint {
   font-size: 0.8rem;
 }
 
 .friends-mute-tag {
   font-weight: 500;
-}
-
-.friends-sidebar-footer {
-  padding: 0.45rem 0.65rem;
-  border-top: 1px solid var(--border);
-  display: flex;
-  justify-content: flex-end;
+  text-transform: lowercase;
 }
 
 .friends-avatar-wrap {
   position: relative;
   flex-shrink: 0;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
 }
 
 .friends-avatar-wrap.sm {
@@ -5008,7 +5034,7 @@ html.is-screen-popout #root {
 .friends-avatar {
   width: 100%;
   height: 100%;
-  border-radius: 50%;
+  border-radius: 10px;
   background: var(--bg-3);
   border: 1px solid var(--border);
   display: grid;
@@ -5025,29 +5051,29 @@ html.is-screen-popout #root {
 
 .friends-status-dot {
   position: absolute;
-  right: -1px;
-  bottom: -1px;
-  width: 12px;
-  height: 12px;
+  right: -2px;
+  bottom: -2px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  border: 2px solid var(--bg-1);
+  border: 2px solid rgba(12, 24, 30, 0.95);
   box-sizing: border-box;
 }
 
 .friends-status-dot.status-online {
-  background: #23a559;
+  background: var(--teal);
 }
 
 .friends-status-dot.status-idle {
-  background: #f0b232;
+  background: var(--warn);
 }
 
 .friends-status-dot.status-dnd {
-  background: #f23f43;
+  background: var(--danger);
 }
 
 .friends-status-dot.status-offline {
-  background: #80848e;
+  background: var(--text-dim);
 }
 
 .friends-home {
@@ -5055,46 +5081,30 @@ html.is-screen-popout #root {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: var(--bg-2);
+  background: transparent;
 }
 
 .friends-home-header {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
   flex-wrap: wrap;
-  padding: 0.75rem 1rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.friends-home-title {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  color: var(--text);
-}
-
-.friends-home-title h2 {
-  margin: 0;
-  font-size: 1rem;
+  gap: 0.75rem 1rem;
 }
 
 .friends-home-tabs {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0.35rem;
-  margin-left: 0.5rem;
+  gap: 0.3rem;
+  margin-left: auto;
 }
 
 .friends-home-tabs > button {
-  border: none;
+  border: 1px solid transparent;
   background: transparent;
   color: var(--text-dim);
-  padding: 0.35rem 0.65rem;
-  border-radius: 6px;
+  padding: 0.35rem 0.7rem;
+  border-radius: 8px;
   font-weight: 600;
-  font-size: 0.88rem;
+  font-size: 0.85rem;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -5102,151 +5112,56 @@ html.is-screen-popout #root {
 }
 
 .friends-home-tabs > button:hover {
-  background: rgba(255, 255, 255, 0.05);
   color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
 }
 
-.friends-home-tabs > button.on:not(.friends-add-friend-btn) {
-  background: rgba(255, 255, 255, 0.08);
+.friends-home-tabs > button.on {
   color: var(--text);
-}
-
-.friends-add-friend-btn {
-  background: var(--accent) !important;
-  color: #fff !important;
-  margin-left: 0.35rem;
-}
-
-.friends-add-friend-btn.on {
-  filter: brightness(1.08);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
 .friends-home-body {
   flex: 1;
   overflow: auto;
-  padding: 1rem 1.25rem 1.5rem;
+  padding: 1rem 1.15rem 1.5rem;
 }
 
 .friends-home-search {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.45rem 0.7rem;
-  border-radius: 8px;
-  background: var(--bg-0);
-  color: var(--text-dim);
+  display: block;
   margin-bottom: 1rem;
 }
 
 .friends-home-search input {
-  flex: 1;
-  border: none;
-  background: transparent;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-2);
   color: var(--text);
-  outline: none;
+  padding: 0.5rem 0.7rem;
   font-size: 0.9rem;
 }
 
-.friends-home-section h3 {
-  margin: 0 0 0.55rem;
-  font-size: 0.72rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-}
-
-.friends-home-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.friends-home-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.55rem 0.4rem;
-  border-top: 1px solid var(--border);
-}
-
-.friends-home-row:hover {
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 8px;
-}
-
-.friends-home-peer {
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
-  min-width: 0;
-  text-align: left;
-  background: none;
-  border: none;
-  color: inherit;
-  padding: 0;
-  flex: 1;
-}
-
-.friends-home-peer.clickable {
-  cursor: pointer;
-}
-
-.friends-home-peer strong {
-  display: block;
-  font-size: 0.95rem;
-}
-
-.friends-home-peer .muted {
-  display: block;
-  font-size: 0.78rem;
-}
-
-.friends-home-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  flex-shrink: 0;
-  opacity: 0.85;
-}
-
-.friends-home-row:hover .friends-home-actions {
-  opacity: 1;
-}
-
-.friends-icon-action {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  border: none;
-  background: var(--bg-3);
-  color: var(--text-dim);
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-}
-
-.friends-icon-action:hover {
-  color: var(--text);
-  background: var(--bg-1);
-}
-
 .friends-home-empty {
-  padding: 1.5rem 0.5rem;
+  padding: 1.25rem 0.25rem;
 }
 
 .friends-add-panel {
-  padding: 1.25rem 1.5rem;
-  max-width: 40rem;
+  padding: 1.15rem 1.15rem 1.5rem;
+  max-width: 36rem;
 }
 
 .friends-add-panel h3 {
   margin: 0 0 0.35rem;
+  font-family: var(--font-display);
+  font-size: 1.05rem;
 }
 
 .friends-add-form {
   display: flex;
-  gap: 0.55rem;
+  gap: 0.5rem;
   margin-top: 0.85rem;
 }
 
@@ -5255,17 +5170,9 @@ html.is-screen-popout #root {
   min-width: 0;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg-0);
+  background: var(--bg-2);
   color: var(--text);
-  padding: 0.65rem 0.75rem;
-}
-
-html[data-theme="light"] .friends-home-row:hover,
-html[data-theme="light"] .friends-dm-btn:hover,
-html[data-theme="light"] .friends-dm-btn.active,
-html[data-theme="light"] .friends-nav-item:hover,
-html[data-theme="light"] .friends-nav-item.active {
-  background: rgba(0, 0, 0, 0.05);
+  padding: 0.55rem 0.7rem;
 }
 
 .ctx-menu {
