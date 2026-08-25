@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { BrowserPreviewGate } from "./components/BrowserPreviewGate";
 import { ChannelSidebar } from "./components/ChannelSidebar";
 import { DmMessageView } from "./components/DmMessageView";
+import { FriendsHomeView, type FriendsTab } from "./components/FriendsHomeView";
 import { FriendsSidebar } from "./components/FriendsSidebar";
 import { MemberList } from "./components/MemberList";
 import { MessageView } from "./components/MessageView";
@@ -19,6 +20,8 @@ import { VoicePanel } from "./components/VoicePanel";
 import { useVoice } from "./hooks/useVoice";
 import { useAutoIdlePresence } from "./hooks/useAutoIdlePresence";
 import { useWebSocket } from "./hooks/useWebSocket";
+import { applyTheme, loadTheme } from "./lib/theme";
+import { sameId } from "./lib/serverPerms";
 import { useAppStore } from "./store/appStore";
 import logoFull from "./assets/logo-full.png";
 
@@ -89,8 +92,17 @@ function isPopout(): boolean {
   return q.get("popout") === "1";
 }
 
-function MainColumn({ voice }: { voice: ReturnType<typeof useVoice> }) {
+function MainColumn({
+  voice,
+  friendsTab,
+  onFriendsTabChange,
+}: {
+  voice: ReturnType<typeof useVoice>;
+  friendsTab: FriendsTab;
+  onFriendsTabChange: (tab: FriendsTab) => void;
+}) {
   const friendsHome = useAppStore((s) => s.friendsHome);
+  const activeDmId = useAppStore((s) => s.activeDmId);
   const activeChannelId = useAppStore((s) => s.activeChannelId);
   const channelsByServer = useAppStore((s) => s.channelsByServer);
   const channel = Object.values(channelsByServer)
@@ -100,7 +112,11 @@ function MainColumn({ voice }: { voice: ReturnType<typeof useVoice> }) {
   if (friendsHome) {
     return (
       <div className="main-column">
-        <DmMessageView />
+        {activeDmId ? (
+          <DmMessageView />
+        ) : (
+          <FriendsHomeView tab={friendsTab} onTabChange={onFriendsTabChange} />
+        )}
       </div>
     );
   }
@@ -120,16 +136,28 @@ function MainApp() {
   const user = useAppStore((s) => s.user);
   const bootstrapped = useAppStore((s) => s.bootstrapped);
   const friendsHome = useAppStore((s) => s.friendsHome);
+  const activeServerId = useAppStore((s) => s.activeServerId);
+  const servers = useAppStore((s) => s.servers);
   const bootstrap = useAppStore((s) => s.bootstrap);
   const selectChannel = useAppStore((s) => s.selectChannel);
   const voiceChannelId = useAppStore((s) => s.voiceChannelId);
   const voice = useVoice();
   const [pendingVoiceId, setPendingVoiceId] = useState<string | null>(null);
   const [micBusy, setMicBusy] = useState(false);
+  const [friendsTab, setFriendsTab] = useState<FriendsTab>("online");
+  const activeDmId = useAppStore((s) => s.activeDmId);
 
   useEffect(() => {
     void bootstrap();
   }, [bootstrap]);
+
+  useEffect(() => {
+    const server = servers.find((s) => sameId(s.id, activeServerId));
+    applyTheme(loadTheme(), {
+      serverAccent: server?.accent_color ?? null,
+      friendsHome,
+    });
+  }, [activeServerId, friendsHome, servers]);
 
   useWebSocket(!!user);
   useAutoIdlePresence(!!user);
@@ -158,6 +186,11 @@ function MainApp() {
     void joinVoice(id);
   }
 
+  function onOpenFriends(tab: FriendsTab = "online") {
+    setFriendsTab(tab);
+    useAppStore.setState({ activeDmId: null, friendsHome: true });
+  }
+
   if (!bootstrapped) {
     return <BootFallback />;
   }
@@ -176,7 +209,10 @@ function MainApp() {
         <ServerRail />
         <div className="sidebar-column">
           {friendsHome ? (
-            <FriendsSidebar />
+            <FriendsSidebar
+              friendsViewActive={!activeDmId}
+              onOpenFriends={onOpenFriends}
+            />
           ) : (
             <ChannelSidebar
               speakingIds={voice.speakingIds}
@@ -189,7 +225,11 @@ function MainApp() {
           )}
           <VoicePanel voice={voice} />
         </div>
-        <MainColumn voice={voice} />
+        <MainColumn
+          voice={voice}
+          friendsTab={friendsTab}
+          onFriendsTabChange={setFriendsTab}
+        />
         {!friendsHome && (
           <MemberList
             voice={{

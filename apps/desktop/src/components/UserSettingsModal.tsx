@@ -79,6 +79,15 @@ export function UserSettingsModal() {
     localStorage.setItem(STORAGE_NOTIFY, notifySound ? "1" : "0");
   }, [notifySound]);
 
+  useEffect(() => {
+    if (modal !== "user-settings") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !dangerAction) setModal(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [modal, dangerAction, setModal]);
+
   if (modal !== "user-settings" || !user) return null;
 
   async function saveAccount(e: FormEvent) {
@@ -216,18 +225,32 @@ export function UserSettingsModal() {
   ).toUpperCase();
 
   return (
-    <div className="modal-backdrop" onClick={() => setModal(null)}>
-      <div
-        className="modal user-settings"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-label="User settings"
-      >
+    <div
+      className="user-settings-page"
+      role="dialog"
+      aria-modal="true"
+      aria-label="User settings"
+    >
+      <div className="user-settings-shell">
         <aside className="user-settings-nav">
-          <p className="settings-nav-label">User settings</p>
+          <p className="settings-nav-label">User Settings</p>
+          <button
+            type="button"
+            className={tab === "account" ? "active" : ""}
+            onClick={() => {
+              setTab("account");
+              setMsg(null);
+              setErr(null);
+            }}
+          >
+            My Account
+          </button>
+
+          <p className="settings-nav-label settings-nav-label-spaced">
+            App Settings
+          </p>
           {(
             [
-              ["account", "My Account"],
               ["voice", "Voice & Video"],
               ["appearance", "Appearance"],
               ["accessibility", "Accessibility"],
@@ -246,34 +269,47 @@ export function UserSettingsModal() {
               {label}
             </button>
           ))}
+
           <div className="settings-nav-spacer" />
-          <p className="muted tiny settings-app-version">
-            App v{appVersion}
-          </p>
+          <p className="muted tiny settings-app-version">App v{appVersion}</p>
           <button type="button" className="danger-link" onClick={doLogout}>
             Log Out
           </button>
         </aside>
 
         <section className="user-settings-main">
-          <header className="modal-header">
-            <h3>
-              {tab === "account" && "My Account"}
-              {tab === "voice" && "Voice & Video"}
-              {tab === "appearance" && "Appearance"}
-              {tab === "accessibility" && "Accessibility"}
-            </h3>
+          <header className="user-settings-header">
+            <div>
+              <h2>
+                {tab === "account" && "My Account"}
+                {tab === "voice" && "Voice & Video"}
+                {tab === "appearance" && "Appearance"}
+                {tab === "accessibility" && "Accessibility"}
+              </h2>
+              <p className="muted tiny user-settings-subtitle">
+                {tab === "account" &&
+                  "Profile, password, and account safety."}
+                {tab === "voice" &&
+                  "Microphone, camera, and call audio settings."}
+                {tab === "appearance" &&
+                  "Themes, colors, and notification sound."}
+                {tab === "accessibility" &&
+                  "Readability, density, contrast, and motion."}
+              </p>
+            </div>
             <button
               type="button"
-              className="icon-btn"
+              className="user-settings-close"
               onClick={() => setModal(null)}
-              aria-label="Close"
+              aria-label="Close settings"
             >
-              ✕
+              <span aria-hidden>×</span>
+              <em>ESC</em>
             </button>
           </header>
 
-          {tab === "account" && (
+          <div className="user-settings-content">
+            {tab === "account" && (
             <div className="stack account-settings-sections">
               <form className="stack" onSubmit={saveAccount}>
                 <div className="user-profile-editor">
@@ -535,6 +571,7 @@ export function UserSettingsModal() {
               onOpenAppearance={() => setTab("appearance")}
             />
           )}
+          </div>
         </section>
       </div>
 

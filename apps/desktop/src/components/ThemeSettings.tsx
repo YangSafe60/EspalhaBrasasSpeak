@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { sameId } from "../lib/serverPerms";
 import {
   type AppTheme,
+  type ServerThemeMode,
   type ThemeBase,
   COLOR_PRESETS,
   DEFAULT_CUSTOM,
@@ -9,6 +11,7 @@ import {
   setAndApplyTheme,
   watchSystemTheme,
 } from "../lib/theme";
+import { useAppStore } from "../store/appStore";
 import { ThemeCustomPanel } from "./ThemeCustomPanel";
 
 const BASE_OPTIONS: {
@@ -24,21 +27,37 @@ const BASE_OPTIONS: {
 ];
 
 export function ThemeSettings() {
+  const activeServerId = useAppStore((s) => s.activeServerId);
+  const servers = useAppStore((s) => s.servers);
+  const friendsHome = useAppStore((s) => s.friendsHome);
   const [theme, setTheme] = useState<AppTheme>(() => loadTheme());
   const [customOpen, setCustomOpen] = useState(
     () => loadTheme().colorTheme === "custom",
   );
 
+  function applyOptions() {
+    const server = servers.find((s) => sameId(s.id, activeServerId));
+    return {
+      serverAccent: server?.accent_color ?? null,
+      friendsHome,
+    };
+  }
+
   useEffect(() => {
     return watchSystemTheme(() => {
       const t = loadTheme();
-      if (t.base === "system") setAndApplyTheme(t);
+      if (t.base !== "system") return;
+      const server = servers.find((s) => sameId(s.id, activeServerId));
+      setAndApplyTheme(t, {
+        serverAccent: server?.accent_color ?? null,
+        friendsHome,
+      });
     });
-  }, []);
+  }, [activeServerId, friendsHome, servers]);
 
   function commit(next: AppTheme) {
     setTheme(next);
-    setAndApplyTheme(next);
+    setAndApplyTheme(next, applyOptions());
   }
 
   function selectBase(base: ThemeBase) {
@@ -80,6 +99,8 @@ export function ThemeSettings() {
               ...DEFAULT_CUSTOM,
               colors: [...DEFAULT_CUSTOM.colors],
             },
+            syncAcrossDevices: theme.syncAcrossDevices,
+            serverThemeMode: theme.serverThemeMode,
           });
           setCustomOpen(false);
         }}
@@ -167,6 +188,45 @@ export function ThemeSettings() {
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="theme-section">
+        <h4>Theme options</h4>
+        <label className="theme-pref-row">
+          <span>
+            <strong>Sync theme across my devices</strong>
+            <em className="muted tiny">
+              Keep this theme in your shared profile storage on this account.
+            </em>
+          </span>
+          <input
+            type="checkbox"
+            checked={theme.syncAcrossDevices}
+            onChange={(e) =>
+              commit({ ...theme, syncAcrossDevices: e.target.checked })
+            }
+          />
+        </label>
+        <label className="theme-pref-row">
+          <span>
+            <strong>Default theme in servers</strong>
+            <em className="muted tiny">
+              Choose whether servers use your colors or their accent.
+            </em>
+          </span>
+          <select
+            value={theme.serverThemeMode}
+            onChange={(e) =>
+              commit({
+                ...theme,
+                serverThemeMode: e.target.value as ServerThemeMode,
+              })
+            }
+          >
+            <option value="mine">Use my theme</option>
+            <option value="server">Use the server&apos;s theme</option>
+          </select>
+        </label>
       </div>
     </div>
   );

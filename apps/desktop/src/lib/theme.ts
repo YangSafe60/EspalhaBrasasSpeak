@@ -1,8 +1,11 @@
 /** Client-side Discord-style themes (localStorage + CSS variables). */
 
 export const THEME_STORAGE_KEY = "eb_theme";
+export const THEME_DEVICE_STORAGE_KEY = "eb_theme_device";
 
 export type ThemeBase = "brand" | "dark" | "midnight" | "light" | "system";
+
+export type ServerThemeMode = "mine" | "server";
 
 export type CustomTheme = {
   mode: "dark" | "light";
@@ -15,6 +18,10 @@ export type AppTheme = {
   /** Preset id, "custom", or null (base only / brand accents). */
   colorTheme: string | null;
   custom: CustomTheme;
+  /** When on, theme is stored in the shared account key (for future multi-device sync). */
+  syncAcrossDevices: boolean;
+  /** Prefer personal theme or the active server's accent while in a server. */
+  serverThemeMode: ServerThemeMode;
 };
 
 export type CssVars = Record<string, string>;
@@ -57,6 +64,8 @@ export const DEFAULT_THEME: AppTheme = {
   base: "brand",
   colorTheme: null,
   custom: { ...DEFAULT_CUSTOM, colors: [...DEFAULT_CUSTOM.colors] },
+  syncAcrossDevices: true,
+  serverThemeMode: "mine",
 };
 
 export const COLOR_PRESETS: ColorPreset[] = [
@@ -430,23 +439,50 @@ export function resolveThemeVars(theme: AppTheme): {
 
 const VAR_KEYS = Object.keys(BRAND_VARS);
 
-export function applyTheme(theme: AppTheme) {
+export type ApplyThemeOptions = {
+  /** Active server accent when serverThemeMode is "server". */
+  serverAccent?: string | null;
+  friendsHome?: boolean;
+};
+
+function withServerAccent(vars: CssVars, accent: string, mode: "dark" | "light"): CssVars {
+  const c0 = hexToRgb(accent);
+  if (!c0) return vars;
+  const accent2 = mix(c0, { r: 255, g: 255, b: 255 }, mode === "light" ? 0.2 : 0.15);
+  return {
+    ...vars,
+    "--accent": rgbToHex(c0.r, c0.g, c0.b),
+    "--accent-2": rgbToHex(accent2.r, accent2.g, accent2.b),
+    "--accent-soft": rgba(c0, mode === "light" ? 0.14 : 0.18),
+    "--accent-glow": rgba(c0, mode === "light" ? 0.12 : 0.22),
+    "--accent-glow-2": rgba(c0, mode === "light" ? 0.06 : 0.1),
+  };
+}
+
+export function applyTheme(theme: AppTheme, options: ApplyThemeOptions = {}) {
   const root = document.documentElement;
-  const { vars, mode } = resolveThemeVars(theme);
+  let { vars, mode } = resolveThemeVars(theme);
+  const useServer =
+    theme.serverThemeMode === "server" &&
+    !options.friendsHome &&
+    options.serverAccent;
+  if (useServer && options.serverAccent) {
+    vars = withServerAccent(vars, options.serverAccent, mode);
+  }
   for (const key of VAR_KEYS) {
     const v = vars[key];
     if (v) root.style.setProperty(key, v);
   }
   root.dataset.theme = mode;
   root.dataset.themeBase = theme.base;
+  root.dataset.serverTheme = theme.serverThemeMode;
   if (theme.colorTheme) root.dataset.colorTheme = theme.colorTheme;
   else delete root.dataset.colorTheme;
 }
 
-export function loadTheme(): AppTheme {
+function parseTheme(raw: string | null): AppTheme | null {
+  if (!raw) return null;
   try {
-    const raw = localStorage.getItem(THEME_STORAGE_KEY);
-    if (!raw) return structuredClone(DEFAULT_THEME);
     const parsed = JSON.parse(raw) as Partial<AppTheme>;
     const base = (
       ["brand", "dark", "midnight", "light", "system"] as ThemeBase[]
@@ -470,19 +506,40 @@ export function loadTheme(): AppTheme {
         colors: colors.length ? colors : [...DEFAULT_CUSTOM.colors],
         intensity: clamp(Number(parsed.custom?.intensity ?? 70), 0, 100),
       },
+      syncAcrossDevices: parsed.syncAcrossDevices !== false,
+      serverThemeMode:
+        parsed.serverThemeMode === "server" ? "server" : "mine",
     };
   } catch {
-    return structuredClone(DEFAULT_THEME);
+    return null;
   }
 }
 
-export function saveTheme(theme: AppTheme) {
-  localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify(theme));
+export function loadTheme(): AppTheme {
+  const shared = parseTheme(localStorage.getItem(THEME_STORAGE_KEY));
+  const device = parseTheme(localStorage.getItem(THEME_DEVICE_STORAGE_KEY));
+  // Prefer the last-written preference about sync from either store.
+  const syncHint =
+    device?.syncAcrossDevices ?? shared?.syncAcrossDevices ?? true;
+  if (!syncHint && device) return device;
+  return shared || device || structuredClone(DEFAULT_THEME);
 }
 
-export function setAndApplyTheme(theme: AppTheme): AppTheme {
+export function saveTheme(theme: AppTheme) {
+  const payload = JSON.stringify(theme);
+  if (theme.syncAcrossDevices) {
+    localStorage.setItem(THEME_STORAGE_KEY, payload);
+  } else {
+    localStorage.setItem(THEME_DEVICE_STORAGE_KEY, payload);
+  }
+}
+
+export function setAndApplyTheme(
+  theme: AppTheme,
+  options?: ApplyThemeOptions,
+): AppTheme {
   saveTheme(theme);
-  applyTheme(theme);
+  applyTheme(theme, options);
   return theme;
 }
 

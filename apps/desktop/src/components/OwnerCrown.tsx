@@ -10,9 +10,10 @@ export function OwnerCrown({ className }: { className?: string }) {
       focusable="false"
     >
       <title>Server Owner</title>
+      {/* Solid three-peak crown — reads cleanly at 14px */}
       <path
         fill="currentColor"
-        d="M2.5 12.5h11v1.25a.75.75 0 0 1-.75.75h-9.5a.75.75 0 0 1-.75-.75V12.5Zm.4-1.5 1.85-5.1a.4.4 0 0 1 .74-.04L7 9.2l1.51-3.34a.4.4 0 0 1 .74 0L10.76 6l1.85-5.1a.4.4 0 0 1 .76.22l1.1 6.88H1.04L2.14 1.12a.4.4 0 0 1 .76-.22Z"
+        d="M2 12.25 3.6 4.5 6.25 8 8 3.25 9.75 8l2.65-3.5L14 12.25H2Zm0 .75h12v1.1a.9.9 0 0 1-.9.9H2.9a.9.9 0 0 1-.9-.9V13Z"
       />
     </svg>
   );

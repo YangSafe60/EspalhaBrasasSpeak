@@ -29,7 +29,6 @@ import {
   useMemberContextMenu,
   type MemberVoiceHandlers,
 } from "./MemberUserMenu";
-import { OwnerCrown } from "./OwnerCrown";
 import { VoiceChannelIcon } from "./VoiceChannelIcon";
 
 type Props = {
@@ -267,7 +266,6 @@ export function ChannelSidebar({
   }
 
   function voiceUsers(channelId: string) {
-    const server = servers.find((s) => sameId(s.id, activeServerId));
     return voiceStates
       .filter((v) => v.channel_id === channelId)
       .map((v) => {
@@ -277,9 +275,6 @@ export function ChannelSidebar({
         ).find((m) => sameId(m.user.id, v.user_id));
         return {
           ...v,
-          isOwner: Boolean(
-            server && sameId(server.owner_id, v.user_id),
-          ),
           name:
             member?.nickname ||
             member?.user.display_name ||
@@ -704,14 +699,7 @@ export function ChannelSidebar({
                     >
                       {!avatar && (u.name.charAt(0) || "?").toUpperCase()}
                     </span>
-                    <span className="voice-user-name">
-                      {u.name}
-                      {u.isOwner && (
-                        <span className="owner-crown-wrap" title="Server Owner">
-                          <OwnerCrown />
-                        </span>
-                      )}
-                    </span>
+                    <span className="voice-user-name">{u.name}</span>
                     <span className="voice-user-flags">
                       {u.streaming && (
                         <span className="vu-flag live" title="Screen sharing">

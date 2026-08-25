@@ -21,7 +21,6 @@ import {
 import { useAppStore } from "../store/appStore";
 import type { PresenceStatus, Role, UserPublic } from "../types";
 import { EmojiPickerButton } from "./EmojiPickerButton";
-import { OwnerCrown } from "./OwnerCrown";
 
 function resolveUser(
   userId: string,
@@ -201,9 +200,6 @@ export function MiniProfileCard() {
   if (!miniProfile || !profile) return null;
 
   const isSelf = sameId(me?.id, profile.id);
-  const isOwner = Boolean(
-    server && sameId(server.owner_id, profile.id),
-  );
   const status: PresenceStatus = isSelf
     ? myStatus
     : presenceByUser[profile.id] || "offline";
@@ -303,14 +299,7 @@ export function MiniProfileCard() {
 
       <div className="mini-profile-body">
         <div className="mini-profile-identity">
-          <strong className="mini-profile-display">
-            <span className="mini-profile-display-text">{display}</span>
-            {isOwner && (
-              <span className="owner-crown-wrap" title="Server Owner">
-                <OwnerCrown />
-              </span>
-            )}
-          </strong>
+          <strong className="mini-profile-display">{display}</strong>
           <span className="mini-profile-username">@{profile.username}</span>
         </div>
 
