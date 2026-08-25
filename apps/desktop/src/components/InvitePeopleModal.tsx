@@ -126,7 +126,9 @@ export function InvitePeopleModal() {
   if (inviteChannelId && !channel) return null;
 
   const cardName = channel
-    ? `${channel.channel_type === "voice" ? "◎ " : "#"}${channel.name}`
+    ? channel.channel_type === "voice"
+      ? channel.name
+      : `#${channel.name}`
     : server.name;
 
   async function ensureInviteCode(): Promise<string> {

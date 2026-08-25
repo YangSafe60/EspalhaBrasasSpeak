@@ -117,14 +117,19 @@ function upsertFriendship(list: Friendship[], f: Friendship): Friendship[] {
 }
 
 function normalizeOverwrite(o: PermissionOverwrite): PermissionOverwrite {
+  const raw = o as PermissionOverwrite & {
+    allow_bits?: unknown;
+    deny_bits?: unknown;
+  };
   return {
     ...o,
+    id: String(o.id),
     channel_id: String(o.channel_id),
     target_id: String(o.target_id),
     target_type:
       String(o.target_type).toLowerCase() === "member" ? "member" : "role",
-    allow: permBits(o.allow),
-    deny: permBits(o.deny),
+    allow: permBits(raw.allow ?? raw.allow_bits),
+    deny: permBits(raw.deny ?? raw.deny_bits),
   };
 }
 
@@ -329,6 +334,7 @@ interface AppState {
   createServer: (name: string) => Promise<Server>;
   joinInvite: (code: string) => Promise<Server>;
   updateServer: (id: string, body: Partial<Server>) => Promise<void>;
+  transferOwnership: (serverId: string, userId: string) => Promise<void>;
   deleteServer: (id: string) => Promise<void>;
   loadRoles: (serverId: string) => Promise<void>;
   loadRules: (serverId: string) => Promise<void>;
@@ -370,6 +376,7 @@ interface AppState {
       category_id?: string | null;
     },
   ) => Promise<Channel>;
+  duplicateChannel: (id: string) => Promise<Channel>;
   updateChannel: (id: string, body: Record<string, unknown>) => Promise<void>;
   /** Optimistically apply position/category changes, then PATCH each changed channel. */
   applyChannelOrder: (
@@ -416,6 +423,11 @@ interface AppState {
     roleIds: string[],
   ) => Promise<Member>;
   banMember: (serverId: string, userId: string, reason?: string) => Promise<void>;
+  timeoutMember: (
+    serverId: string,
+    userId: string,
+    body: { duration_seconds?: number; reason?: string; clear?: boolean },
+  ) => Promise<Member>;
   moderateMemberVoice: (
     serverId: string,
     userId: string,
@@ -913,8 +925,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         for (const id of Object.keys(overwritesByChannel)) {
           const ch = Object.values(s.channelsByServer)
             .flat()
-            .find((c) => c.id === id);
-          if (ch?.server_id === serverId || keepIds.has(id)) {
+            .find((c) => sameId(c.id, id));
+          if (
+            (ch && sameId(ch.server_id, serverId)) ||
+            keepIds.has(id) ||
+            [...keepIds].some((kid) => sameId(kid, id))
+          ) {
             delete overwritesByChannel[id];
           }
         }
@@ -922,7 +938,18 @@ export const useAppStore = create<AppState>((set, get) => ({
         return {
           channelsByServer: { ...s.channelsByServer, [serverId]: dedupeChannelList(channels) },
           membersByServer: { ...s.membersByServer, [serverId]: members },
-          rolesByServer: { ...s.rolesByServer, [serverId]: roles },
+          rolesByServer: {
+            ...s.rolesByServer,
+            [serverId]: roles.map((role) => ({
+              ...role,
+              id: String(role.id),
+              server_id: String(role.server_id),
+              permissions: permBits(role.permissions),
+              is_everyone: Boolean(
+                role.is_everyone || role.name === "@everyone",
+              ),
+            })),
+          },
           rulesByServer: { ...s.rulesByServer, [serverId]: rules },
           overwritesByChannel,
           authors,
@@ -1021,6 +1048,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     }));
   },
 
+  transferOwnership: async (serverId, userId) => {
+    const server = await api<Server>(
+      `/api/servers/${serverId}/transfer-ownership`,
+      {
+        method: "POST",
+        body: { user_id: userId },
+      },
+    );
+    set((s) => ({
+      servers: s.servers.map((x) => (x.id === serverId ? server : x)),
+    }));
+  },
+
   deleteServer: async (id) => {
     await api(`/api/servers/${id}`, { method: "DELETE" });
     const state = get();
@@ -1068,7 +1108,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...s.rolesByServer,
         [serverId]: roles.map((role) => ({
           ...role,
-          permissions: Number(role.permissions) || 0,
+          id: String(role.id),
+          server_id: String(role.server_id),
+          permissions: permBits(role.permissions),
+          is_everyone: Boolean(
+            role.is_everyone || role.name === "@everyone",
+          ),
         })),
       },
     }));
@@ -1251,6 +1296,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     } finally {
       pendingChannelCreates.delete(key);
     }
+  },
+
+  duplicateChannel: async (id) => {
+    const channel = await api<Channel>(`/api/channels/${id}/duplicate`, {
+      method: "POST",
+    });
+    set((s) => {
+      const list = s.channelsByServer[channel.server_id] || [];
+      return {
+        channelsByServer: {
+          ...s.channelsByServer,
+          [channel.server_id]: upsertChannelList(list, channel),
+        },
+      };
+    });
+    void get().loadChannelOverwrites(channel.id).catch(() => {});
+    return channel;
   },
 
   updateChannel: async (id, body) => {
@@ -1614,6 +1676,32 @@ export const useAppStore = create<AppState>((set, get) => ({
       },
       voiceStates: s.voiceStates.filter((v) => v.user_id !== userId),
     }));
+  },
+
+  timeoutMember: async (serverId, userId, body) => {
+    const member = await api<Member>(
+      `/api/servers/${serverId}/members/${userId}/timeout`,
+      {
+        method: "PUT",
+        body,
+      },
+    );
+    set((s) => ({
+      authors: { ...s.authors, [member.user.id]: member.user },
+      membersByServer: {
+        ...s.membersByServer,
+        [serverId]: [
+          ...(s.membersByServer[serverId] || []).filter(
+            (m) => m.user.id !== userId,
+          ),
+          member,
+        ],
+      },
+      voiceStates: member.timeout_until
+        ? s.voiceStates.filter((v) => v.user_id !== userId)
+        : s.voiceStates,
+    }));
+    return member;
   },
 
   moderateMemberVoice: async (serverId, userId, body) => {
@@ -2032,7 +2120,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       case "server_update":
         set((s) => ({
           servers: s.servers.map((x) =>
-            x.id === event.server.id ? event.server : x,
+            sameId(x.id, event.server.id) ? event.server : x,
           ),
         }));
         break;
@@ -2061,6 +2149,23 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
         break;
       }
+      case "member_update":
+        set((s) => ({
+          authors: { ...s.authors, [event.member.user.id]: event.member.user },
+          membersByServer: {
+            ...s.membersByServer,
+            [event.member.server_id]: [
+              ...(s.membersByServer[event.member.server_id] || []).filter(
+                (m) => m.user.id !== event.member.user.id,
+              ),
+              event.member,
+            ],
+          },
+          voiceStates: event.member.timeout_until
+            ? s.voiceStates.filter((v) => v.user_id !== event.member.user.id)
+            : s.voiceStates,
+        }));
+        break;
       case "server_invite": {
         set({
           pendingServerInvite: {

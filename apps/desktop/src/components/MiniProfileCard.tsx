@@ -4,9 +4,11 @@ import {
   useMemo,
   useRef,
   useState,
+  type FormEvent,
   type MouseEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import { insertAtCursor } from "../lib/emojis";
 import { mediaCssUrl, mediaUrl } from "../lib/mediaUrl";
 import {
   assignableRoles,
@@ -14,9 +16,12 @@ import {
   canRemoveRoleFromMember,
   effectiveServerPerms,
   isEveryoneRole,
+  sameId,
 } from "../lib/serverPerms";
 import { useAppStore } from "../store/appStore";
 import type { PresenceStatus, Role, UserPublic } from "../types";
+import { EmojiPickerButton } from "./EmojiPickerButton";
+import { OwnerCrown } from "./OwnerCrown";
 
 function resolveUser(
   userId: string,
@@ -26,24 +31,28 @@ function resolveUser(
   friends: { peer: UserPublic }[],
   dmChannels: { peer: UserPublic }[],
 ): UserPublic | null {
-  if (me?.id === userId) return me;
-  const fromMembers = members.find((m) => m.user.id === userId)?.user;
+  if (me && sameId(me.id, userId)) return me;
+  const fromMembers = members.find((m) => sameId(m.user.id, userId))?.user;
   if (fromMembers) return fromMembers;
-  if (authors[userId]) return authors[userId];
-  const friend = friends.find((f) => f.peer.id === userId)?.peer;
+  const authorKey = Object.keys(authors).find((id) => sameId(id, userId));
+  if (authorKey) return authors[authorKey];
+  const friend = friends.find((f) => sameId(f.peer.id, userId))?.peer;
   if (friend) return friend;
-  return dmChannels.find((d) => d.peer.id === userId)?.peer || null;
+  return dmChannels.find((d) => sameId(d.peer.id, userId))?.peer || null;
 }
 
 function memberRoles(roleIds: string[], roles: Role[]): Role[] {
   return roles
-    .filter((r) => !r.is_everyone && roleIds.includes(r.id))
+    .filter(
+      (r) =>
+        !isEveryoneRole(r) && roleIds.some((id) => sameId(id, r.id)),
+    )
     .sort((a, b) => b.position - a.position);
 }
 
 function editableRoleIds(roleIds: string[], roles: Role[]): string[] {
   return roleIds.filter((id) => {
-    const role = roles.find((r) => r.id === id);
+    const role = roles.find((r) => sameId(r.id, id));
     return role && !isEveryoneRole(role);
   });
 }
@@ -63,26 +72,36 @@ export function MiniProfileCard() {
   const presenceByUser = useAppStore((s) => s.presenceByUser);
   const myStatus = useAppStore((s) => s.myStatus);
   const openDmWithPeer = useAppStore((s) => s.openDmWithPeer);
+  const sendDmMessage = useAppStore((s) => s.sendDmMessage);
 
   const panelRef = useRef<HTMLDivElement>(null);
   const roleMenuRef = useRef<HTMLDivElement>(null);
+  const msgInputRef = useRef<HTMLInputElement>(null);
   const [roleMenuOpen, setRoleMenuOpen] = useState(false);
   const [roleBusy, setRoleBusy] = useState(false);
   const [roleError, setRoleError] = useState<string | null>(null);
+  const [msgDraft, setMsgDraft] = useState("");
+  const [msgBusy, setMsgBusy] = useState(false);
 
-  const members = miniProfile?.serverId
-    ? membersByServer[miniProfile.serverId] || []
-    : [];
-  const roles = miniProfile?.serverId
-    ? rolesByServer[miniProfile.serverId] || []
-    : [];
+  const membersKey = miniProfile?.serverId
+    ? Object.keys(membersByServer).find((id) =>
+        sameId(id, miniProfile.serverId),
+      )
+    : undefined;
+  const rolesKey = miniProfile?.serverId
+    ? Object.keys(rolesByServer).find((id) =>
+        sameId(id, miniProfile.serverId),
+      )
+    : undefined;
+  const members = membersKey ? membersByServer[membersKey] || [] : [];
+  const roles = rolesKey ? rolesByServer[rolesKey] || [] : [];
   const server = miniProfile?.serverId
-    ? servers.find((s) => s.id === miniProfile.serverId)
+    ? servers.find((s) => sameId(s.id, miniProfile.serverId))
     : undefined;
   const member = miniProfile
-    ? members.find((m) => m.user.id === miniProfile.userId)
+    ? members.find((m) => sameId(m.user.id, miniProfile.userId))
     : undefined;
-  const meMember = members.find((m) => m.user.id === me?.id);
+  const meMember = members.find((m) => sameId(m.user.id, me?.id));
 
   const profile = useMemo(() => {
     if (!miniProfile) return null;
@@ -128,6 +147,8 @@ export function MiniProfileCard() {
   useEffect(() => {
     setRoleMenuOpen(false);
     setRoleError(null);
+    setMsgDraft("");
+    setMsgBusy(false);
   }, [miniProfile?.userId, miniProfile?.serverId]);
 
   useEffect(() => {
@@ -179,7 +200,10 @@ export function MiniProfileCard() {
 
   if (!miniProfile || !profile) return null;
 
-  const isSelf = me?.id === profile.id;
+  const isSelf = sameId(me?.id, profile.id);
+  const isOwner = Boolean(
+    server && sameId(server.owner_id, profile.id),
+  );
   const status: PresenceStatus = isSelf
     ? myStatus
     : presenceByUser[profile.id] || "offline";
@@ -219,12 +243,22 @@ export function MiniProfileCard() {
     await updateRoles(member.role_ids.filter((id) => id !== roleId));
   }
 
-  async function messageUser() {
-    closeMiniProfile();
+  async function messageUser(e?: FormEvent) {
+    e?.preventDefault();
+    if (!profile || msgBusy) return;
+    const text = msgDraft.trim();
+    setMsgBusy(true);
     try {
-      await openDmWithPeer(profile!.id);
+      await openDmWithPeer(profile.id);
+      if (text) {
+        const dmId = useAppStore.getState().activeDmId;
+        if (dmId) await sendDmMessage(dmId, text);
+      }
+      closeMiniProfile();
     } catch {
       /* ignore — friendship may be required */
+    } finally {
+      setMsgBusy(false);
     }
   }
 
@@ -269,7 +303,14 @@ export function MiniProfileCard() {
 
       <div className="mini-profile-body">
         <div className="mini-profile-identity">
-          <strong className="mini-profile-display">{display}</strong>
+          <strong className="mini-profile-display">
+            <span className="mini-profile-display-text">{display}</span>
+            {isOwner && (
+              <span className="owner-crown-wrap" title="Server Owner">
+                <OwnerCrown />
+              </span>
+            )}
+          </strong>
           <span className="mini-profile-username">@{profile.username}</span>
         </div>
 
@@ -368,13 +409,50 @@ export function MiniProfileCard() {
               Edit Profile
             </button>
           ) : (
-            <button
-              type="button"
-              className="btn primary mini-profile-edit"
-              onClick={() => void messageUser()}
+            <form
+              className="mini-profile-msg"
+              onSubmit={(e) => void messageUser(e)}
             >
-              Message
-            </button>
+              <input
+                ref={msgInputRef}
+                type="text"
+                className="mini-profile-msg-input"
+                placeholder={`Message @${profile.username}`}
+                value={msgDraft}
+                disabled={msgBusy}
+                maxLength={2000}
+                onChange={(e) => setMsgDraft(e.target.value)}
+                aria-label={`Message @${profile.username}`}
+              />
+              <EmojiPickerButton
+                className="mini-profile-msg-emoji"
+                placement="up"
+                title="Emoji"
+                onPick={(emoji) => {
+                  const el = msgInputRef.current;
+                  const start = el?.selectionStart ?? msgDraft.length;
+                  const end = el?.selectionEnd ?? msgDraft.length;
+                  const { next, caret } = insertAtCursor(
+                    msgDraft,
+                    emoji,
+                    start,
+                    end,
+                  );
+                  setMsgDraft(next);
+                  requestAnimationFrame(() => {
+                    el?.focus();
+                    el?.setSelectionRange(caret, caret);
+                  });
+                }}
+              >
+                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden>
+                  <path
+                    fill="currentColor"
+                    d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8Zm3.5-9a1.5 1.5 0 1 0-1.5-1.5A1.5 1.5 0 0 0 15.5 11Zm-7 0A1.5 1.5 0 1 0 7 9.5 1.5 1.5 0 0 0 8.5 11ZM12 17.5A5.3 5.3 0 0 0 16.9 15a1 1 0 0 0-1.6-1.2 3.4 3.4 0 0 1-5.6 0A1 1 0 1 0 8.1 15 5.3 5.3 0 0 0 12 17.5Z"
+                  />
+                </svg>
+              </EmojiPickerButton>
+            </form>
           )}
         </div>
       </div>

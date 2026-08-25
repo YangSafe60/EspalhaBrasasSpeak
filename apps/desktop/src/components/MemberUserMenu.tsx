@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type FormEvent,
   type MouseEvent,
   type ReactNode,
 } from "react";
@@ -14,6 +15,7 @@ import {
   effectiveServerPerms,
   hasPerm,
   Perm,
+  sameId,
 } from "../lib/serverPerms";
 import {
   getUserVoicePref,
@@ -36,8 +38,28 @@ type MenuState = {
   pref: UserVoicePref;
 } | null;
 
+type TimeoutDraft = {
+  userId: string;
+  label: string;
+};
+
+const TIMEOUT_PRESETS: { label: string; seconds: number }[] = [
+  { label: "60 secs", seconds: 60 },
+  { label: "5 mins", seconds: 5 * 60 },
+  { label: "10 mins", seconds: 10 * 60 },
+  { label: "1 hour", seconds: 60 * 60 },
+  { label: "1 day", seconds: 24 * 60 * 60 },
+  { label: "1 week", seconds: 7 * 24 * 60 * 60 },
+];
+
 function displayName(m: Member): string {
   return m.nickname || m.user.display_name || m.user.username;
+}
+
+function isTimedOut(member: Member | undefined): boolean {
+  if (!member?.timeout_until) return false;
+  const t = Date.parse(member.timeout_until);
+  return Number.isFinite(t) && t > Date.now();
 }
 
 export function useMemberContextMenu(voice?: MemberVoiceHandlers) {
@@ -49,22 +71,39 @@ export function useMemberContextMenu(voice?: MemberVoiceHandlers) {
   const user = useAppStore((s) => s.user);
   const kickMember = useAppStore((s) => s.kickMember);
   const banMember = useAppStore((s) => s.banMember);
+  const timeoutMember = useAppStore((s) => s.timeoutMember);
   const moderateMemberVoice = useAppStore((s) => s.moderateMemberVoice);
+  const transferOwnership = useAppStore((s) => s.transferOwnership);
   const blockUser = useAppStore((s) => s.blockUser);
 
   const [menu, setMenu] = useState<MenuState>(null);
+  const [timeoutDraft, setTimeoutDraft] = useState<TimeoutDraft | null>(null);
+  const [transferDraft, setTransferDraft] = useState<TimeoutDraft | null>(
+    null,
+  );
+  const [durationKey, setDurationKey] = useState<string>("60");
+  const [customDays, setCustomDays] = useState("1");
+  const [reason, setReason] = useState("");
+  const [timeoutBusy, setTimeoutBusy] = useState(false);
+  const [timeoutErr, setTimeoutErr] = useState<string | null>(null);
+  const [transferBusy, setTransferBusy] = useState(false);
+  const [transferErr, setTransferErr] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
   const members = activeServerId
     ? membersByServer[activeServerId] || []
     : [];
   const roles = activeServerId ? rolesByServer[activeServerId] || [] : [];
-  const server = servers.find((s) => s.id === activeServerId);
-  const me = members.find((m) => m.user.id === user?.id);
+  const server = servers.find((s) => sameId(s.id, activeServerId));
+  const me = members.find((m) => sameId(m.user.id, user?.id));
   const myPerms = useMemo(
     () => effectiveServerPerms(server, roles, me, user?.id),
     [server, roles, me, user?.id],
   );
+  const iAmOwner = Boolean(server && sameId(server.owner_id, user?.id));
+
+  const canTimeout =
+    hasPerm(myPerms, Perm.MUTE_MEMBERS) || hasPerm(myPerms, Perm.KICK_MEMBERS);
 
   const closeMenu = useCallback(() => setMenu(null), []);
 
@@ -86,7 +125,6 @@ export function useMemberContextMenu(voice?: MemberVoiceHandlers) {
     };
   }, [menu, closeMenu]);
 
-  // Keep the panel inside the window (member list is on the right edge).
   useLayoutEffect(() => {
     if (!menu) return;
     const el = panelRef.current;
@@ -111,7 +149,7 @@ export function useMemberContextMenu(voice?: MemberVoiceHandlers) {
     (e: MouseEvent, member: Member) => {
       e.preventDefault();
       e.stopPropagation();
-      if (member.user.id === user?.id) return;
+      if (sameId(member.user.id, user?.id)) return;
       setMenu({
         x: e.clientX,
         y: e.clientY,
@@ -128,8 +166,8 @@ export function useMemberContextMenu(voice?: MemberVoiceHandlers) {
     (e: MouseEvent, userId: string, label: string, username?: string) => {
       e.preventDefault();
       e.stopPropagation();
-      if (userId === user?.id) return;
-      const member = members.find((m) => m.user.id === userId);
+      if (sameId(userId, user?.id)) return;
+      const member = members.find((m) => sameId(m.user.id, userId));
       setMenu({
         x: e.clientX,
         y: e.clientY,
@@ -152,9 +190,89 @@ export function useMemberContextMenu(voice?: MemberVoiceHandlers) {
     }
   }
 
+  function openTimeoutModal(userId: string, label: string) {
+    setTimeoutDraft({ userId, label });
+    setDurationKey("60");
+    setCustomDays("1");
+    setReason("");
+    setTimeoutErr(null);
+    setTimeoutBusy(false);
+    closeMenu();
+  }
+
+  function resolveDurationSeconds(): number | null {
+    if (durationKey === "custom") {
+      const days = Math.floor(Number(customDays));
+      if (!Number.isFinite(days) || days < 1 || days > 365) return null;
+      return days * 24 * 60 * 60;
+    }
+    const n = Number(durationKey);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+
+  async function submitTimeout(e: FormEvent) {
+    e.preventDefault();
+    if (!timeoutDraft || !activeServerId) return;
+    const secs = resolveDurationSeconds();
+    if (secs == null) {
+      setTimeoutErr("Enter a valid custom duration (1–365 days).");
+      return;
+    }
+    setTimeoutBusy(true);
+    setTimeoutErr(null);
+    try {
+      await timeoutMember(activeServerId, timeoutDraft.userId, {
+        duration_seconds: secs,
+        reason: reason.trim() || undefined,
+      });
+      setTimeoutDraft(null);
+    } catch (err) {
+      setTimeoutErr(err instanceof Error ? err.message : "Timeout failed");
+    } finally {
+      setTimeoutBusy(false);
+    }
+  }
+
+  async function clearTimeoutFor(userId: string) {
+    if (!activeServerId) return;
+    try {
+      await timeoutMember(activeServerId, userId, { clear: true });
+    } catch {
+      /* ignore */
+    }
+    closeMenu();
+  }
+
+  function openTransferModal(userId: string, label: string) {
+    setTransferDraft({ userId, label });
+    setTransferErr(null);
+    setTransferBusy(false);
+    closeMenu();
+  }
+
+  async function confirmTransfer() {
+    if (!transferDraft || !activeServerId) return;
+    setTransferBusy(true);
+    setTransferErr(null);
+    try {
+      await transferOwnership(activeServerId, transferDraft.userId);
+      setTransferDraft(null);
+    } catch (err) {
+      setTransferErr(
+        err instanceof Error ? err.message : "Transfer failed",
+      );
+    } finally {
+      setTransferBusy(false);
+    }
+  }
+
   const targetVoice = menu
-    ? voiceStates.find((v) => v.user_id === menu.userId)
+    ? voiceStates.find((v) => sameId(v.user_id, menu.userId))
     : undefined;
+  const targetMember = menu
+    ? members.find((m) => sameId(m.user.id, menu.userId))
+    : undefined;
+  const targetTimedOut = isTimedOut(targetMember);
 
   const menuPortal: ReactNode =
     menu &&
@@ -215,7 +333,7 @@ export function useMemberContextMenu(voice?: MemberVoiceHandlers) {
             <div className="member-ctx-sep" />
             <button
               type="button"
-              className="ctx-menu-item"
+              className="ctx-menu-item danger"
               onClick={() => {
                 void moderateMemberVoice(activeServerId, menu.userId, {
                   server_muted: !targetVoice?.server_muted,
@@ -227,7 +345,7 @@ export function useMemberContextMenu(voice?: MemberVoiceHandlers) {
             </button>
             <button
               type="button"
-              className="ctx-menu-item"
+              className="ctx-menu-item danger"
               onClick={() => {
                 void moderateMemberVoice(activeServerId, menu.userId, {
                   server_deafened: !targetVoice?.server_deafened,
@@ -239,6 +357,28 @@ export function useMemberContextMenu(voice?: MemberVoiceHandlers) {
                 ? "Server undeafen"
                 : "Server deafen"}
             </button>
+          </>
+        )}
+        {canTimeout && (
+          <>
+            <div className="member-ctx-sep" />
+            {targetTimedOut ? (
+              <button
+                type="button"
+                className="ctx-menu-item"
+                onClick={() => void clearTimeoutFor(menu.userId)}
+              >
+                Remove timeout
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="ctx-menu-item danger"
+                onClick={() => openTimeoutModal(menu.userId, menu.label)}
+              >
+                Timeout
+              </button>
+            )}
           </>
         )}
         {(hasPerm(myPerms, Perm.KICK_MEMBERS) ||
@@ -269,9 +409,186 @@ export function useMemberContextMenu(voice?: MemberVoiceHandlers) {
             Ban
           </button>
         )}
+        {iAmOwner && (
+          <>
+            <div className="member-ctx-sep" />
+            <button
+              type="button"
+              className="ctx-menu-item"
+              onClick={() => openTransferModal(menu.userId, menu.label)}
+            >
+              Transfer ownership
+            </button>
+          </>
+        )}
       </div>,
       document.body,
     );
 
-  return { openForMember, openForUserId, menuPortal };
+  const timeoutPortal: ReactNode =
+    timeoutDraft &&
+    createPortal(
+      <div
+        className="modal-backdrop"
+        onClick={() => !timeoutBusy && setTimeoutDraft(null)}
+      >
+        <div
+          className="modal timeout-modal"
+          onClick={(e) => e.stopPropagation()}
+          role="dialog"
+          aria-label={`Timeout ${timeoutDraft.label}`}
+        >
+          <header className="modal-header">
+            <h3>Timeout {timeoutDraft.label}</h3>
+            <button
+              type="button"
+              className="icon-btn"
+              disabled={timeoutBusy}
+              onClick={() => setTimeoutDraft(null)}
+            >
+              ✕
+            </button>
+          </header>
+          <p className="muted tiny timeout-modal-desc">
+            Members who are in timeout are temporarily not allowed to chat or
+            react in text channels. They are also not allowed to connect to
+            voice channels.
+          </p>
+          <form className="stack" onSubmit={(e) => void submitTimeout(e)}>
+            <div className="timeout-duration">
+              <span className="settings-nav-label">Duration</span>
+              <div className="timeout-pills">
+                {TIMEOUT_PRESETS.map((p) => (
+                  <button
+                    key={p.seconds}
+                    type="button"
+                    className={`timeout-pill${durationKey === String(p.seconds) ? " on" : ""}`}
+                    onClick={() => setDurationKey(String(p.seconds))}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className={`timeout-pill${durationKey === "custom" ? " on" : ""}`}
+                  onClick={() => setDurationKey("custom")}
+                >
+                  Custom days
+                </button>
+              </div>
+              {durationKey === "custom" && (
+                <label className="timeout-custom-days">
+                  Days
+                  <input
+                    type="number"
+                    min={1}
+                    max={365}
+                    step={1}
+                    value={customDays}
+                    onChange={(e) => setCustomDays(e.target.value)}
+                    required
+                  />
+                </label>
+              )}
+            </div>
+            <label>
+              Reason
+              <textarea
+                rows={3}
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="Enter a reason (optional — not shown to the member)."
+                maxLength={500}
+              />
+            </label>
+            {timeoutErr && <p className="form-error">{timeoutErr}</p>}
+            <div className="row">
+              <button
+                type="button"
+                className="btn ghost"
+                disabled={timeoutBusy}
+                onClick={() => setTimeoutDraft(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="btn primary"
+                disabled={timeoutBusy}
+              >
+                {timeoutBusy ? "Timing out…" : "Timeout"}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>,
+      document.body,
+    );
+
+  const transferPortal: ReactNode =
+    transferDraft &&
+    createPortal(
+      <div
+        className="modal-backdrop"
+        onClick={() => !transferBusy && setTransferDraft(null)}
+      >
+        <div
+          className="modal"
+          onClick={(e) => e.stopPropagation()}
+          role="dialog"
+          aria-label="Transfer server ownership"
+        >
+          <header className="modal-header">
+            <h2>Transfer ownership</h2>
+            <button
+              type="button"
+              className="icon-btn"
+              disabled={transferBusy}
+              onClick={() => setTransferDraft(null)}
+              aria-label="Close"
+            >
+              ×
+            </button>
+          </header>
+          <div className="modal-body">
+            <p>
+              Make <strong>{transferDraft.label}</strong> the owner of this
+              server? You will lose owner privileges immediately.
+            </p>
+            {transferErr && <p className="form-error">{transferErr}</p>}
+            <div className="row">
+              <button
+                type="button"
+                className="btn ghost"
+                disabled={transferBusy}
+                onClick={() => setTransferDraft(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={transferBusy}
+                onClick={() => void confirmTransfer()}
+              >
+                {transferBusy ? "Transferring…" : "Transfer ownership"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>,
+      document.body,
+    );
+
+  return {
+    openForMember,
+    openForUserId,
+    menuPortal: (
+      <>
+        {menuPortal}
+        {timeoutPortal}
+        {transferPortal}
+      </>
+    ),
+  };
 }

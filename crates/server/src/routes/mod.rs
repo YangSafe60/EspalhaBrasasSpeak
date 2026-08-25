@@ -145,6 +145,10 @@ pub fn router(state: AppState) -> Router {
             "/api/servers/{id}",
             get(servers::get).patch(servers::update).delete(servers::delete),
         )
+        .route(
+            "/api/servers/{id}/transfer-ownership",
+            post(servers::transfer_ownership),
+        )
         .route("/api/servers/{id}/members", get(servers::list_members))
         .route("/api/servers/{id}/presence", get(servers::list_presence))
         .route(
@@ -154,6 +158,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/servers/{id}/members/{user_id}/voice",
             put(servers::moderate_voice),
+        )
+        .route(
+            "/api/servers/{id}/members/{user_id}/timeout",
+            put(servers::timeout_member),
         )
         .route("/api/users/{user_id}/block", post(friends::block_user))
         .route("/api/servers/{id}/bans", get(servers::list_bans).post(servers::ban_member))
@@ -219,6 +227,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/channels/{id}",
             get(channels::get).patch(channels::update).delete(channels::delete),
+        )
+        .route(
+            "/api/channels/{id}/duplicate",
+            post(channels::duplicate),
         )
         .route(
             "/api/channels/{id}/overwrites",

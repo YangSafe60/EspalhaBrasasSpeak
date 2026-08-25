@@ -71,7 +71,6 @@ export function MessageView() {
   const resolveCustomEmojis = useAppStore((s) => s.resolveCustomEmojis);
   const uploadFile = useAppStore((s) => s.uploadFile);
   const attachRemoteMedia = useAppStore((s) => s.attachRemoteMedia);
-  const setModal = useAppStore((s) => s.setModal);
   const servers = useAppStore((s) => s.servers);
   const membersByServer = useAppStore((s) => s.membersByServer);
   const rolesByServer = useAppStore((s) => s.rolesByServer);
@@ -84,6 +83,8 @@ export function MessageView() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
   const [pendingDelete, setPendingDelete] = useState<Message | null>(null);
+  const [pendingBulkDelete, setPendingBulkDelete] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [deleting, setDeleting] = useState(false);
   const [mentionIndex, setMentionIndex] = useState(0);
   const [mentionQuery, setMentionQuery] = useState<{
@@ -117,7 +118,6 @@ export function MessageView() {
     () => effectiveServerPerms(server, roles, me, user?.id),
     [server, roles, me, user?.id],
   );
-  const canManageChannels = hasPerm(myPerms, Perm.MANAGE_CHANNELS);
   const canMentionEveryone = hasPerm(myPerms, Perm.MENTION_EVERYONE);
 
   const mentionCtx = useMemo(
@@ -152,7 +152,32 @@ export function MessageView() {
     setEditingId(null);
     setEditDraft("");
     setMentionQuery(null);
+    setSelectedIds(new Set());
+    setPendingBulkDelete(false);
+    setPendingDelete(null);
   }, [activeChannelId]);
+
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape" && selectedIds.size > 0) {
+        setSelectedIds(new Set());
+        return;
+      }
+      if (
+        (e.key === "Delete" || e.key === "Backspace") &&
+        selectedIds.size > 0 &&
+        !editingId
+      ) {
+        const tag = (e.target as HTMLElement)?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA") return;
+        e.preventDefault();
+        setPendingDelete(null);
+        setPendingBulkDelete(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedIds, editingId]);
 
   useEffect(() => {
     for (const m of messages) {
@@ -306,19 +331,61 @@ export function MessageView() {
   }
 
   async function removeMessage(m: Message) {
+    if (selectedIds.size > 1 && selectedIds.has(m.id)) {
+      setPendingDelete(null);
+      setPendingBulkDelete(true);
+      return;
+    }
+    setPendingBulkDelete(false);
     setPendingDelete(m);
   }
 
+  function toggleMessageSelect(m: Message, e: MouseEvent) {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (m.author_id !== user?.id) return;
+    const t = e.target as HTMLElement;
+    if (t.closest("button, a, input, textarea, .emoji-picker-root")) return;
+    e.preventDefault();
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(m.id)) next.delete(m.id);
+      else next.add(m.id);
+      return next;
+    });
+  }
+
   async function confirmDelete() {
-    if (!pendingDelete) return;
     setDeleting(true);
     try {
-      await deleteMessage(pendingDelete.id, pendingDelete.channel_id);
-      if (editingId === pendingDelete.id) {
-        setEditingId(null);
-        setEditDraft("");
+      if (pendingBulkDelete) {
+        const channelId = activeChannelId;
+        if (!channelId) return;
+        const toDelete = messages.filter(
+          (m) => selectedIds.has(m.id) && m.author_id === user?.id,
+        );
+        await Promise.all(
+          toDelete.map((m) => deleteMessage(m.id, m.channel_id)),
+        );
+        if (editingId && selectedIds.has(editingId)) {
+          setEditingId(null);
+          setEditDraft("");
+        }
+        setSelectedIds(new Set());
+        setPendingBulkDelete(false);
+      } else if (pendingDelete) {
+        await deleteMessage(pendingDelete.id, pendingDelete.channel_id);
+        if (editingId === pendingDelete.id) {
+          setEditingId(null);
+          setEditDraft("");
+        }
+        setSelectedIds((prev) => {
+          if (!prev.has(pendingDelete.id)) return prev;
+          const next = new Set(prev);
+          next.delete(pendingDelete.id);
+          return next;
+        });
+        setPendingDelete(null);
       }
-      setPendingDelete(null);
     } finally {
       setDeleting(false);
     }
@@ -338,15 +405,6 @@ export function MessageView() {
           </h2>
           {channel.topic && <p className="topic">{channel.topic}</p>}
         </div>
-        {canManageChannels && (
-          <button
-            type="button"
-            className="btn ghost sm"
-            onClick={() => setModal("channel-settings", channel.id)}
-          >
-            Channel settings
-          </button>
-        )}
       </header>
 
       <div className="message-list">
@@ -356,12 +414,14 @@ export function MessageView() {
           const isGroupStart = shouldStartGroup(prev, m);
           const mine = user?.id === m.author_id;
           const editing = editingId === m.id;
+          const selected = selectedIds.has(m.id);
           const mentioned = messageMentionsMe(m.content || "", mentionCtx);
 
           return (
             <article
               key={m.id}
-              className={`message ${isGroupStart ? "group-start" : "grouped"}${mentioned ? " mentioned" : ""}`}
+              className={`message ${isGroupStart ? "group-start" : "grouped"}${mentioned ? " mentioned" : ""}${selected ? " selected" : ""}`}
+              onClick={(e) => toggleMessageSelect(m, e)}
             >
               <div className="avatar-col">
                 {isGroupStart ? (
@@ -596,6 +656,34 @@ export function MessageView() {
         <div ref={bottomRef} />
       </div>
 
+      {selectedIds.size > 0 && (
+        <div className="message-selection-bar" role="status">
+          <span>
+            {selectedIds.size} message{selectedIds.size === 1 ? "" : "s"}{" "}
+            selected
+          </span>
+          <div className="row">
+            <button
+              type="button"
+              className="btn ghost sm"
+              onClick={() => setSelectedIds(new Set())}
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              className="btn danger sm"
+              onClick={() => {
+                setPendingDelete(null);
+                setPendingBulkDelete(true);
+              }}
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="composer-wrap">
         {mentionQuery && mentionSuggestions.length > 0 && (
           <div className="mention-autocomplete" role="listbox">
@@ -744,20 +832,30 @@ export function MessageView() {
       </div>
 
       <ConfirmDialog
-        open={!!pendingDelete}
-        title="Delete message?"
-        description={
-          pendingDelete?.content
-            ? `“${pendingDelete.content.slice(0, 120)}${pendingDelete.content.length > 120 ? "…" : ""}” will be gone for everyone.`
-            : "This message will be permanently removed for everyone in the channel."
+        open={!!pendingDelete || pendingBulkDelete}
+        title={
+          pendingBulkDelete
+            ? `Delete ${selectedIds.size} message${selectedIds.size === 1 ? "" : "s"}?`
+            : "Delete message?"
         }
-        confirmLabel="Delete Message"
+        description={
+          pendingBulkDelete
+            ? "Selected messages will be permanently removed for everyone in the channel."
+            : pendingDelete?.content
+              ? `“${pendingDelete.content.slice(0, 120)}${pendingDelete.content.length > 120 ? "…" : ""}” will be gone for everyone.`
+              : "This message will be permanently removed for everyone in the channel."
+        }
+        confirmLabel={
+          pendingBulkDelete ? "Delete Messages" : "Delete Message"
+        }
         cancelLabel="Keep it"
         danger
         busy={deleting}
         onConfirm={() => void confirmDelete()}
         onCancel={() => {
-          if (!deleting) setPendingDelete(null);
+          if (deleting) return;
+          setPendingDelete(null);
+          setPendingBulkDelete(false);
         }}
       />
     </main>

@@ -55,6 +55,8 @@ export function DmMessageView() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
   const [pendingDelete, setPendingDelete] = useState<DmMessage | null>(null);
+  const [pendingBulkDelete, setPendingBulkDelete] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [deleting, setDeleting] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const typingTimer = useRef<number | null>(null);
@@ -77,7 +79,32 @@ export function DmMessageView() {
     setEditingId(null);
     setEditDraft("");
     setDraft("");
+    setSelectedIds(new Set());
+    setPendingBulkDelete(false);
+    setPendingDelete(null);
   }, [activeDmId]);
+
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape" && selectedIds.size > 0) {
+        setSelectedIds(new Set());
+        return;
+      }
+      if (
+        (e.key === "Delete" || e.key === "Backspace") &&
+        selectedIds.size > 0 &&
+        !editingId
+      ) {
+        const tag = (e.target as HTMLElement)?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA") return;
+        e.preventDefault();
+        setPendingDelete(null);
+        setPendingBulkDelete(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedIds, editingId]);
 
   if (!channel) {
     return (
@@ -144,6 +171,62 @@ export function DmMessageView() {
     }
   }
 
+  function toggleMessageSelect(m: DmMessage, e: MouseEvent) {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (m.author_id !== user?.id) return;
+    const t = e.target as HTMLElement;
+    if (t.closest("button, a, input, textarea, .emoji-picker-root")) return;
+    e.preventDefault();
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(m.id)) next.delete(m.id);
+      else next.add(m.id);
+      return next;
+    });
+  }
+
+  function requestDelete(m: DmMessage) {
+    if (selectedIds.size > 1 && selectedIds.has(m.id)) {
+      setPendingDelete(null);
+      setPendingBulkDelete(true);
+      return;
+    }
+    setPendingBulkDelete(false);
+    setPendingDelete(m);
+  }
+
+  async function confirmDelete() {
+    if (!activeDmId) return;
+    setDeleting(true);
+    try {
+      if (pendingBulkDelete) {
+        const toDelete = messages.filter(
+          (m) => selectedIds.has(m.id) && m.author_id === user?.id,
+        );
+        await Promise.all(
+          toDelete.map((m) => deleteDmMessage(m.id, activeDmId)),
+        );
+        if (editingId && selectedIds.has(editingId)) {
+          setEditingId(null);
+          setEditDraft("");
+        }
+        setSelectedIds(new Set());
+        setPendingBulkDelete(false);
+      } else if (pendingDelete) {
+        await deleteDmMessage(pendingDelete.id, activeDmId);
+        setSelectedIds((prev) => {
+          if (!prev.has(pendingDelete.id)) return prev;
+          const next = new Set(prev);
+          next.delete(pendingDelete.id);
+          return next;
+        });
+        setPendingDelete(null);
+      }
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <main className="message-view dm-message-view">
       <header className="message-header dm-header">
@@ -169,11 +252,13 @@ export function DmMessageView() {
           const isGroupStart = shouldStartGroup(prev, m);
           const mine = user?.id === m.author_id;
           const editing = editingId === m.id;
+          const selected = selectedIds.has(m.id);
 
           return (
             <article
               key={m.id}
-              className={`message ${isGroupStart ? "group-start" : "grouped"}`}
+              className={`message ${isGroupStart ? "group-start" : "grouped"}${selected ? " selected" : ""}`}
+              onClick={(e) => toggleMessageSelect(m, e)}
             >
               <div className="avatar-col">
                 {isGroupStart ? (
@@ -299,8 +384,8 @@ export function DmMessageView() {
                     </button>
                     <button
                       type="button"
-                      className="msg-action"
-                      onClick={() => setPendingDelete(m)}
+                      className="msg-action danger"
+                      onClick={() => requestDelete(m)}
                     >
                       Delete
                     </button>
@@ -312,6 +397,34 @@ export function DmMessageView() {
         })}
         <div ref={bottomRef} />
       </div>
+
+      {selectedIds.size > 0 && (
+        <div className="message-selection-bar" role="status">
+          <span>
+            {selectedIds.size} message{selectedIds.size === 1 ? "" : "s"}{" "}
+            selected
+          </span>
+          <div className="row">
+            <button
+              type="button"
+              className="btn ghost sm"
+              onClick={() => setSelectedIds(new Set())}
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              className="btn danger sm"
+              onClick={() => {
+                setPendingDelete(null);
+                setPendingBulkDelete(true);
+              }}
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="composer-wrap">
         {typers.length > 0 && (
@@ -347,19 +460,26 @@ export function DmMessageView() {
       </div>
 
       <ConfirmDialog
-        open={pendingDelete != null}
-        title="Delete message?"
-        description="This removes the ciphertext from the server for both of you."
-        confirmLabel="Delete"
+        open={pendingDelete != null || pendingBulkDelete}
+        title={
+          pendingBulkDelete
+            ? `Delete ${selectedIds.size} message${selectedIds.size === 1 ? "" : "s"}?`
+            : "Delete message?"
+        }
+        description={
+          pendingBulkDelete
+            ? "Selected messages will be removed from the server for both of you."
+            : "This removes the ciphertext from the server for both of you."
+        }
+        confirmLabel={pendingBulkDelete ? "Delete Messages" : "Delete"}
         busy={deleting}
-        onCancel={() => setPendingDelete(null)}
-        onConfirm={() => {
-          if (!pendingDelete || !activeDmId) return;
-          setDeleting(true);
-          void deleteDmMessage(pendingDelete.id, activeDmId)
-            .then(() => setPendingDelete(null))
-            .finally(() => setDeleting(false));
+        danger
+        onCancel={() => {
+          if (deleting) return;
+          setPendingDelete(null);
+          setPendingBulkDelete(false);
         }}
+        onConfirm={() => void confirmDelete()}
       />
     </main>
   );

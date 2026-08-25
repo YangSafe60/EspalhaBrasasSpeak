@@ -16,6 +16,7 @@ export function StatusPicker({ className }: Props) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ bottom: number; left: number } | null>(null);
 
   useEffect(() => {
@@ -24,9 +25,9 @@ export function StatusPicker({ className }: Props) {
       if (e.key === "Escape") setOpen(false);
     };
     const onDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const t = e.target as Node;
+      if (rootRef.current?.contains(t) || menuRef.current?.contains(t)) return;
+      setOpen(false);
     };
     window.addEventListener("keydown", onKey);
     window.addEventListener("mousedown", onDown);
@@ -54,7 +55,8 @@ export function StatusPicker({ className }: Props) {
   }, [open]);
 
   async function pick(status: PresenceStatus) {
-    if (status === myStatus || busy) {
+    if (busy) return;
+    if (status === myStatus) {
       setOpen(false);
       return;
     }
@@ -97,9 +99,11 @@ export function StatusPicker({ className }: Props) {
         pos &&
         createPortal(
           <div
+            ref={menuRef}
             className="status-picker-menu"
             style={{ bottom: pos.bottom, left: pos.left }}
             role="menu"
+            onMouseDown={(e) => e.stopPropagation()}
           >
             <p className="status-picker-heading">Set status</p>
             {PRESENCE_OPTIONS.map((opt) => (
@@ -109,7 +113,10 @@ export function StatusPicker({ className }: Props) {
                 role="menuitem"
                 className={`status-picker-item${myStatus === opt.status ? " active" : ""}`}
                 disabled={busy}
-                onClick={() => void pick(opt.status)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void pick(opt.status);
+                }}
               >
                 <span className={`status-dot status-${opt.status}`} />
                 <span className="status-picker-text">

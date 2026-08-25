@@ -11,8 +11,10 @@ export function ChannelInviteReceivedModal() {
 
   const by =
     invite.invited_by.display_name || invite.invited_by.username || "a friend";
-  const prefix = invite.channel.channel_type === "voice" ? "◎ " : "#";
-  const channelLabel = `${prefix}${invite.channel.name}`;
+  const channelLabel =
+    invite.channel.channel_type === "voice"
+      ? invite.channel.name
+      : `#${invite.channel.name}`;
 
   async function onJoin() {
     const { server, channel } = invite!;

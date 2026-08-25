@@ -29,6 +29,8 @@ import {
   useMemberContextMenu,
   type MemberVoiceHandlers,
 } from "./MemberUserMenu";
+import { OwnerCrown } from "./OwnerCrown";
+import { VoiceChannelIcon } from "./VoiceChannelIcon";
 
 type Props = {
   onJoinVoice: (channelId: string) => void;
@@ -40,6 +42,11 @@ type ChannelMenuState = {
   x: number;
   y: number;
   channel: Channel;
+} | null;
+
+type EmptySpaceMenuState = {
+  x: number;
+  y: number;
 } | null;
 
 type CreateDraft = {
@@ -153,6 +160,7 @@ export function ChannelSidebar({
   const openInvitePeople = useAppStore((s) => s.openInvitePeople);
   const openMiniProfile = useAppStore((s) => s.openMiniProfile);
   const createChannel = useAppStore((s) => s.createChannel);
+  const duplicateChannel = useAppStore((s) => s.duplicateChannel);
   const applyChannelOrder = useAppStore((s) => s.applyChannelOrder);
   const channelMutes = useAppStore((s) => s.channelMutes);
   const unreadByChannel = useAppStore((s) => s.unreadByChannel);
@@ -169,6 +177,7 @@ export function ChannelSidebar({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [channelMenu, setChannelMenu] = useState<ChannelMenuState>(null);
+  const [emptyMenu, setEmptyMenu] = useState<EmptySpaceMenuState>(null);
   const creatingRef = useRef(false);
 
   const [dragging, setDragging] = useState<DragPayload | null>(null);
@@ -228,9 +237,12 @@ export function ChannelSidebar({
   }, [activeServerId, channelsByServer]);
 
   const categories = channels.filter((c) => c.channel_type === "category");
-  const uncategorized = channels.filter(
-    (c) => c.channel_type !== "category" && !c.category_id,
-  );
+  const uncategorized = channels.filter((c) => {
+    if (c.channel_type === "category") return false;
+    if (!c.category_id) return true;
+    // Orphaned parent id → treat as uncategorized.
+    return !categories.some((cat) => sameId(cat.id, c.category_id));
+  });
 
   useEffect(() => {
     setCollapsed({});
@@ -238,6 +250,7 @@ export function ChannelSidebar({
     setDragging(null);
     setDropHint(null);
     setChannelMenu(null);
+    setEmptyMenu(null);
   }, [activeServerId]);
 
   useEffect(() => {
@@ -248,20 +261,25 @@ export function ChannelSidebar({
 
   function channelsIn(cat: Channel) {
     return channels.filter(
-      (c) => c.channel_type !== "category" && c.category_id === cat.id,
+      (c) =>
+        c.channel_type !== "category" && sameId(c.category_id, cat.id),
     );
   }
 
   function voiceUsers(channelId: string) {
+    const server = servers.find((s) => sameId(s.id, activeServerId));
     return voiceStates
       .filter((v) => v.channel_id === channelId)
       .map((v) => {
         const member = (activeServerId
           ? membersByServer[activeServerId] || []
           : []
-        ).find((m) => m.user.id === v.user_id);
+        ).find((m) => sameId(m.user.id, v.user_id));
         return {
           ...v,
+          isOwner: Boolean(
+            server && sameId(server.owner_id, v.user_id),
+          ),
           name:
             member?.nickname ||
             member?.user.display_name ||
@@ -327,8 +345,54 @@ export function ChannelSidebar({
   function openSettings(e: MouseEvent, channelId: string) {
     e.preventDefault();
     e.stopPropagation();
-    if (!canManageChannel(channelId)) return;
+    if (!canManageChannels && !canManageChannel(channelId)) return;
     setModal("channel-settings", channelId);
+  }
+
+  /** Uncategorized "Channels" header is not a real category — promote it so it can be edited. */
+  async function promoteUncategorized(e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!canManageChannels || !activeServerId || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const existing = categories.find(
+        (c) => c.name.trim().toLowerCase() === "channels",
+      );
+      const cat =
+        existing ||
+        (await createChannel(activeServerId, {
+          name: "Channels",
+          channel_type: "category",
+        }));
+      const latest =
+        useAppStore.getState().channelsByServer[activeServerId] || [];
+      const cats = latest.filter((c) => c.channel_type === "category");
+      const moving = latest.filter((c) => {
+        if (c.channel_type === "category") return false;
+        if (sameId(c.category_id, cat.id)) return false;
+        if (!c.category_id) return true;
+        return !cats.some((x) => sameId(x.id, c.category_id));
+      });
+      if (moving.length > 0) {
+        const moveIds = new Set(
+          moving.map((m) => m.id.replace(/-/g, "").toLowerCase()),
+        );
+        let pos = 0;
+        const ordered = latest.map((c) => {
+          const key = c.id.replace(/-/g, "").toLowerCase();
+          if (!moveIds.has(key)) return c;
+          return { ...c, category_id: cat.id, position: pos++ };
+        });
+        await applyChannelOrder(activeServerId, ordered);
+      }
+      setModal("channel-settings", cat.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to edit category");
+    } finally {
+      setBusy(false);
+    }
   }
 
   function toggleCollapse(key: string) {
@@ -506,9 +570,11 @@ export function ChannelSidebar({
           })
         }
         onContextMenu={(e) => {
-          if (ch.channel_type !== "text") return;
+          const canManage = canManageChannel(ch.id);
+          if (ch.channel_type !== "text" && !canManage) return;
           e.preventDefault();
           e.stopPropagation();
+          setEmptyMenu(null);
           setChannelMenu({ x: e.clientX, y: e.clientY, channel: ch });
         }}
       >
@@ -526,7 +592,7 @@ export function ChannelSidebar({
             className={`ch-icon${locked ? " is-locked" : ""}`}
             aria-label={locked ? "Private channel" : undefined}
           >
-            {ch.channel_type === "voice" ? "◎" : "#"}
+            {ch.channel_type === "voice" ? <VoiceChannelIcon size={15} /> : "#"}
             {locked ? (
               <svg
                 className="ch-lock"
@@ -638,7 +704,14 @@ export function ChannelSidebar({
                     >
                       {!avatar && (u.name.charAt(0) || "?").toUpperCase()}
                     </span>
-                    <span className="voice-user-name">{u.name}</span>
+                    <span className="voice-user-name">
+                      {u.name}
+                      {u.isOwner && (
+                        <span className="owner-crown-wrap" title="Server Owner">
+                          <OwnerCrown />
+                        </span>
+                      )}
+                    </span>
                     <span className="voice-user-flags">
                       {u.streaming && (
                         <span className="vu-flag live" title="Screen sharing">
@@ -791,16 +864,28 @@ export function ChannelSidebar({
             >
               +
             </button>
-            {categoryId && canManageChannel(categoryId) && (
-              <button
-                type="button"
-                className="category-add"
-                title="Edit category"
-                onClick={(e) => openSettings(e, categoryId)}
-              >
-                ⚙
-              </button>
-            )}
+            {categoryId
+              ? canManageChannels && (
+                  <button
+                    type="button"
+                    className="category-add"
+                    title="Edit category"
+                    onClick={(e) => openSettings(e, categoryId)}
+                  >
+                    ⚙
+                  </button>
+                )
+              : canManageChannels && (
+                  <button
+                    type="button"
+                    className="category-add"
+                    title="Edit category"
+                    disabled={busy}
+                    onClick={(e) => void promoteUncategorized(e)}
+                  >
+                    ⚙
+                  </button>
+                )}
           </div>
         )}
       </div>
@@ -830,28 +915,17 @@ export function ChannelSidebar({
               title="Invite people"
               onClick={() => openInvitePeople()}
             >
-              ✉
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden>
+                <path
+                  fill="currentColor"
+                  d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-3.33 0-8 1.67-8 5v1h16v-1c0-3.33-4.67-5-8-5z"
+                />
+                <path
+                  fill="currentColor"
+                  d="M19 8h-2v2h-2v2h2v2h2v-2h2v-2h-2z"
+                />
+              </svg>
             </button>
-          )}
-          {canManageChannels && (
-            <>
-              <button
-                type="button"
-                className="icon-btn"
-                title="Create category"
-                onClick={openCreateCategory}
-              >
-                ▤
-              </button>
-              <button
-                type="button"
-                className="icon-btn"
-                title="Create channel"
-                onClick={() => openCreateChannel(null)}
-              >
-                +
-              </button>
-            </>
           )}
           {canOpenServerSettings && (
             <button
@@ -872,6 +946,20 @@ export function ChannelSidebar({
           if (!e.currentTarget.contains(e.relatedTarget as Node)) {
             setDropHint(null);
           }
+        }}
+        onContextMenu={(e) => {
+          if (!canManageChannels) return;
+          const target = e.target as Element;
+          if (
+            target.closest(
+              ".channel-row, .channel-block, .category-header, .voice-users, button, a, input",
+            )
+          ) {
+            return;
+          }
+          e.preventDefault();
+          setChannelMenu(null);
+          setEmptyMenu({ x: e.clientX, y: e.clientY });
         }}
       >
         {categories.map((cat) => {
@@ -926,6 +1014,13 @@ export function ChannelSidebar({
             {!collapsed.uncategorized && uncategorized.map(renderChannel)}
           </div>
         )}
+        {canManageChannels && (
+          <div
+            className="channel-scroll-empty"
+            aria-hidden
+            title="Right-click to create a channel"
+          />
+        )}
       </div>
 
       {draft &&
@@ -974,7 +1069,9 @@ export function ChannelSidebar({
                         className={channelType === "voice" ? "active" : ""}
                         onClick={() => setChannelType("voice")}
                       >
-                        <span className="ch-icon">◎</span>
+                        <span className="ch-icon">
+                          <VoiceChannelIcon size={15} />
+                        </span>
                         <span>
                           <strong>Voice</strong>
                           <em>Talk and screen share</em>
@@ -1026,22 +1123,32 @@ export function ChannelSidebar({
           onClose={() => setChannelMenu(null)}
           items={(() => {
             const ch = channelMenu.channel;
-            const muted = channelIsMuted(channelMutes, ch.id);
+            const muted =
+              ch.channel_type === "text" &&
+              channelIsMuted(channelMutes, ch.id);
             const items: ContextMenuItem[] = [];
-            if (muted) {
+            if (ch.channel_type === "text") {
+              if (muted) {
+                items.push({
+                  label: "Unmute Channel",
+                  onClick: () => unmuteChannel(ch.id),
+                });
+              }
               items.push({
-                label: "Unmute Channel",
-                onClick: () => unmuteChannel(ch.id),
+                label: muted ? "Change Mute Duration" : "Mute Channel",
+                children: MUTE_DURATIONS.map((d) => ({
+                  label: d.label,
+                  onClick: () => muteChannel(ch.id, d.ms),
+                })),
               });
             }
-            items.push({
-              label: muted ? "Change Mute Duration" : "Mute Channel",
-              children: MUTE_DURATIONS.map((d) => ({
-                label: d.label,
-                onClick: () => muteChannel(ch.id, d.ms),
-              })),
-            });
             if (canManageChannel(ch.id)) {
+              items.push({
+                label: "Duplicate Channel",
+                onClick: () => {
+                  void duplicateChannel(ch.id);
+                },
+              });
               items.push({
                 label: "Edit Channel",
                 onClick: () => setModal("channel-settings", ch.id),
@@ -1049,6 +1156,23 @@ export function ChannelSidebar({
             }
             return items;
           })()}
+        />
+      )}
+      {emptyMenu && canManageChannels && (
+        <ContextMenu
+          x={emptyMenu.x}
+          y={emptyMenu.y}
+          onClose={() => setEmptyMenu(null)}
+          items={[
+            {
+              label: "Create Channel",
+              onClick: () => openCreateChannel(null),
+            },
+            {
+              label: "Create Category",
+              onClick: () => openCreateCategory(),
+            },
+          ]}
         />
       )}
     </aside>

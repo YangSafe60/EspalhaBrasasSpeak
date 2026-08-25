@@ -1,11 +1,23 @@
-import { useMemo, type MouseEvent } from "react";
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { useAppStore } from "../store/appStore";
 import { mediaUrl } from "../lib/mediaUrl";
+import { sameId } from "../lib/serverPerms";
 import type { Member, PresenceStatus, Role } from "../types";
 import {
   useMemberContextMenu,
   type MemberVoiceHandlers,
 } from "./MemberUserMenu";
+import { OwnerCrown } from "./OwnerCrown";
+
+const MEMBERS_OPEN_KEY = "speakapp_members_panel_open";
+
+function readMembersOpen(): boolean {
+  try {
+    return localStorage.getItem(MEMBERS_OPEN_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
 
 function displayName(m: Member): string {
   return m.nickname || m.user.display_name || m.user.username;
@@ -22,12 +34,14 @@ function MemberRow({
   member,
   status,
   color,
+  isOwner,
   onOpen,
   onContext,
 }: {
   member: Member;
   status: PresenceStatus;
   color?: string;
+  isOwner?: boolean;
   onOpen: (e: MouseEvent, member: Member) => void;
   onContext: (e: MouseEvent, member: Member) => void;
 }) {
@@ -58,8 +72,18 @@ function MemberRow({
         />
       </div>
       <div className="member-list-meta">
-        <span className="member-list-name" style={color ? { color } : undefined}>
-          {displayName(member)}
+        <span className="member-list-name-row">
+          <span
+            className="member-list-name"
+            style={color ? { color } : undefined}
+          >
+            {displayName(member)}
+          </span>
+          {isOwner && (
+            <span className="owner-crown-wrap" title="Server Owner">
+              <OwnerCrown />
+            </span>
+          )}
         </span>
         <span className="member-list-user muted">@{member.user.username}</span>
       </div>
@@ -69,6 +93,7 @@ function MemberRow({
 
 export function MemberList({ voice }: { voice?: MemberVoiceHandlers }) {
   const activeServerId = useAppStore((s) => s.activeServerId);
+  const servers = useAppStore((s) => s.servers);
   const membersByServer = useAppStore((s) => s.membersByServer);
   const rolesByServer = useAppStore((s) => s.rolesByServer);
   const presenceByUser = useAppStore((s) => s.presenceByUser);
@@ -76,11 +101,25 @@ export function MemberList({ voice }: { voice?: MemberVoiceHandlers }) {
   const user = useAppStore((s) => s.user);
   const openMiniProfile = useAppStore((s) => s.openMiniProfile);
   const { openForMember, menuPortal } = useMemberContextMenu(voice);
+  const [open, setOpen] = useState(readMembersOpen);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(MEMBERS_OPEN_KEY, open ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [open]);
+
+  const server = servers.find((s) => sameId(s.id, activeServerId));
   const members = activeServerId
     ? membersByServer[activeServerId] || []
     : [];
   const roles = activeServerId ? rolesByServer[activeServerId] || [] : [];
+
+  function isServerOwner(member: Member): boolean {
+    return Boolean(server && sameId(server.owner_id, member.user.id));
+  }
 
   const { online, offline } = useMemo(() => {
     const on: Member[] = [];
@@ -118,8 +157,45 @@ export function MemberList({ voice }: { voice?: MemberVoiceHandlers }) {
     return presenceByUser[member.user.id] || "offline";
   }
 
+  if (!open) {
+    return (
+      <aside
+        className="member-list-panel is-collapsed"
+        aria-label="Server members"
+      >
+        <button
+          type="button"
+          className="member-list-toggle"
+          title="Show members"
+          aria-label="Show members"
+          aria-expanded={false}
+          onClick={() => setOpen(true)}
+        >
+          <span className="member-list-toggle-icon" aria-hidden>
+            ‹
+          </span>
+        </button>
+      </aside>
+    );
+  }
+
   return (
     <aside className="member-list-panel" aria-label="Server members">
+      <header className="member-list-toolbar">
+        <span className="member-list-toolbar-label">Members</span>
+        <button
+          type="button"
+          className="member-list-toggle"
+          title="Hide members"
+          aria-label="Hide members"
+          aria-expanded={true}
+          onClick={() => setOpen(false)}
+        >
+          <span className="member-list-toggle-icon" aria-hidden>
+            ›
+          </span>
+        </button>
+      </header>
       <div className="member-list-scroll">
         {online.length > 0 && (
           <section className="member-list-section">
@@ -131,6 +207,7 @@ export function MemberList({ voice }: { voice?: MemberVoiceHandlers }) {
                   member={m}
                   status={statusFor(m)}
                   color={highestRoleColor(m, roles)}
+                  isOwner={isServerOwner(m)}
                   onOpen={openProfile}
                   onContext={openForMember}
                 />
@@ -148,6 +225,7 @@ export function MemberList({ voice }: { voice?: MemberVoiceHandlers }) {
                   member={m}
                   status="offline"
                   color={highestRoleColor(m, roles)}
+                  isOwner={isServerOwner(m)}
                   onOpen={openProfile}
                   onContext={openForMember}
                 />

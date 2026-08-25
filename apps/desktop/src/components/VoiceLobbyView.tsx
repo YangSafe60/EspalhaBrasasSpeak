@@ -10,6 +10,7 @@ import { openScreenPopout } from "../lib/popout";
 import { mediaCssUrl } from "../lib/mediaUrl";
 import { useAppStore } from "../store/appStore";
 import { useMemberContextMenu } from "./MemberUserMenu";
+import { VoiceChannelIcon } from "./VoiceChannelIcon";
 
 type VoiceApi = ReturnType<typeof useVoice>;
 
@@ -109,7 +110,10 @@ export function VoiceLobbyView({ voice }: Props) {
         <div>
           <p className="voice-lobby-eyebrow">Voice channel</p>
           <h2>
-            <span className="ch-icon">◎</span> {channel.name}
+            <span className="ch-icon">
+              <VoiceChannelIcon size={18} />
+            </span>{" "}
+            {channel.name}
           </h2>
           <p className="muted tiny">
             {connectedHere

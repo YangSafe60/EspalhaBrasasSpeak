@@ -115,6 +115,107 @@ pub async fn create(
     Ok(Json(channel))
 }
 
+fn duplicate_channel_name(name: &str) -> String {
+    const MAX: usize = 64;
+    let base = name.trim();
+    let suffix = "-copy";
+    if base.is_empty() {
+        return "copy".into();
+    }
+    if base.len() + suffix.len() <= MAX {
+        return format!("{base}{suffix}");
+    }
+    let keep = MAX.saturating_sub(suffix.len());
+    let truncated: String = base.chars().take(keep).collect();
+    format!("{truncated}{suffix}")
+}
+
+/// Clone a channel (settings + permission overwrites). Messages are not copied.
+pub async fn duplicate(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<Channel>> {
+    let source = db::get_channel(&state.db, id).await?;
+    let server = db::get_server(&state.db, source.server_id).await?;
+    db::require_perm(
+        &state.db,
+        &server,
+        Some(id),
+        user.id,
+        Permissions::MANAGE_CHANNELS,
+    )
+    .await?;
+
+    let new_id = Uuid::new_v4();
+    let ty = match source.channel_type {
+        ChannelType::Text => "text",
+        ChannelType::Voice => "voice",
+        ChannelType::Category => "category",
+    };
+    let new_name = duplicate_channel_name(&source.name);
+    let new_position = source.position + 1;
+
+    sqlx::query(
+        "UPDATE channels SET position = position + 1 WHERE server_id = ? AND position >= ?",
+    )
+    .bind(source.server_id.to_string())
+    .bind(new_position)
+    .execute(&state.db)
+    .await?;
+
+    sqlx::query(
+        "INSERT INTO channels (
+            id, server_id, category_id, name, channel_type, position, topic,
+            background_url, background_blur, background_dim, text_color, atmosphere, user_limit
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(new_id.to_string())
+    .bind(source.server_id.to_string())
+    .bind(source.category_id.map(|c| c.to_string()))
+    .bind(new_name)
+    .bind(ty)
+    .bind(new_position)
+    .bind(source.topic.clone())
+    .bind(source.background_url.clone())
+    .bind(source.background_blur)
+    .bind(source.background_dim)
+    .bind(source.text_color.clone())
+    .bind(source.atmosphere.clone())
+    .bind(source.user_limit)
+    .execute(&state.db)
+    .await?;
+
+    let overwrites = db::channel_overwrites(&state.db, id).await?;
+    for ow in overwrites {
+        let target_ty = match ow.target_type {
+            OverwriteTarget::Role => "role",
+            OverwriteTarget::Member => "member",
+        };
+        sqlx::query(
+            "INSERT INTO permission_overwrites (id, channel_id, target_type, target_id, allow_bits, deny_bits)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(new_id.to_string())
+        .bind(target_ty)
+        .bind(ow.target_id.to_string())
+        .bind(ow.allow.bits() as i64)
+        .bind(ow.deny.bits() as i64)
+        .execute(&state.db)
+        .await?;
+    }
+
+    let channel = db::get_channel(&state.db, new_id).await?;
+    state.hub.broadcast_server(
+        source.server_id,
+        &WsEvent::ChannelCreate {
+            channel: channel.clone(),
+        },
+    );
+    Ok(Json(channel))
+}
+
 pub async fn get(
     State(state): State<AppState>,
     user: AuthUser,

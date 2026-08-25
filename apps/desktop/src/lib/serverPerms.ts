@@ -110,8 +110,12 @@ export function permBits(value: unknown): number {
     const n = Number(value);
     return Number.isFinite(n) ? n >>> 0 : 0;
   }
-  if (value && typeof value === "object" && "bits" in value) {
-    return permBits((value as { bits: unknown }).bits);
+  if (value && typeof value === "object") {
+    const obj = value as { bits?: unknown; allow?: unknown; deny?: unknown };
+    if ("bits" in obj) return permBits(obj.bits);
+    // Some proxies expose bitflags as a single-key numeric map.
+    const vals = Object.values(obj);
+    if (vals.length === 1) return permBits(vals[0]);
   }
   return 0;
 }
@@ -151,9 +155,10 @@ export function canManageTargetMemberRoles(
   myPerms: number,
 ): boolean {
   if (!server || !actorUserId || !targetMember) return false;
-  if (targetMember.user.id === actorUserId) return false;
-  if (server.owner_id === actorUserId) return true;
+  if (sameId(server.owner_id, actorUserId)) return true;
   if (!hasPerm(myPerms, Perm.MANAGE_ROLES)) return false;
+  // Owners/managers may assign roles to themselves (still capped below their highest role).
+  if (sameId(targetMember.user.id, actorUserId)) return true;
   return (
     highestRolePosition(actorMember, roles) >
     highestRolePosition(targetMember, roles)
@@ -182,7 +187,7 @@ export function canRemoveRoleFromMember(
   ) {
     return false;
   }
-  if (server?.owner_id === actorUserId) return true;
+  if (sameId(server?.owner_id, actorUserId)) return true;
   return role.position < highestRolePosition(actorMember, roles);
 }
 
@@ -208,7 +213,7 @@ export function assignableRoles(
   ) {
     return [];
   }
-  const isOwner = server?.owner_id === actorUserId;
+  const isOwner = sameId(server?.owner_id, actorUserId);
   const actorHighest = highestRolePosition(actorMember, roles);
   const assigned = new Set(
     targetMember.role_ids.map((id) => id.replace(/-/g, "").toLowerCase()),

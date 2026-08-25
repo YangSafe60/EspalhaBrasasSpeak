@@ -72,6 +72,7 @@ pub async fn token(
         Permissions::CONNECT,
     )
     .await?;
+    db::require_not_timed_out(&state.db, server.id, user.id).await?;
 
     if channel.user_limit > 0 {
         let count: (i64,) = sqlx::query_as(

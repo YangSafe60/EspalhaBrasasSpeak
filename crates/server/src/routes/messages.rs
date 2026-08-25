@@ -100,6 +100,7 @@ pub async fn create(
         Permissions::SEND_MESSAGES,
     )
     .await?;
+    db::require_not_timed_out(&state.db, server.id, user.id).await?;
 
     let content = body.content.trim();
     let has_attachments = body
@@ -303,6 +304,7 @@ pub async fn add_reaction(
         Permissions::ADD_REACTIONS,
     )
     .await?;
+    db::require_not_timed_out(&state.db, server.id, user.id).await?;
     sqlx::query(
         "INSERT OR IGNORE INTO reactions (message_id, user_id, emoji) VALUES (?, ?, ?)",
     )
@@ -378,6 +380,7 @@ pub async fn typing(
         Permissions::VIEW_CHANNEL,
     )
     .await?;
+    db::require_not_timed_out(&state.db, server.id, user.id).await?;
     let u = db::user_public(&state.db, user.id).await?;
     broadcast_to_viewers(
         &state,

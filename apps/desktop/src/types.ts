@@ -136,6 +136,9 @@ export interface Member {
   role_ids: string[];
   joined_at: string;
   accepted_rules: boolean;
+  /** ISO timestamp; member cannot chat/react/join voice while this is in the future. */
+  timeout_until?: string | null;
+  timeout_reason?: string | null;
 }
 
 export type FriendshipStatus = "pending" | "accepted" | "declined";
@@ -254,6 +257,7 @@ export type WsEvent =
   | { type: "channel_delete"; server_id: string; channel_id: string }
   | { type: "server_update"; server: Server }
   | { type: "member_join"; member: Member }
+  | { type: "member_update"; member: Member }
   | {
       type: "server_invite";
       server: Server;

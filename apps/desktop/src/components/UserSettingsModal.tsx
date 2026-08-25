@@ -3,12 +3,13 @@ import { IMAGE_UPLOAD_HINT } from "../lib/uploadHints";
 import { mediaCssUrl, mediaUrl } from "../lib/mediaUrl";
 import { getElectronAPI } from "../lib/desktop";
 import { useAppStore } from "../store/appStore";
+import { AccessibilitySettings } from "./AccessibilitySettings";
+import { ThemeSettings } from "./ThemeSettings";
 import { VoiceVideoSettingsPanel } from "./VoiceVideoSettingsPanel";
 
-type Tab = "account" | "voice" | "appearance";
+type Tab = "account" | "voice" | "appearance" | "accessibility";
 type DangerAction = "disable" | "delete" | null;
 
-const STORAGE_COMPACT = "eb_compact_messages";
 const STORAGE_NOTIFY = "eb_notify_sound";
 const IMAGE_ACCEPT = "image/*,image/gif,.gif";
 
@@ -39,7 +40,6 @@ export function UserSettingsModal() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [dangerPassword, setDangerPassword] = useState("");
   const [dangerAction, setDangerAction] = useState<DangerAction>(null);
-  const [compact, setCompact] = useState(() => readBool(STORAGE_COMPACT, false));
   const [notifySound, setNotifySound] = useState(() =>
     readBool(STORAGE_NOTIFY, true),
   );
@@ -74,11 +74,6 @@ export function UserSettingsModal() {
     setMsg(null);
     setErr(null);
   }, [modal, user]);
-
-  useEffect(() => {
-    document.documentElement.dataset.compact = compact ? "1" : "0";
-    localStorage.setItem(STORAGE_COMPACT, compact ? "1" : "0");
-  }, [compact]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_NOTIFY, notifySound ? "1" : "0");
@@ -235,6 +230,7 @@ export function UserSettingsModal() {
               ["account", "My Account"],
               ["voice", "Voice & Video"],
               ["appearance", "Appearance"],
+              ["accessibility", "Accessibility"],
             ] as const
           ).map(([id, label]) => (
             <button
@@ -265,6 +261,7 @@ export function UserSettingsModal() {
               {tab === "account" && "My Account"}
               {tab === "voice" && "Voice & Video"}
               {tab === "appearance" && "Appearance"}
+              {tab === "accessibility" && "Accessibility"}
             </h3>
             <button
               type="button"
@@ -508,14 +505,7 @@ export function UserSettingsModal() {
 
           {tab === "appearance" && (
             <div className="stack">
-              <label className="toggle-row">
-                <span>Compact message list</span>
-                <input
-                  type="checkbox"
-                  checked={compact}
-                  onChange={(e) => setCompact(e.target.checked)}
-                />
-              </label>
+              <ThemeSettings />
               <label className="toggle-row">
                 <span>Message notification sound</span>
                 <input
@@ -524,10 +514,26 @@ export function UserSettingsModal() {
                   onChange={(e) => setNotifySound(e.target.checked)}
                 />
               </label>
-              <p className="muted tiny">
-                Theme follows Espalha Brasas branding (dark + ember red).
-              </p>
+              <button
+                type="button"
+                className="a11y-related"
+                onClick={() => setTab("accessibility")}
+              >
+                <span>
+                  <strong>Accessibility</strong>
+                  <em className="muted tiny">
+                    Text size, density, contrast, and motion
+                  </em>
+                </span>
+                <span aria-hidden>›</span>
+              </button>
             </div>
+          )}
+
+          {tab === "accessibility" && (
+            <AccessibilitySettings
+              onOpenAppearance={() => setTab("appearance")}
+            />
           )}
         </section>
       </div>

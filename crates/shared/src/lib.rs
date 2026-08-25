@@ -193,6 +193,11 @@ pub struct Member {
     pub role_ids: Vec<Uuid>,
     pub joined_at: DateTime<Utc>,
     pub accepted_rules: bool,
+    /// When set and in the future, member cannot chat/react/join voice.
+    #[serde(default)]
+    pub timeout_until: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub timeout_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -301,6 +306,9 @@ pub enum WsEvent {
         server: Server,
     },
     MemberJoin {
+        member: Member,
+    },
+    MemberUpdate {
         member: Member,
     },
     /// Friend was added to a server via Invite People — show invite card to invitee.

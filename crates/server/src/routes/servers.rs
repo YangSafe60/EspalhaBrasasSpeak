@@ -275,6 +275,42 @@ pub async fn delete(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+#[derive(Deserialize)]
+pub struct TransferOwnershipReq {
+    pub user_id: Uuid,
+}
+
+/// Only the current owner can hand the server to another member.
+pub async fn transfer_ownership(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<TransferOwnershipReq>,
+) -> AppResult<Json<Server>> {
+    let server = db::get_server(&state.db, id).await?;
+    if server.owner_id != user.id {
+        return Err(AppError::Forbidden);
+    }
+    if body.user_id == user.id {
+        return Err(AppError::BadRequest("already the owner".into()));
+    }
+    if !db::is_member(&state.db, id, body.user_id).await? {
+        return Err(AppError::BadRequest(
+            "new owner must be a member of this server".into(),
+        ));
+    }
+    sqlx::query("UPDATE servers SET owner_id = ? WHERE id = ?")
+        .bind(body.user_id.to_string())
+        .bind(id.to_string())
+        .execute(&state.db)
+        .await?;
+    let server = db::get_server(&state.db, id).await?;
+    state
+        .hub
+        .broadcast_server(id, &WsEvent::ServerUpdate { server: server.clone() });
+    Ok(Json(server))
+}
+
 pub async fn list_members(
     State(state): State<AppState>,
     user: AuthUser,
@@ -388,6 +424,107 @@ pub async fn moderate_voice(
         return Err(AppError::NotFound);
     }
     crate::routes::voice::moderator_set_voice(&state, id, user_id, body.server_muted, body.server_deafened).await
+}
+
+#[derive(Deserialize)]
+pub struct TimeoutReq {
+    /// Seconds from now. Use `0` or omit with `clear: true` to remove timeout.
+    pub duration_seconds: Option<u64>,
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub clear: bool,
+}
+
+/// Temporarily block chat, reactions, and voice (MUTE_MEMBERS or KICK_MEMBERS).
+pub async fn timeout_member(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path((id, user_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<TimeoutReq>,
+) -> AppResult<Json<Member>> {
+    let server = db::get_server(&state.db, id).await?;
+    let perms = db::effective_permissions(&state.db, &server, None, user.id).await?;
+    if !perms.has(Permissions::MUTE_MEMBERS) && !perms.has(Permissions::KICK_MEMBERS) {
+        return Err(AppError::Forbidden);
+    }
+    if !db::can_moderate_member(&state.db, &server, user.id, user_id).await? {
+        return Err(AppError::Forbidden);
+    }
+    if !db::is_member(&state.db, id, user_id).await? {
+        return Err(AppError::NotFound);
+    }
+    if user_id == server.owner_id {
+        return Err(AppError::BadRequest("cannot timeout the server owner".into()));
+    }
+    if user_id == user.id {
+        return Err(AppError::BadRequest("cannot timeout yourself".into()));
+    }
+
+    let reason = body
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.chars().take(500).collect::<String>());
+
+    if body.clear || body.duration_seconds == Some(0) {
+        sqlx::query(
+            "UPDATE members SET timeout_until = NULL, timeout_reason = NULL WHERE server_id = ? AND user_id = ?",
+        )
+        .bind(id.to_string())
+        .bind(user_id.to_string())
+        .execute(&state.db)
+        .await?;
+    } else {
+        let secs = body.duration_seconds.ok_or_else(|| {
+            AppError::BadRequest("duration_seconds required (or clear: true)".into())
+        })?;
+        // Cap at 1 year; presets are shorter, custom days map into seconds on the client.
+        const MAX_SECS: u64 = 365 * 24 * 60 * 60;
+        if secs == 0 || secs > MAX_SECS {
+            return Err(AppError::BadRequest(
+                "timeout duration must be between 1 second and 365 days".into(),
+            ));
+        }
+        let until = (Utc::now() + chrono::Duration::seconds(secs as i64)).to_rfc3339();
+        sqlx::query(
+            "UPDATE members SET timeout_until = ?, timeout_reason = ? WHERE server_id = ? AND user_id = ?",
+        )
+        .bind(&until)
+        .bind(reason.as_deref())
+        .bind(id.to_string())
+        .bind(user_id.to_string())
+        .execute(&state.db)
+        .await?;
+
+        // Kick from voice for the duration.
+        let now = Utc::now().to_rfc3339();
+        let _ = sqlx::query(
+            "UPDATE voice_states SET channel_id = NULL, streaming = 0, updated_at = ? WHERE user_id = ?",
+        )
+        .bind(&now)
+        .bind(user_id.to_string())
+        .execute(&state.db)
+        .await;
+        state.hub.broadcast_server(
+            id,
+            &WsEvent::VoiceStateUpdate {
+                channel_id: None,
+                user_id,
+                muted: false,
+                deafened: false,
+                streaming: false,
+                server_muted: false,
+                server_deafened: false,
+            },
+        );
+    }
+
+    let member = db::get_member(&state.db, id, user_id).await?;
+    state
+        .hub
+        .broadcast_server(id, &WsEvent::MemberUpdate { member: member.clone() });
+    Ok(Json(member))
 }
 
 pub async fn ban_member(

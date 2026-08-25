@@ -652,9 +652,11 @@ pub async fn get_member(db: &SqlitePool, server_id: Uuid, user_id: Uuid) -> AppR
         nickname: Option<String>,
         joined_at: String,
         accepted_rules: i64,
+        timeout_until: Option<String>,
+        timeout_reason: Option<String>,
     }
     let row = sqlx::query_as::<_, MRow>(
-        "SELECT nickname, joined_at, accepted_rules FROM members WHERE server_id = ? AND user_id = ?",
+        "SELECT nickname, joined_at, accepted_rules, timeout_until, timeout_reason FROM members WHERE server_id = ? AND user_id = ?",
     )
     .bind(server_id.to_string())
     .bind(user_id.to_string())
@@ -663,6 +665,26 @@ pub async fn get_member(db: &SqlitePool, server_id: Uuid, user_id: Uuid) -> AppR
     .ok_or(AppError::NotFound)?;
     let user = user_public(db, user_id).await?;
     let role_ids = member_role_ids(db, server_id, user_id).await?;
+    let timeout_until = row.timeout_until.as_deref().and_then(|s| {
+        DateTime::parse_from_rfc3339(s)
+            .ok()
+            .map(|d| d.with_timezone(&Utc))
+    });
+    // Expired timeouts clear lazily on read.
+    let (timeout_until, timeout_reason) = match timeout_until {
+        Some(until) if until > Utc::now() => (Some(until), row.timeout_reason),
+        Some(_) => {
+            let _ = sqlx::query(
+                "UPDATE members SET timeout_until = NULL, timeout_reason = NULL WHERE server_id = ? AND user_id = ?",
+            )
+            .bind(server_id.to_string())
+            .bind(user_id.to_string())
+            .execute(db)
+            .await;
+            (None, None)
+        }
+        None => (None, None),
+    };
     Ok(Member {
         user,
         server_id,
@@ -672,7 +694,36 @@ pub async fn get_member(db: &SqlitePool, server_id: Uuid, user_id: Uuid) -> AppR
             .map(|d| d.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now()),
         accepted_rules: row.accepted_rules != 0,
+        timeout_until,
+        timeout_reason,
     })
+}
+
+/// True when the member is currently timed out on this server.
+pub async fn member_is_timed_out(
+    db: &SqlitePool,
+    server_id: Uuid,
+    user_id: Uuid,
+) -> AppResult<bool> {
+    let member = get_member(db, server_id, user_id).await?;
+    Ok(member
+        .timeout_until
+        .map(|t| t > Utc::now())
+        .unwrap_or(false))
+}
+
+pub async fn require_not_timed_out(
+    db: &SqlitePool,
+    server_id: Uuid,
+    user_id: Uuid,
+) -> AppResult<()> {
+    if member_is_timed_out(db, server_id, user_id).await? {
+        Err(AppError::BadRequest(
+            "you are timed out in this server".into(),
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 pub async fn server_rules(db: &SqlitePool, server_id: Uuid) -> AppResult<Vec<ServerRule>> {
