@@ -898,7 +898,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         ).catch(() => [] as { user_id: string; status: PresenceStatus }[]),
         api<PermissionOverwrite[]>(
           `/api/servers/${serverId}/channel-overwrites`,
-        ).catch(() => [] as PermissionOverwrite[]),
+        ).then(
+          (rows) => rows,
+          () => null as PermissionOverwrite[] | null,
+        ),
       ]);
       const authors: Record<string, UserPublic> = { ...get().authors };
       for (const m of members) authors[m.user.id] = m.user;
@@ -911,8 +914,13 @@ export const useAppStore = create<AppState>((set, get) => ({
         presenceByUser[get().user!.id] = get().myStatus;
       }
 
-      const normalizedOws = overwrites.map(normalizeOverwrite);
-      const owsByChannel = indexOverwritesByChannel(normalizedOws, channels);
+      const owsByChannel =
+        overwrites == null
+          ? null
+          : indexOverwritesByChannel(
+              overwrites.map(normalizeOverwrite),
+              channels,
+            );
 
       set((s) => {
         const keepIds = new Set(channels.map((c) => c.id));
@@ -921,20 +929,22 @@ export const useAppStore = create<AppState>((set, get) => ({
             keepIds.has(cid),
           ),
         );
-        const overwritesByChannel = { ...s.overwritesByChannel };
-        for (const id of Object.keys(overwritesByChannel)) {
-          const ch = Object.values(s.channelsByServer)
-            .flat()
-            .find((c) => sameId(c.id, id));
-          if (
-            (ch && sameId(ch.server_id, serverId)) ||
-            keepIds.has(id) ||
-            [...keepIds].some((kid) => sameId(kid, id))
-          ) {
-            delete overwritesByChannel[id];
+        let overwritesByChannel = { ...s.overwritesByChannel };
+        if (owsByChannel) {
+          for (const id of Object.keys(overwritesByChannel)) {
+            const ch = Object.values(s.channelsByServer)
+              .flat()
+              .find((c) => sameId(c.id, id));
+            if (
+              (ch && sameId(ch.server_id, serverId)) ||
+              keepIds.has(id) ||
+              [...keepIds].some((kid) => sameId(kid, id))
+            ) {
+              delete overwritesByChannel[id];
+            }
           }
+          overwritesByChannel = { ...overwritesByChannel, ...owsByChannel };
         }
-        Object.assign(overwritesByChannel, owsByChannel);
         return {
           channelsByServer: { ...s.channelsByServer, [serverId]: dedupeChannelList(channels) },
           membersByServer: { ...s.membersByServer, [serverId]: members },
@@ -964,6 +974,33 @@ export const useAppStore = create<AppState>((set, get) => ({
         .sort((a, b) => a.position - b.position)[0];
       if (text) await get().selectChannel(text.id);
       else set({ activeChannelId: null });
+
+      // If bulk overwrite fetch failed, fall back per-channel so lock badges work.
+      if (owsByChannel == null && channels.length > 0) {
+        void (async () => {
+          const pairs = await Promise.all(
+            channels.map(async (c) => {
+              try {
+                const rows = await api<PermissionOverwrite[]>(
+                  `/api/channels/${c.id}/overwrites`,
+                );
+                return [c.id, rows.map(normalizeOverwrite)] as const;
+              } catch {
+                return null;
+              }
+            }),
+          );
+          set((s) => {
+            const overwritesByChannel = { ...s.overwritesByChannel };
+            for (const pair of pairs) {
+              if (!pair) continue;
+              const [id, rows] = pair;
+              overwritesByChannel[id] = rows;
+            }
+            return { overwritesByChannel };
+          });
+        })();
+      }
     } finally {
       set({ connecting: false });
     }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useAppStore } from "../store/appStore";
 import {
   effectiveChannelPerms,
+  effectiveServerPerms,
   hasPerm,
   permBits,
   sameId,
@@ -195,20 +196,27 @@ export function ChannelSettingsModal() {
     );
     return key ? overwritesByChannel[key] || [] : [];
   }, [settingsChannelId, overwritesByChannel]);
-  const canManageThisChannel = useMemo(
-    () =>
-      hasPerm(
-        effectiveChannelPerms(
-          server,
-          roles,
-          me,
-          user?.id,
-          overwritesForChannel,
-        ),
-        Perm.MANAGE_CHANNELS,
+  const canManageThisChannel = useMemo(() => {
+    // Gate on server-level manage so loading channel overwrites can't unmount
+    // this modal (everyone-deny View would otherwise look like "no access").
+    const serverPerms = effectiveServerPerms(server, roles, me, user?.id);
+    if (
+      hasPerm(serverPerms, Perm.MANAGE_CHANNELS) ||
+      hasPerm(serverPerms, Perm.MANAGE_ROLES)
+    ) {
+      return true;
+    }
+    return hasPerm(
+      effectiveChannelPerms(
+        server,
+        roles,
+        me,
+        user?.id,
+        overwritesForChannel,
       ),
-    [server, roles, me, user?.id, overwritesForChannel],
-  );
+      Perm.MANAGE_CHANNELS,
+    );
+  }, [server, roles, me, user?.id, overwritesForChannel]);
 
   const [tab, setTab] = useState<Tab>("overview");
   const [name, setName] = useState("");
@@ -241,7 +249,7 @@ export function ChannelSettingsModal() {
     setErr(null);
     setSelectedRoleId(null);
 
-    let cancelled = false;
+    let alive = true;
     const serverId = channel.server_id;
     const channelId = channel.id;
     const channelType = channel.channel_type;
@@ -250,6 +258,7 @@ export function ChannelSettingsModal() {
       raw: PermissionOverwrite[],
       rolesNow: Role[],
     ) => {
+      if (!alive) return;
       const ows = raw.map(normalizeOverwrite);
       setOverwrites(ows);
       const { accessRoleIds: accessIds } = applyLockUi(
@@ -271,7 +280,6 @@ export function ChannelSettingsModal() {
         null;
       setSelectedRoleId((prev) => {
         if (prev && rolesNow.some((r) => sameId(r.id, prev))) return prev;
-        // Map overwrite target id onto the canonical role id from roles list.
         if (preferred) {
           const match = rolesNow.find((r) => sameId(r.id, preferred));
           return match?.id ?? preferred;
@@ -280,7 +288,7 @@ export function ChannelSettingsModal() {
       });
     };
 
-    // Instant paint from store (sidebar lock data) so UI isn't empty while fetching.
+    // Instant paint from store when available (sidebar lock cache).
     {
       const store = useAppStore.getState();
       const rolesNow = rolesForServer(store.rolesByServer, serverId);
@@ -293,6 +301,7 @@ export function ChannelSettingsModal() {
       if (cached.length > 0) {
         hydrateFrom(cached, rolesNow);
       } else {
+        // Avoid showing the previous channel's lock while this one loads.
         setPrivateLocked(false);
         setAccessRoleIds([]);
         setOverwrites([]);
@@ -300,53 +309,28 @@ export function ChannelSettingsModal() {
     }
 
     void (async () => {
-      await loadRoles(serverId);
-      if (cancelled) return;
-
-      const store = useAppStore.getState();
-      const rolesNow = rolesForServer(store.rolesByServer, serverId);
-      const serverNow = store.servers.find((s) => sameId(s.id, serverId));
-      const membersKey = Object.keys(store.membersByServer).find((id) =>
-        sameId(id, serverId),
-      );
-      const membersNow = membersKey
-        ? store.membersByServer[membersKey] || []
-        : [];
-      const meNow = membersNow.find((m) =>
-        sameId(m.user.id, store.user?.id),
-      );
-
-      let raw: PermissionOverwrite[] = [];
       try {
-        raw = await loadChannelOverwrites(channelId);
+        await loadRoles(serverId);
+        if (!alive) return;
+        const raw = await loadChannelOverwrites(channelId);
+        if (!alive) return;
+        const rolesNow = rolesForServer(
+          useAppStore.getState().rolesByServer,
+          serverId,
+        );
+        hydrateFrom(raw, rolesNow);
       } catch (e) {
-        if (!cancelled) {
-          setErr(e instanceof Error ? e.message : "Failed to load permissions");
-        }
-        return;
+        if (!alive) return;
+        setErr(
+          e instanceof Error ? e.message : "Failed to load permissions",
+        );
       }
-      if (cancelled) return;
-
-      const ows = raw.map(normalizeOverwrite);
-      const permsNow = effectiveChannelPerms(
-        serverNow,
-        rolesNow,
-        meNow,
-        store.user?.id,
-        ows,
-      );
-      if (!hasPerm(permsNow, Perm.MANAGE_CHANNELS)) {
-        setModal(null);
-        return;
-      }
-
-      hydrateFrom(ows, rolesNow);
     })();
 
     return () => {
-      cancelled = true;
+      alive = false;
     };
-  }, [modal, channel?.id, loadRoles, loadChannelOverwrites, setModal]);
+  }, [modal, channel?.id, loadRoles, loadChannelOverwrites]);
 
   useEffect(() => {
     if (!selectedRoleId) {

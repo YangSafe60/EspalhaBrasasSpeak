@@ -1006,12 +1006,12 @@ input[type="number"]::-webkit-inner-spin-button {
 
 .ch-lock {
   position: absolute;
-  top: -2px;
-  right: -3px;
-  width: 9px;
-  height: 9px;
-  color: currentColor;
-  filter: drop-shadow(0 0 1px #1e1f22);
+  top: -3px;
+  right: -4px;
+  width: 11px;
+  height: 11px;
+  color: var(--accent-2, #ff3b42);
+  filter: drop-shadow(0 0 1px #050505);
   pointer-events: none;
 }
 
@@ -3484,14 +3484,16 @@ html[data-compact="1"] .message {
   max-width: min(640px, 100%);
 }
 
-.user-settings-content .settings-section,
+.user-settings-content .settings-section {
+  padding: 1.15rem 1.25rem 1.25rem;
+}
+
 .user-settings-content .a11y-section,
 .user-settings-content .theme-section {
   padding: 1.15rem 0 1.35rem;
   border-bottom: 1px solid var(--border);
 }
 
-.user-settings-content .settings-section:last-child,
 .user-settings-content .a11y-section:last-child,
 .user-settings-content .theme-section:last-child {
   border-bottom: none;
@@ -3500,6 +3502,10 @@ html[data-compact="1"] .message {
 .user-settings-content .a11y-section {
   gap: 1rem;
   padding-bottom: 1.5rem;
+}
+
+.user-settings-content .toggle-row {
+  padding: 0.75rem 0.9rem;
 }
 
 .user-settings-page .account-danger-backdrop {
@@ -3627,20 +3633,23 @@ html[data-compact="1"] .message {
 }
 
 .settings-backdrop {
-  padding: 0;
-  align-items: stretch;
+  padding: 1.25rem;
+  place-items: center;
+  align-items: center;
+  justify-items: center;
 }
 
 .modal.channel-settings-panel {
   width: min(1100px, 96vw);
   height: min(860px, 92vh);
-  max-height: 92vh;
+  max-height: min(860px, calc(100vh - 2.5rem));
   padding: 0;
   overflow: hidden;
   display: grid;
   grid-template-columns: 240px 1fr;
   background: #0a0a0a;
   border-radius: 16px;
+  margin: auto;
 }
 
 .channel-settings-nav {
@@ -4195,8 +4204,7 @@ html[data-compact="1"] .message {
 }
 
 .account-settings-sections .settings-section {
-  padding-top: 0.25rem;
-  border-top: 1px solid var(--border);
+  padding: 1.15rem 1.25rem 1.25rem;
 }
 
 .account-settings-sections .settings-section h4,

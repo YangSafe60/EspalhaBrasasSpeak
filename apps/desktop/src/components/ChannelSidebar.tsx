@@ -185,12 +185,16 @@ export function ChannelSidebar({
   const suppressClickRef = useRef(false);
   const reorderBusyRef = useRef(false);
 
-  const server = servers.find((s) => s.id === activeServerId);
-  const members = activeServerId
-    ? membersByServer[activeServerId] || []
-    : [];
-  const roles = activeServerId ? rolesByServer[activeServerId] || [] : [];
-  const me = members.find((m) => m.user.id === user?.id);
+  const server = servers.find((s) => sameId(s.id, activeServerId));
+  const membersKey = Object.keys(membersByServer).find((id) =>
+    sameId(id, activeServerId),
+  );
+  const members = membersKey ? membersByServer[membersKey] || [] : [];
+  const rolesKey = Object.keys(rolesByServer).find((id) =>
+    sameId(id, activeServerId),
+  );
+  const roles = rolesKey ? rolesByServer[rolesKey] || [] : [];
+  const me = members.find((m) => sameId(m.user.id, user?.id));
   const myPerms = useMemo(
     () => effectiveServerPerms(server, roles, me, user?.id),
     [server, roles, me, user?.id],
@@ -224,12 +228,15 @@ export function ChannelSidebar({
   }
 
   const channels = useMemo(() => {
-    const raw = activeServerId ? channelsByServer[activeServerId] || [] : [];
+    const key = Object.keys(channelsByServer).find((id) =>
+      sameId(id, activeServerId),
+    );
+    const raw = key ? channelsByServer[key] || [] : [];
     const seen = new Set<string>();
     const unique = raw.filter((c) => {
-      const key = c.id.replace(/-/g, "").toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
+      const k = c.id.replace(/-/g, "").toLowerCase();
+      if (seen.has(k)) return false;
+      seen.add(k);
       return true;
     });
     return unique.slice().sort((a, b) => a.position - b.position);
