@@ -11,6 +11,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getAppUpdate: () => ipcRenderer.invoke("app:update:get"),
   focusMain: () => ipcRenderer.invoke("window:focus-main"),
   showNotification: (opts) => ipcRenderer.invoke("desktop:notify", opts),
+  loadE2eIdentity: (userId) => ipcRenderer.invoke("crypto:identity:load", userId),
+  saveE2eIdentity: (userId, data) =>
+    ipcRenderer.invoke("crypto:identity:save", userId, data),
+  deleteE2eIdentity: (userId) =>
+    ipcRenderer.invoke("crypto:identity:delete", userId),
   onNotificationClick: (handler) => {
     const listener = (_event, payload) => handler(payload);
     ipcRenderer.on("desktop:notify-click", listener);

@@ -190,6 +190,18 @@ export interface UserIdentityKey {
   created_at: string;
 }
 
+export interface UserIdentityKeyHistoryEntry {
+  public_key: string;
+  active_from: string;
+  retired_at: string;
+}
+
+export interface UserIdentityKeyHistory {
+  user_id: string;
+  current: UserIdentityKey | null;
+  history: UserIdentityKeyHistoryEntry[];
+}
+
 export interface DmChannel {
   id: string;
   friendship_id: string | null;
@@ -204,6 +216,8 @@ export interface DmMessageWire {
   author_id: string;
   ciphertext: string;
   nonce: string;
+  sender_public_key?: string | null;
+  recipient_public_key?: string | null;
   reply_to_id: string | null;
   edited_at: string | null;
   created_at: string;

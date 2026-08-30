@@ -9,6 +9,7 @@ import {
   decryptWire,
   decryptWireResilient,
   ensureIdentity,
+  fetchPeerPublicKeyHistory,
   getCachedIdentity,
   prefetchPeerPublicKey,
   upsertFriendship,
@@ -354,13 +355,21 @@ export const createSocialSlice: AppStoreSlice = (set, get) => ({
     }
 
     const wires = await api<DmMessageWire[]>(`/api/dms/${dmId}/messages`);
+    let peerHistory: string[] = [];
+    try {
+      peerHistory = await fetchPeerPublicKeyHistory(peerId);
+    } catch {
+      /* peer may not have registered keys yet */
+    }
     const messages = await Promise.all(
       wires.map((w) =>
         decryptWireResilient(
           w,
           peerId,
+          user.id,
           (id) => get().peerPublicKeys[id],
           cachePeerKey,
+          peerHistory,
         ),
       ),
     );
@@ -409,7 +418,12 @@ export const createSocialSlice: AppStoreSlice = (set, get) => ({
     );
     const wire = await api<DmMessageWire>(`/api/dms/${dmId}/messages`, {
       method: "POST",
-      body: { ciphertext, nonce },
+      body: {
+        ciphertext,
+        nonce,
+        sender_public_key: id.publicKeyB64,
+        recipient_public_key: peerKey,
+      },
     });
     const message = await decryptWire(wire, peerKey);
     set((s) => ({
@@ -449,7 +463,12 @@ export const createSocialSlice: AppStoreSlice = (set, get) => ({
     );
     const wire = await api<DmMessageWire>(`/api/dms/messages/${messageId}`, {
       method: "PATCH",
-      body: { ciphertext, nonce },
+      body: {
+        ciphertext,
+        nonce,
+        sender_public_key: id.publicKeyB64,
+        recipient_public_key: peerKey,
+      },
     });
     const message = await decryptWire(wire, peerKey);
     set((s) => ({

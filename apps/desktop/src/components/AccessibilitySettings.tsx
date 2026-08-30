@@ -334,7 +334,7 @@ export function AccessibilitySettings({ onOpenAppearance }: Props) {
         >
           <span>
             <strong>Appearance</strong>
-            <em className="muted tiny">Themes, colors, and notification sound</em>
+            <em className="muted tiny">Themes, colors, and notification sounds</em>
           </span>
           <span aria-hidden>›</span>
         </button>

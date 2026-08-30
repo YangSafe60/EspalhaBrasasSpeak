@@ -275,6 +275,20 @@ pub struct UserIdentityKey {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserIdentityKeyHistoryEntry {
+    pub public_key: String,
+    pub active_from: DateTime<Utc>,
+    pub retired_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserIdentityKeyHistory {
+    pub user_id: Uuid,
+    pub current: Option<UserIdentityKey>,
+    pub history: Vec<UserIdentityKeyHistoryEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DmChannel {
     pub id: Uuid,
     pub friendship_id: Option<Uuid>,
@@ -290,6 +304,12 @@ pub struct DmMessage {
     pub author_id: Uuid,
     pub ciphertext: String,
     pub nonce: String,
+    /// Author's X25519 public key at send time (for decrypt after key rotation).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_public_key: Option<String>,
+    /// Recipient's X25519 public key at send time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipient_public_key: Option<String>,
     pub reply_to_id: Option<Uuid>,
     pub edited_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,

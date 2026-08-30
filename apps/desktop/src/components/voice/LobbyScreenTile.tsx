@@ -31,6 +31,21 @@ export type LobbyScreenTileProps = {
   };
 };
 
+function StopStreamIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
+      <path
+        fill="currentColor"
+        d="M5 4h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-5.8l1.9 2.8a1 1 0 0 1-.9 1.5H9.8a1 1 0 0 1-.9-1.5L10.8 15H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm0 2v7h14V6H5zm4.9 11h4.2l.9-1.3H9l.9 1.3z"
+      />
+      <path
+        fill="currentColor"
+        d="M9.1 7.4 10.5 8.8 12 7.3l1.5 1.5 1.4-1.4L13.4 5.9 14.8 4.5 13.4 3.1 12 4.5 10.6 3.1 9.1 4.5l1.4 1.4L9.1 7.4z"
+      />
+    </svg>
+  );
+}
+
 /**
  * Single screen-share stage tile with in-app fullscreen, pop-out, and optional
  * stream-audio controls. Registers the visible `<video>` for pop-out JPEG relay.
@@ -209,10 +224,12 @@ export function LobbyScreenTile({
           </button>
           <button
             type="button"
-            className="btn danger sm"
+            className="btn sm lobby-screen-leave-btn"
+            title={hoverActionLabel}
+            aria-label={hoverActionLabel}
             onClick={onHoverAction}
           >
-            {hoverActionLabel}
+            <StopStreamIcon />
           </button>
         </div>
       </div>

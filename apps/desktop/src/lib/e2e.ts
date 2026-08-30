@@ -3,7 +3,11 @@
  * Private keys stay on this device; the server only sees public keys and ciphertext.
  */
 
-const STORAGE_PREFIX = "speakapp_e2e_identity_";
+import {
+  loadStoredIdentity,
+  saveStoredIdentity,
+  type StoredIdentityBlob,
+} from "./identityStorage";
 
 export type IdentityKeyPair = {
   publicKeyB64: string;
@@ -57,43 +61,54 @@ async function importPrivatePkcs8(b64: string): Promise<CryptoKey> {
   );
 }
 
-function storageKey(userId: string): string {
-  return `${STORAGE_PREFIX}${userId}`;
+async function importIdentityPair(blob: StoredIdentityBlob): Promise<IdentityKeyPair> {
+  const privateKey = await importPrivatePkcs8(blob.privateKey);
+  const publicKey = await importPublicRaw(blob.publicKey);
+  return {
+    publicKeyB64: blob.publicKey,
+    privateKey,
+    publicKey,
+  };
 }
 
-export async function loadOrCreateIdentity(userId: string): Promise<IdentityKeyPair> {
-  const stored = localStorage.getItem(storageKey(userId));
-  if (stored) {
-    try {
-      const parsed = JSON.parse(stored) as { publicKey: string; privateKey: string };
-      const privateKey = await importPrivatePkcs8(parsed.privateKey);
-      const publicKey = await importPublicRaw(parsed.publicKey);
-      return {
-        publicKeyB64: parsed.publicKey,
-        privateKey,
-        publicKey,
-      };
-    } catch {
-      localStorage.removeItem(storageKey(userId));
-    }
+/** Load a previously stored identity from durable storage. */
+export async function loadIdentity(userId: string): Promise<IdentityKeyPair | null> {
+  const stored = await loadStoredIdentity(userId);
+  if (!stored) return null;
+  try {
+    return await importIdentityPair(stored);
+  } catch {
+    return null;
   }
+}
 
+/** Generate and persist a brand-new identity (first-time setup only). */
+export async function createIdentity(userId: string): Promise<IdentityKeyPair> {
   const pair = (await crypto.subtle.generateKey({ name: "X25519" }, true, [
     "deriveBits",
   ])) as CryptoKeyPair;
 
-  const publicKeyB64 = await exportPublicRaw(pair.publicKey);
-  const privateKeyB64 = await exportPrivatePkcs8(pair.privateKey);
-  localStorage.setItem(
-    storageKey(userId),
-    JSON.stringify({ publicKey: publicKeyB64, privateKey: privateKeyB64 }),
-  );
+  const blob: StoredIdentityBlob = {
+    publicKey: await exportPublicRaw(pair.publicKey),
+    privateKey: await exportPrivatePkcs8(pair.privateKey),
+  };
+  await saveStoredIdentity(userId, blob);
 
   return {
-    publicKeyB64,
+    publicKeyB64: blob.publicKey,
     privateKey: pair.privateKey,
     publicKey: pair.publicKey,
   };
+}
+
+/** Restore identity from an exported JSON backup. */
+export async function importIdentityBackup(
+  userId: string,
+  blob: StoredIdentityBlob,
+): Promise<IdentityKeyPair> {
+  const pair = await importIdentityPair(blob);
+  await saveStoredIdentity(userId, blob);
+  return pair;
 }
 
 export function clearIdentityCache(): void {

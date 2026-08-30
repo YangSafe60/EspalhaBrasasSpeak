@@ -1,6 +1,15 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { mediaCssUrl, mediaUrl } from "../lib/mediaUrl";
 import { getElectronAPI } from "../lib/desktop";
+import { loadStoredIdentity } from "../lib/identityStorage";
+import {
+  loadNotifySoundPrefs,
+  NOTIFY_SOUND_LABELS,
+  saveNotifySoundPrefs,
+  type NotifySoundKind,
+  type NotifySoundPrefs,
+} from "../lib/notifySoundPrefs";
+import { restoreIdentityBackup } from "../store/helpers/dmHelpers";
 import { useAppStore } from "../store/appStore";
 import { AccessibilitySettings } from "./AccessibilitySettings";
 import { ProfileMediaEditControl } from "./ProfileMediaEditControl";
@@ -10,14 +19,8 @@ import { VoiceVideoSettingsPanel } from "./VoiceVideoSettingsPanel";
 type Tab = "account" | "voice" | "appearance" | "accessibility";
 type DangerAction = "disable" | "delete" | null;
 
-const STORAGE_NOTIFY = "eb_notify_sound";
 const IMAGE_ACCEPT = "image/*,image/gif,.gif";
-
-function readBool(key: string, fallback: boolean) {
-  const v = localStorage.getItem(key);
-  if (v === null) return fallback;
-  return v === "1";
-}
+const NOTIFY_SOUND_ORDER: NotifySoundKind[] = ["channel", "dm", "friend"];
 
 export function UserSettingsModal() {
   const modal = useAppStore((s) => s.modal);
@@ -40,9 +43,12 @@ export function UserSettingsModal() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [dangerPassword, setDangerPassword] = useState("");
   const [dangerAction, setDangerAction] = useState<DangerAction>(null);
-  const [notifySound, setNotifySound] = useState(() =>
-    readBool(STORAGE_NOTIFY, true),
+  const [notifySounds, setNotifySounds] = useState<NotifySoundPrefs>(() =>
+    loadNotifySoundPrefs(),
   );
+  const [e2eBackupJson, setE2eBackupJson] = useState("");
+  const [e2eBackupMsg, setE2eBackupMsg] = useState<string | null>(null);
+  const e2eIdentityMissing = useAppStore((s) => s.e2eIdentityMissing);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -76,8 +82,8 @@ export function UserSettingsModal() {
   }, [modal, user]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_NOTIFY, notifySound ? "1" : "0");
-  }, [notifySound]);
+    saveNotifySoundPrefs(notifySounds);
+  }, [notifySounds]);
 
   useEffect(() => {
     if (modal !== "user-settings") return;
@@ -292,7 +298,7 @@ export function UserSettingsModal() {
                 {tab === "voice" &&
                   "Microphone, camera, and call audio settings."}
                 {tab === "appearance" &&
-                  "Themes, colors, and notification sound."}
+                  "Themes, colors, and notification sounds."}
                 {tab === "accessibility" &&
                   "Readability, density, contrast, and motion."}
               </p>
@@ -452,6 +458,92 @@ export function UserSettingsModal() {
                 </div>
               </form>
 
+              <div className="stack settings-section e2e-backup-section">
+                <h4>Encrypted messaging keys</h4>
+                <p className="muted tiny">
+                  Direct messages are encrypted on this device. Back up your keys
+                  before reinstalling or updating, then restore them here if this
+                  device lost access.
+                </p>
+                {e2eIdentityMissing ? (
+                  <p className="form-error tiny">
+                    Keys are missing on this device. Paste a backup below or use
+                    the device where you originally chatted.
+                  </p>
+                ) : null}
+                <label>
+                  Key backup (JSON)
+                  <textarea
+                    className="e2e-backup-textarea"
+                    rows={4}
+                    value={e2eBackupJson}
+                    onChange={(e) => setE2eBackupJson(e.target.value)}
+                    placeholder='{"publicKey":"…","privateKey":"…"}'
+                    spellCheck={false}
+                  />
+                </label>
+                {e2eBackupMsg ? <p className="form-ok tiny">{e2eBackupMsg}</p> : null}
+                <div className="row">
+                  <button
+                    type="button"
+                    className="btn ghost sm"
+                    disabled={busy || !user}
+                    onClick={async () => {
+                      if (!user) return;
+                      setE2eBackupMsg(null);
+                      const blob = await loadStoredIdentity(user.id);
+                      if (!blob) {
+                        setErr("No encryption keys found on this device.");
+                        return;
+                      }
+                      setE2eBackupJson(JSON.stringify(blob, null, 2));
+                      setE2eBackupMsg("Backup loaded from this device.");
+                    }}
+                  >
+                    Load from device
+                  </button>
+                  <button
+                    type="button"
+                    className="btn sm"
+                    disabled={busy || !user || !e2eBackupJson.trim()}
+                    onClick={async () => {
+                      if (!user) return;
+                      setBusy(true);
+                      setErr(null);
+                      setE2eBackupMsg(null);
+                      try {
+                        const parsed = JSON.parse(e2eBackupJson) as {
+                          publicKey?: string;
+                          privateKey?: string;
+                        };
+                        if (!parsed.publicKey || !parsed.privateKey) {
+                          throw new Error("Backup must include publicKey and privateKey.");
+                        }
+                        const pair = await restoreIdentityBackup(user.id, {
+                          publicKey: parsed.publicKey,
+                          privateKey: parsed.privateKey,
+                        });
+                        useAppStore.setState({
+                          identityPublicKey: pair.publicKeyB64,
+                          e2eIdentityMissing: false,
+                        });
+                        setE2eBackupMsg("Encryption keys restored.");
+                      } catch (e) {
+                        setErr(
+                          e instanceof Error
+                            ? e.message
+                            : "Could not restore encryption keys.",
+                        );
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    Restore backup
+                  </button>
+                </div>
+              </div>
+
               <div className="stack settings-form danger-zone">
                 <h4>Danger zone</h4>
                 <div className="danger-card">
@@ -505,14 +597,34 @@ export function UserSettingsModal() {
           {tab === "appearance" && (
             <div className="stack">
               <ThemeSettings />
-              <label className="toggle-row">
-                <span>Message notification sound</span>
-                <input
-                  type="checkbox"
-                  checked={notifySound}
-                  onChange={(e) => setNotifySound(e.target.checked)}
-                />
-              </label>
+              <div className="notify-sound-settings stack">
+                <h4 className="notify-sound-settings-title">Notification sounds</h4>
+                <p className="muted tiny notify-sound-settings-hint">
+                  Choose which alerts play a sound. Toasts and desktop
+                  notifications still appear when the app is in the background.
+                </p>
+                {NOTIFY_SOUND_ORDER.map((kind) => {
+                  const meta = NOTIFY_SOUND_LABELS[kind];
+                  return (
+                    <label key={kind} className="toggle-row notify-sound-row">
+                      <span>
+                        {meta.label}
+                        <em className="muted tiny">{meta.description}</em>
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={notifySounds[kind]}
+                        onChange={(e) =>
+                          setNotifySounds((prev) => ({
+                            ...prev,
+                            [kind]: e.target.checked,
+                          }))
+                        }
+                      />
+                    </label>
+                  );
+                })}
+              </div>
               <button
                 type="button"
                 className="a11y-related"

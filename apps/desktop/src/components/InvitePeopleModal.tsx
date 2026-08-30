@@ -25,6 +25,52 @@ function FriendAvatar({ user }: { user: UserPublic }) {
   return <span className="friends-avatar placeholder">{initial}</span>;
 }
 
+function InviteTargetRow({
+  target,
+  inviting,
+  showMemberBadge,
+  onInvite,
+}: {
+  target: InviteTarget;
+  inviting: boolean;
+  showMemberBadge: boolean;
+  onInvite: () => void;
+}) {
+  const presence = useAppStore((s) => s.presenceByUser[target.id]);
+  const displayName = target.user.display_name || target.user.username;
+
+  return (
+    <div className="invite-target-row">
+      <div className="invite-target-user">
+        <div className="friends-avatar-wrap sm">
+          <FriendAvatar user={target.user} />
+          {presence ? (
+            <span
+              className={`friends-status-dot status-${presence}`}
+              aria-hidden
+            />
+          ) : null}
+        </div>
+        <div className="invite-target-meta">
+          <strong>{displayName}</strong>
+          <span className="invite-target-sub">@{target.user.username}</span>
+        </div>
+        {showMemberBadge && target.kind === "member" ? (
+          <span className="invite-target-badge">Member</span>
+        ) : null}
+      </div>
+      <button
+        type="button"
+        className="invite-target-btn"
+        disabled={inviting}
+        onClick={onInvite}
+      >
+        {inviting ? "Sending…" : "Invite"}
+      </button>
+    </div>
+  );
+}
+
 type InviteTarget = {
   id: string;
   user: UserPublic;
@@ -230,7 +276,9 @@ export function InvitePeopleModal() {
           />
 
           <label className="invite-people-search">
-            {channel ? "Search friends & members" : "Search friends"}
+            <span className="invite-people-search-label">
+              {channel ? "Search friends & members" : "Search friends"}
+            </span>
             <input
               autoFocus
               value={query}
@@ -241,31 +289,16 @@ export function InvitePeopleModal() {
 
           <div className="invite-people-list">
             {inviteable.length === 0 ? (
-              <p className="muted">{emptyMsg}</p>
+              <p className="invite-people-empty">{emptyMsg}</p>
             ) : (
               inviteable.map((t) => (
-                <div key={t.id} className="friends-row">
-                  <div className="friends-peer">
-                    <FriendAvatar user={t.user} />
-                    <div>
-                      <strong>
-                        {t.user.display_name || t.user.username}
-                      </strong>
-                      <span className="muted">
-                        @{t.user.username}
-                        {channel && t.kind === "member" ? " · member" : ""}
-                      </span>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    className="btn primary sm"
-                    disabled={invitingId === t.id}
-                    onClick={() => void onInvite(t.id)}
-                  >
-                    {invitingId === t.id ? "…" : "Invite"}
-                  </button>
-                </div>
+                <InviteTargetRow
+                  key={t.id}
+                  target={t}
+                  inviting={invitingId === t.id}
+                  showMemberBadge={Boolean(channel)}
+                  onInvite={() => void onInvite(t.id)}
+                />
               ))
             )}
           </div>

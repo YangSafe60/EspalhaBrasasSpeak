@@ -70,6 +70,7 @@ export interface AppState {
   messagesByDm: Record<string, DmMessage[]>;
   activeDmId: string | null;
   identityPublicKey: string | null;
+  e2eIdentityMissing: boolean;
   peerPublicKeys: Record<string, string>;
   dmFingerprints: Record<string, string>;
 

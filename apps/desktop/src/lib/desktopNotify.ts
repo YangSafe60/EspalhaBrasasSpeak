@@ -1,14 +1,10 @@
 import { isAppFocused } from "./appFocus";
-import { formatOsNotification } from "./notifyFormat";
+import { mediaUrl } from "./mediaUrl";
+import { APP_NAME, toastContextLabel } from "./notifyFormat";
 import type { MessageToast } from "../types";
 
 const clickHandlers = new Map<string, () => void>();
 let clickListenerInstalled = false;
-
-function notifyIconUrl(): string {
-  if (typeof window === "undefined") return "/icon-192.png";
-  return new URL("/icon-192.png", window.location.origin).href;
-}
 
 function ensureElectronClickListener(): void {
   if (clickListenerInstalled) return;
@@ -24,15 +20,17 @@ function ensureElectronClickListener(): void {
   });
 }
 
-/** Show a native OS notification when the app is in the background. */
+/** Show a custom Discord-style popup when the app is in the background. */
 export function showDesktopNotification(opts: {
-  toast: Pick<MessageToast, "kind" | "authorName" | "channelName" | "preview">;
+  toast: Pick<
+    MessageToast,
+    "kind" | "authorName" | "authorAvatar" | "channelName" | "preview"
+  >;
   tag?: string;
   onClick?: () => void;
 }): void {
   if (isAppFocused()) return;
 
-  const { title, body } = formatOsNotification(opts.toast);
   const tag = opts.tag;
 
   if (tag && opts.onClick) {
@@ -42,19 +40,31 @@ export function showDesktopNotification(opts: {
   const api = window.electronAPI;
   if (api?.showNotification) {
     ensureElectronClickListener();
-    void api.showNotification({ title, body, tag, silent: true });
+    void api.showNotification({
+      tag,
+      appName: APP_NAME,
+      authorName: opts.toast.authorName,
+      authorAvatar: opts.toast.authorAvatar
+        ? mediaUrl(opts.toast.authorAvatar)
+        : null,
+      context: toastContextLabel(opts.toast),
+      preview: opts.toast.preview,
+    });
     return;
   }
 
   if (typeof Notification === "undefined") return;
   if (Notification.permission === "denied") return;
 
+  const title = opts.toast.authorName;
+  const body = `${toastContextLabel(opts.toast)} — ${opts.toast.preview}`;
+
   const show = () => {
     try {
-      const n = new Notification(title, {
-        body,
+      const n = new Notification(APP_NAME, {
+        body: `${title}\n${body}`,
         tag,
-        icon: notifyIconUrl(),
+        icon: new URL("/icon-192.png", window.location.origin).href,
         silent: true,
       });
       n.onclick = () => {

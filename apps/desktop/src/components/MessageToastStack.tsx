@@ -45,17 +45,15 @@ function ToastItem({
       }}
       aria-label={`Abrir mensagem de ${toast.authorName}`}
     >
-      <span className="message-toast-accent" aria-hidden />
       <header className="message-toast-head">
         <img
           src={logoMark}
           alt=""
           className="message-toast-brand"
-          width={18}
-          height={18}
+          width={16}
+          height={16}
         />
         <span className="message-toast-app">{APP_NAME}</span>
-        <span className="message-toast-context">{context}</span>
         <button
           type="button"
           className="message-toast-close"
@@ -82,14 +80,12 @@ function ToastItem({
         </span>
         <div className="message-toast-body">
           <strong className="message-toast-author">{toast.authorName}</strong>
+          {context ? (
+            <span className="message-toast-context">{context}</span>
+          ) : null}
           <p className="message-toast-preview">{toast.preview}</p>
         </div>
       </div>
-      <span
-        className="message-toast-progress"
-        style={{ animationDuration: `${TOAST_TTL_MS}ms` }}
-        aria-hidden
-      />
     </article>
   );
 }

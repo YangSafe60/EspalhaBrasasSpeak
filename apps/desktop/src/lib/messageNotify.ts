@@ -1,8 +1,4 @@
-const STORAGE_NOTIFY = "eb_notify_sound";
-
-export function messageNotifySoundEnabled(): boolean {
-  return localStorage.getItem(STORAGE_NOTIFY) !== "0";
-}
+import { notifySoundEnabled } from "./notifySoundPrefs";
 
 let sharedCtx: AudioContext | null = null;
 let audioPrimed = false;
@@ -31,9 +27,9 @@ function getContext(): AudioContext {
   return sharedCtx;
 }
 
-/** Soft chime for a new text message (respects Appearance → notify sound). */
-export function playMessageNotify() {
-  if (!messageNotifySoundEnabled()) return;
+/** Soft chime for a new channel or DM message. */
+export function playMessageNotify(kind: "channel" | "dm") {
+  if (!notifySoundEnabled(kind)) return;
   try {
     primeNotifyAudio();
     const ctx = getContext();
@@ -57,7 +53,7 @@ export function playMessageNotify() {
 
 /** Distinct tone for inbound friend requests. */
 export function playFriendRequestNotify() {
-  if (!messageNotifySoundEnabled()) return;
+  if (!notifySoundEnabled("friend")) return;
   try {
     primeNotifyAudio();
     const ctx = getContext();

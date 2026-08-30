@@ -113,6 +113,10 @@ pub fn router(state: AppState) -> Router {
             "/api/crypto/identity/{user_id}",
             get(friends::get_identity),
         )
+        .route(
+            "/api/crypto/identity/{user_id}/history",
+            get(friends::get_identity_history),
+        )
         .route("/api/friends", get(friends::list_friends))
         .route("/api/friends/request", post(friends::request_friend))
         .route(

@@ -53,6 +53,8 @@ export function DmMessageView() {
   const requestDmCallJoin = useAppStore((s) => s.requestDmCallJoin);
   const dmCallByChannel = useAppStore((s) => s.dmCallByChannel);
   const dmCallId = useAppStore((s) => s.dmCallId);
+  const e2eIdentityMissing = useAppStore((s) => s.e2eIdentityMissing);
+  const setModal = useAppStore((s) => s.setModal);
 
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -287,6 +289,25 @@ export function DmMessageView() {
           </span>
         </div>
       </header>
+
+      {e2eIdentityMissing ? (
+        <div className="e2e-identity-banner" role="alert">
+          <div>
+            <strong>Encryption keys missing on this device</strong>
+            <p className="muted tiny">
+              Old messages cannot be read until you restore your key backup.
+              New messages you send would also break history for other people.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="btn primary sm"
+            onClick={() => setModal("user-settings")}
+          >
+            Restore keys
+          </button>
+        </div>
+      ) : null}
 
       {peerInCall && !selfInCall ? (
         <div className="dm-call-banner">

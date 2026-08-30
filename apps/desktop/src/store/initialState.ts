@@ -27,6 +27,7 @@ export function createInitialState() {
     messagesByDm: {},
     activeDmId: null,
     identityPublicKey: null,
+    e2eIdentityMissing: false,
     peerPublicKeys: {},
     dmFingerprints: {},
 

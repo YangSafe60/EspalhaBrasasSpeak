@@ -3,13 +3,20 @@ import {
   BrowserWindow,
   desktopCapturer,
   ipcMain,
-  Notification,
+  screen,
   session,
   shell,
 } from "electron";
-import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
+
+import {
+  deleteE2eIdentity,
+  loadE2eIdentity,
+  saveE2eIdentity,
+} from "./e2eIdentityStore.mjs";
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -37,6 +44,132 @@ const pendingVoiceCommands = [];
 const popouts = new Map();
 /** Last update payload so the renderer can catch up if it mounted late. */
 let lastUpdatePayload = null;
+
+/** Custom Discord-style toast windows (bottom-right stack). */
+const notifyPopups = new Map();
+const NOTIFY_WIDTH = 400;
+const NOTIFY_HEIGHT = 108;
+const NOTIFY_MARGIN = 16;
+const NOTIFY_GAP = 10;
+const NOTIFY_TTL_MS = 7000;
+
+function notifyAppIconUrl() {
+  const candidates = [
+    path.join(__dirname, "..", "dist", "icon-192.png"),
+    path.join(__dirname, "..", "public", "icon-192.png"),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return pathToFileURL(candidate).href;
+    }
+  }
+  return "";
+}
+
+function notificationPopupPath() {
+  return path.join(__dirname, "notificationPopup.html");
+}
+
+function repositionNotifyPopups() {
+  const wins = [...notifyPopups.values()].filter((w) => w && !w.isDestroyed());
+  const area = screen.getPrimaryDisplay().workArea;
+  wins.forEach((win, index) => {
+    const y =
+      area.y +
+      area.height -
+      NOTIFY_MARGIN -
+      NOTIFY_HEIGHT -
+      index * (NOTIFY_HEIGHT + NOTIFY_GAP);
+    const x = area.x + area.width - NOTIFY_MARGIN - NOTIFY_WIDTH;
+    win.setBounds({
+      x: Math.round(x),
+      y: Math.round(y),
+      width: NOTIFY_WIDTH,
+      height: NOTIFY_HEIGHT,
+    });
+  });
+}
+
+function closeNotifyPopup(tag) {
+  if (!tag) return;
+  const win = notifyPopups.get(tag);
+  if (win && !win.isDestroyed()) {
+    win.destroy();
+  }
+  notifyPopups.delete(tag);
+  repositionNotifyPopups();
+}
+
+function showCustomNotifyPopup(opts) {
+  const tag =
+    typeof opts?.tag === "string" && opts.tag.trim()
+      ? opts.tag.trim()
+      : `notify-${Date.now()}`;
+
+  closeNotifyPopup(tag);
+
+  const win = new BrowserWindow({
+    width: NOTIFY_WIDTH,
+    height: NOTIFY_HEIGHT,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    focusable: false,
+    show: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    hasShadow: false,
+    webPreferences: {
+      preload: path.join(__dirname, "notificationPreload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: false,
+    },
+  });
+
+  notifyPopups.set(tag, win);
+  repositionNotifyPopups();
+
+  const payload = {
+    tag,
+    appName:
+      typeof opts?.appName === "string" && opts.appName.trim()
+        ? opts.appName.trim().slice(0, 60)
+        : DEFAULT_APP_TITLE,
+    appIcon: notifyAppIconUrl(),
+    authorName:
+      typeof opts?.authorName === "string"
+        ? opts.authorName.trim().slice(0, 80)
+        : "Someone",
+    authorAvatar:
+      typeof opts?.authorAvatar === "string" ? opts.authorAvatar : null,
+    context:
+      typeof opts?.context === "string" ? opts.context.trim().slice(0, 80) : "",
+    preview:
+      typeof opts?.preview === "string"
+        ? opts.preview.trim().slice(0, 240)
+        : "New message",
+  };
+
+  win.on("closed", () => {
+    notifyPopups.delete(tag);
+    repositionNotifyPopups();
+  });
+
+  const timer = setTimeout(() => closeNotifyPopup(tag), NOTIFY_TTL_MS);
+  win.on("closed", () => clearTimeout(timer));
+
+  win.webContents.once("did-finish-load", () => {
+    if (win.isDestroyed()) return;
+    win.webContents.send("notify:data", payload);
+    win.showInactive();
+  });
+
+  void win.loadFile(notificationPopupPath());
+  return true;
+}
 
 function preloadPath() {
   return path.join(__dirname, "preload.cjs");
@@ -98,7 +231,7 @@ function destroyVoiceHost() {
         /* ignore */
       }
     }
-    window.setTimeout(() => {
+    setTimeout(() => {
       if (!win.isDestroyed()) {
         try {
           win.destroy();
@@ -285,6 +418,25 @@ function installSessionHandlers() {
 }
 
 function registerIpc() {
+  ipcMain.on("notify:action", (_evt, payload) => {
+    const tag = typeof payload?.tag === "string" ? payload.tag : "";
+    if (payload?.action === "close") {
+      closeNotifyPopup(tag);
+      return;
+    }
+    if (payload?.action === "open") {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
+        mainWindow.focus();
+      }
+      if (tag) {
+        sendToMainRenderer("desktop:notify-click", { tag });
+      }
+      closeNotifyPopup(tag);
+    }
+  });
+
   ipcMain.handle("desktop:info", () => ({
     isElectron: true,
     appVersion: app.getVersion(),
@@ -306,35 +458,18 @@ function registerIpc() {
     return true;
   });
 
-  ipcMain.handle("desktop:notify", (_evt, opts) => {
-    if (!Notification.isSupported()) return false;
-    const title =
-      typeof opts?.title === "string" && opts.title.trim()
-        ? opts.title.trim().slice(0, 120)
-        : DEFAULT_APP_TITLE;
-    const body =
-      typeof opts?.body === "string" ? opts.body.trim().slice(0, 500) : "";
-    const tag = typeof opts?.tag === "string" ? opts.tag : undefined;
-    const icon = path.join(__dirname, "..", "public", "icon-192.png");
-    const n = new Notification({
-      title,
-      body,
-      icon,
-      silent: opts?.silent !== false,
-    });
-    n.on("click", () => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        if (mainWindow.isMinimized()) mainWindow.restore();
-        mainWindow.show();
-        mainWindow.focus();
-      }
-      if (tag) {
-        sendToMainRenderer("desktop:notify-click", { tag });
-      }
-    });
-    n.show();
+  ipcMain.handle("desktop:notify", (_evt, opts) => showCustomNotifyPopup(opts));
+
+  ipcMain.handle("crypto:identity:load", (_evt, userId) =>
+    loadE2eIdentity(userId),
+  );
+  ipcMain.handle("crypto:identity:save", (_evt, userId, data) => {
+    saveE2eIdentity(userId, data);
     return true;
   });
+  ipcMain.handle("crypto:identity:delete", (_evt, userId) =>
+    deleteE2eIdentity(userId),
+  );
 
   /** Updates taskbar + Windows Task Manager process label while in voice. */
   ipcMain.handle("window:set-title", (_evt, title) => {

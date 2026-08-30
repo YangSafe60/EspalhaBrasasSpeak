@@ -588,6 +588,7 @@ export const createWsSlice: AppStoreSlice = (set, get) => ({
             const message = await decryptWireResilient(
               event.message,
               peerId,
+              user.id,
               (id) => get().peerPublicKeys[id],
               (id, key) =>
                 set((s) => ({
@@ -659,6 +660,7 @@ export const createWsSlice: AppStoreSlice = (set, get) => ({
             const message = await decryptWireResilient(
               event.message,
               dm.peer.id,
+              get().user!.id,
               (id) => get().peerPublicKeys[id],
               (id, key) =>
                 set((s) => ({

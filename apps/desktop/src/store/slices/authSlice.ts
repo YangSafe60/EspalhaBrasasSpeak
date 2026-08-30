@@ -10,6 +10,7 @@ import { normalizePresenceStatus } from "../../lib/presence";
 import { applyAuth } from "../helpers/authHelpers";
 import {
   ensureIdentity,
+  isIdentityMissingError,
   resetIdentityCache,
 } from "../helpers/dmHelpers";
 import type { AuthResponse, Member, PresenceStatus, UserAccount } from "../../types";
@@ -45,10 +46,12 @@ export const createAuthSlice: AppStoreSlice = (set, get) => ({
       void get().loadMyEmojis();
       try {
         const id = await ensureIdentity(account.id);
-        set({ identityPublicKey: id.publicKeyB64 });
+        set({ identityPublicKey: id.publicKeyB64, e2eIdentityMissing: false });
         await Promise.all([get().loadFriends(), get().loadDms()]);
-      } catch {
-        /* E2E bootstrap best-effort */
+      } catch (error) {
+        if (isIdentityMissingError(error)) {
+          set({ e2eIdentityMissing: true });
+        }
       }
     } catch {
       clearTokens();
@@ -73,10 +76,12 @@ export const createAuthSlice: AppStoreSlice = (set, get) => ({
     await get().loadServers();
     try {
       const id = await ensureIdentity(data.user.id);
-      set({ identityPublicKey: id.publicKeyB64 });
+      set({ identityPublicKey: id.publicKeyB64, e2eIdentityMissing: false });
       await Promise.all([get().loadFriends(), get().loadDms()]);
-    } catch {
-      /* best effort */
+    } catch (error) {
+      if (isIdentityMissingError(error)) {
+        set({ e2eIdentityMissing: true });
+      }
     }
   },
 
@@ -100,10 +105,12 @@ export const createAuthSlice: AppStoreSlice = (set, get) => ({
     await get().loadServers();
     try {
       const id = await ensureIdentity(data.user.id);
-      set({ identityPublicKey: id.publicKeyB64 });
+      set({ identityPublicKey: id.publicKeyB64, e2eIdentityMissing: false });
       await Promise.all([get().loadFriends(), get().loadDms()]);
-    } catch {
-      /* best effort */
+    } catch (error) {
+      if (isIdentityMissingError(error)) {
+        set({ e2eIdentityMissing: true });
+      }
     }
   },
 
@@ -135,6 +142,7 @@ export const createAuthSlice: AppStoreSlice = (set, get) => ({
       messagesByDm: {},
       activeDmId: null,
       identityPublicKey: null,
+      e2eIdentityMissing: false,
       peerPublicKeys: {},
       dmFingerprints: {},
       activeServerId: null,

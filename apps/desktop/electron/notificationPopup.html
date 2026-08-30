@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="pt">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Notification</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+        font-family: "Segoe UI", "Helvetica Neue", system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .notify-card {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        border-radius: 8px;
+        overflow: hidden;
+        background: #111214;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow:
+          0 12px 32px rgba(0, 0, 0, 0.5),
+          0 0 0 1px rgba(0, 0, 0, 0.35);
+        cursor: pointer;
+      }
+
+      .notify-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 10px;
+        background: #0d0e10;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+
+      .notify-head img.app-icon {
+        width: 16px;
+        height: 16px;
+        border-radius: 4px;
+        object-fit: cover;
+        flex-shrink: 0;
+      }
+
+      .notify-head .app-name {
+        flex: 1;
+        font-size: 12px;
+        font-weight: 600;
+        color: #f2f3f5;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .notify-head button {
+        border: none;
+        background: transparent;
+        color: #b5bac1;
+        width: 22px;
+        height: 22px;
+        border-radius: 4px;
+        display: grid;
+        place-items: center;
+        font-size: 16px;
+        line-height: 1;
+        cursor: pointer;
+      }
+
+      .notify-head button:hover {
+        color: #f2f3f5;
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      .notify-body {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 10px 12px 12px;
+        min-height: 0;
+        flex: 1;
+      }
+
+      .notify-avatar {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        overflow: hidden;
+        flex-shrink: 0;
+        display: grid;
+        place-items: center;
+        background: #1e1f22;
+        color: #fff;
+        font-size: 15px;
+        font-weight: 700;
+      }
+
+      .notify-avatar img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .notify-copy {
+        min-width: 0;
+        flex: 1;
+      }
+
+      .notify-author {
+        font-size: 14px;
+        font-weight: 700;
+        color: #f2f3f5;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .notify-context {
+        margin-top: 1px;
+        font-size: 11px;
+        font-weight: 500;
+        color: #949ba4;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .notify-preview {
+        margin-top: 3px;
+        font-size: 13px;
+        line-height: 1.35;
+        color: #dbdee1;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+    </style>
+  </head>
+  <body>
+    <article class="notify-card" id="card" hidden>
+      <header class="notify-head">
+        <img id="appIcon" class="app-icon" alt="" />
+        <span id="appName" class="app-name"></span>
+        <button type="button" id="closeBtn" aria-label="Fechar">×</button>
+      </header>
+      <div class="notify-body">
+        <div id="avatar" class="notify-avatar"></div>
+        <div class="notify-copy">
+          <div id="author" class="notify-author"></div>
+          <div id="context" class="notify-context" hidden></div>
+          <p id="preview" class="notify-preview"></p>
+        </div>
+      </div>
+    </article>
+    <script>
+      let currentTag = "";
+
+      function escapeText(value) {
+        return String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+
+      function render(data) {
+        currentTag = data.tag || "";
+        document.getElementById("appName").textContent = data.appName || "Espalha Brasas";
+        if (data.appIcon) {
+          document.getElementById("appIcon").src = data.appIcon;
+          document.getElementById("appIcon").hidden = false;
+        } else {
+          document.getElementById("appIcon").hidden = true;
+        }
+
+        const avatarEl = document.getElementById("avatar");
+        avatarEl.textContent = "";
+        if (data.authorAvatar) {
+          const img = document.createElement("img");
+          img.src = data.authorAvatar;
+          img.alt = "";
+          img.referrerPolicy = "no-referrer";
+          avatarEl.appendChild(img);
+        } else {
+          avatarEl.textContent = (data.authorName || "?").charAt(0).toUpperCase();
+        }
+
+        document.getElementById("author").textContent = data.authorName || "Someone";
+        const contextEl = document.getElementById("context");
+        if (data.context) {
+          contextEl.textContent = data.context;
+          contextEl.hidden = false;
+        } else {
+          contextEl.hidden = true;
+        }
+        document.getElementById("preview").textContent = data.preview || "New message";
+        document.getElementById("card").hidden = false;
+      }
+
+      document.getElementById("closeBtn").addEventListener("click", (e) => {
+        e.stopPropagation();
+        window.notifyAPI.action({ tag: currentTag, action: "close" });
+      });
+
+      document.getElementById("card").addEventListener("click", () => {
+        window.notifyAPI.action({ tag: currentTag, action: "open" });
+      });
+
+      window.notifyAPI.onData(render);
+    </script>
+  </body>
+</html>

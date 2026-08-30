@@ -3,6 +3,7 @@ import type { DmChannel, MessageToast } from "../types";
 import { isAppFocused } from "./appFocus";
 import { showDesktopNotification } from "./desktopNotify";
 import { playFriendRequestNotify, playMessageNotify } from "./messageNotify";
+import { notifySoundEnabled } from "./notifySoundPrefs";
 
 export function isDmNotificationsMuted(
   state: AppState,
@@ -35,7 +36,10 @@ export function deliverMessageAlert(opts: {
   onOpen: () => void | Promise<void>;
   playSound?: boolean;
 }): void {
-  if (opts.playSound !== false) playMessageNotify();
+  if (opts.playSound !== false) {
+    const kind = opts.toast.kind === "dm" ? "dm" : "channel";
+    if (notifySoundEnabled(kind)) playMessageNotify(kind);
+  }
   opts.pushToast(opts.toast);
   showDesktopNotification({
     toast: opts.toast,
@@ -49,7 +53,7 @@ export function deliverFriendRequestAlert(opts: {
   pushToast: (toast: MessageToast) => void;
   onOpen: () => void | Promise<void>;
 }): void {
-  playFriendRequestNotify();
+  if (notifySoundEnabled("friend")) playFriendRequestNotify();
   opts.pushToast(opts.toast);
   showDesktopNotification({
     toast: opts.toast,

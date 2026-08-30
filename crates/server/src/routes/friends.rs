@@ -9,7 +9,8 @@ use axum::{
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use speakapp_shared::{
-    DmChannel, Friendship, FriendshipStatus, FriendsList, UserIdentityKey, UserPublic, WsEvent,
+    DmChannel, Friendship, FriendshipStatus, FriendsList, UserIdentityKey,
+    UserIdentityKeyHistory, UserIdentityKeyHistoryEntry, UserPublic, WsEvent,
 };
 use uuid::Uuid;
 
@@ -149,6 +150,31 @@ pub struct PutIdentityReq {
     pub public_key: String,
 }
 
+async fn require_identity_access(
+    db: &sqlx::SqlitePool,
+    viewer: Uuid,
+    target: Uuid,
+) -> AppResult<()> {
+    if viewer == target {
+        return Ok(());
+    }
+    let friends = are_friends(db, viewer, target).await?;
+    let shared_dm: Option<i64> = sqlx::query_scalar(
+        r#"SELECT 1 FROM dm_participants a
+           INNER JOIN dm_participants b ON a.dm_channel_id = b.dm_channel_id
+           WHERE a.user_id = ? AND b.user_id = ?
+           LIMIT 1"#,
+    )
+    .bind(viewer.to_string())
+    .bind(target.to_string())
+    .fetch_optional(db)
+    .await?;
+    if !friends && shared_dm.is_none() {
+        return Err(AppError::Forbidden);
+    }
+    Ok(())
+}
+
 pub async fn put_identity(
     State(state): State<AppState>,
     user: AuthUser,
@@ -159,27 +185,52 @@ pub async fn put_identity(
         return Err(AppError::BadRequest("invalid public key".into()));
     }
     let now = Utc::now().to_rfc3339();
+    let uid = user.id.to_string();
+
+    let existing: Option<(String, String)> = sqlx::query_as(
+        "SELECT public_key, created_at FROM user_identity_keys WHERE user_id = ?",
+    )
+    .bind(&uid)
+    .fetch_optional(&state.db)
+    .await?;
+
+    if let Some((old_key, old_created)) = existing {
+        if old_key == key {
+            return Ok(Json(UserIdentityKey {
+                user_id: user.id,
+                public_key: key.to_string(),
+                created_at: parse_dt(&old_created),
+            }));
+        }
+        sqlx::query(
+            r#"INSERT INTO user_identity_key_history (id, user_id, public_key, active_from, retired_at)
+               VALUES (?, ?, ?, ?, ?)"#,
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(&uid)
+        .bind(&old_key)
+        .bind(&old_created)
+        .bind(&now)
+        .execute(&state.db)
+        .await?;
+    }
+
     sqlx::query(
         r#"INSERT INTO user_identity_keys (user_id, public_key, created_at) VALUES (?, ?, ?)
-           ON CONFLICT(user_id) DO UPDATE SET public_key = excluded.public_key"#,
+           ON CONFLICT(user_id) DO UPDATE SET
+             public_key = excluded.public_key,
+             created_at = excluded.created_at"#,
     )
-    .bind(user.id.to_string())
+    .bind(&uid)
     .bind(key)
     .bind(&now)
     .execute(&state.db)
     .await?;
 
-    let created: String = sqlx::query_scalar(
-        "SELECT created_at FROM user_identity_keys WHERE user_id = ?",
-    )
-    .bind(user.id.to_string())
-    .fetch_one(&state.db)
-    .await?;
-
     Ok(Json(UserIdentityKey {
         user_id: user.id,
         public_key: key.to_string(),
-        created_at: parse_dt(&created),
+        created_at: parse_dt(&now),
     }))
 }
 
@@ -188,22 +239,7 @@ pub async fn get_identity(
     user: AuthUser,
     Path(user_id): Path<Uuid>,
 ) -> AppResult<Json<UserIdentityKey>> {
-    if user.id != user_id {
-        let friends = are_friends(&state.db, user.id, user_id).await?;
-        let shared_dm: Option<i64> = sqlx::query_scalar(
-            r#"SELECT 1 FROM dm_participants a
-               INNER JOIN dm_participants b ON a.dm_channel_id = b.dm_channel_id
-               WHERE a.user_id = ? AND b.user_id = ?
-               LIMIT 1"#,
-        )
-        .bind(user.id.to_string())
-        .bind(user_id.to_string())
-        .fetch_optional(&state.db)
-        .await?;
-        if !friends && shared_dm.is_none() {
-            return Err(AppError::Forbidden);
-        }
-    }
+    require_identity_access(&state.db, user.id, user_id).await?;
     let row = sqlx::query_as::<_, (String, String, String)>(
         "SELECT user_id, public_key, created_at FROM user_identity_keys WHERE user_id = ?",
     )
@@ -215,6 +251,48 @@ pub async fn get_identity(
         user_id: Uuid::parse_str(&row.0).unwrap(),
         public_key: row.1,
         created_at: parse_dt(&row.2),
+    }))
+}
+
+pub async fn get_identity_history(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(user_id): Path<Uuid>,
+) -> AppResult<Json<UserIdentityKeyHistory>> {
+    require_identity_access(&state.db, user.id, user_id).await?;
+
+    let current = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT user_id, public_key, created_at FROM user_identity_keys WHERE user_id = ?",
+    )
+    .bind(user_id.to_string())
+    .fetch_optional(&state.db)
+    .await?;
+
+    let history_rows = sqlx::query_as::<_, (String, String, String)>(
+        r#"SELECT public_key, active_from, retired_at
+           FROM user_identity_key_history
+           WHERE user_id = ?
+           ORDER BY retired_at DESC"#,
+    )
+    .bind(user_id.to_string())
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(Json(UserIdentityKeyHistory {
+        user_id,
+        current: current.map(|row| UserIdentityKey {
+            user_id: Uuid::parse_str(&row.0).unwrap(),
+            public_key: row.1,
+            created_at: parse_dt(&row.2),
+        }),
+        history: history_rows
+            .into_iter()
+            .map(|row| UserIdentityKeyHistoryEntry {
+                public_key: row.0,
+                active_from: parse_dt(&row.1),
+                retired_at: parse_dt(&row.2),
+            })
+            .collect(),
     }))
 }
 

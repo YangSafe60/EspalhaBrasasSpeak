@@ -83,6 +83,8 @@ fn row_to_message(
     author_id: String,
     ciphertext: String,
     nonce: String,
+    sender_public_key: Option<String>,
+    recipient_public_key: Option<String>,
     reply_to_id: Option<String>,
     edited_at: Option<String>,
     created_at: String,
@@ -93,6 +95,8 @@ fn row_to_message(
         author_id: Uuid::parse_str(&author_id).unwrap(),
         ciphertext,
         nonce,
+        sender_public_key,
+        recipient_public_key,
         reply_to_id: reply_to_id.and_then(|s| Uuid::parse_str(&s).ok()),
         edited_at: edited_at.map(|s| parse_dt(&s)),
         created_at: parse_dt(&created_at),
@@ -107,12 +111,14 @@ async fn load_dm_message(db: &sqlx::SqlitePool, id: Uuid) -> AppResult<DmMessage
         author_id: String,
         ciphertext: String,
         nonce: String,
+        sender_public_key: Option<String>,
+        recipient_public_key: Option<String>,
         reply_to_id: Option<String>,
         edited_at: Option<String>,
         created_at: String,
     }
     let row = sqlx::query_as::<_, Row>(
-        "SELECT id, dm_channel_id, author_id, ciphertext, nonce, reply_to_id, edited_at, created_at FROM dm_messages WHERE id = ?",
+        "SELECT id, dm_channel_id, author_id, ciphertext, nonce, sender_public_key, recipient_public_key, reply_to_id, edited_at, created_at FROM dm_messages WHERE id = ?",
     )
     .bind(id.to_string())
     .fetch_optional(db)
@@ -124,6 +130,8 @@ async fn load_dm_message(db: &sqlx::SqlitePool, id: Uuid) -> AppResult<DmMessage
         row.author_id,
         row.ciphertext,
         row.nonce,
+        row.sender_public_key,
+        row.recipient_public_key,
         row.reply_to_id,
         row.edited_at,
         row.created_at,
@@ -173,6 +181,8 @@ pub async fn list_messages(
         author_id: String,
         ciphertext: String,
         nonce: String,
+        sender_public_key: Option<String>,
+        recipient_public_key: Option<String>,
         reply_to_id: Option<String>,
         edited_at: Option<String>,
         created_at: String,
@@ -186,7 +196,7 @@ pub async fn list_messages(
                 .await?
                 .ok_or(AppError::BadRequest("invalid before cursor".into()))?;
         sqlx::query_as::<_, Row>(
-            r#"SELECT id, dm_channel_id, author_id, ciphertext, nonce, reply_to_id, edited_at, created_at
+            r#"SELECT id, dm_channel_id, author_id, ciphertext, nonce, sender_public_key, recipient_public_key, reply_to_id, edited_at, created_at
                FROM dm_messages
                WHERE dm_channel_id = ? AND created_at < ?
                ORDER BY created_at DESC
@@ -199,7 +209,7 @@ pub async fn list_messages(
         .await?
     } else {
         sqlx::query_as::<_, Row>(
-            r#"SELECT id, dm_channel_id, author_id, ciphertext, nonce, reply_to_id, edited_at, created_at
+            r#"SELECT id, dm_channel_id, author_id, ciphertext, nonce, sender_public_key, recipient_public_key, reply_to_id, edited_at, created_at
                FROM dm_messages
                WHERE dm_channel_id = ?
                ORDER BY created_at DESC
@@ -220,6 +230,8 @@ pub async fn list_messages(
                 r.author_id,
                 r.ciphertext,
                 r.nonce,
+                r.sender_public_key,
+                r.recipient_public_key,
                 r.reply_to_id,
                 r.edited_at,
                 r.created_at,
@@ -234,7 +246,23 @@ pub async fn list_messages(
 pub struct CreateDmMessageReq {
     pub ciphertext: String,
     pub nonce: String,
+    pub sender_public_key: Option<String>,
+    pub recipient_public_key: Option<String>,
     pub reply_to_id: Option<Uuid>,
+}
+
+fn normalize_public_key(key: Option<String>) -> AppResult<Option<String>> {
+    let Some(raw) = key else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if trimmed.len() > 256 {
+        return Err(AppError::BadRequest("invalid public key".into()));
+    }
+    Ok(Some(trimmed.to_string()))
 }
 
 pub async fn create_message(
@@ -258,17 +286,21 @@ pub async fn create_message(
     if ct.len() > 64_000 || nonce.len() > 128 {
         return Err(AppError::BadRequest("payload too large".into()));
     }
+    let sender_public_key = normalize_public_key(body.sender_public_key)?;
+    let recipient_public_key = normalize_public_key(body.recipient_public_key)?;
 
     let msg_id = Uuid::new_v4();
     let now = Utc::now().to_rfc3339();
     sqlx::query(
-        "INSERT INTO dm_messages (id, dm_channel_id, author_id, ciphertext, nonce, reply_to_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO dm_messages (id, dm_channel_id, author_id, ciphertext, nonce, sender_public_key, recipient_public_key, reply_to_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(msg_id.to_string())
     .bind(id.to_string())
     .bind(user.id.to_string())
     .bind(ct)
     .bind(nonce)
+    .bind(sender_public_key.as_deref())
+    .bind(recipient_public_key.as_deref())
     .bind(body.reply_to_id.map(|r| r.to_string()))
     .bind(&now)
     .execute(&state.db)
@@ -378,6 +410,8 @@ pub async fn open_dm_by_friendship(
 pub struct UpdateDmMessageReq {
     pub ciphertext: String,
     pub nonce: String,
+    pub sender_public_key: Option<String>,
+    pub recipient_public_key: Option<String>,
 }
 
 pub async fn update_message(
@@ -413,13 +447,17 @@ pub async fn update_message(
     if ct.is_empty() || nonce.is_empty() {
         return Err(AppError::BadRequest("ciphertext and nonce required".into()));
     }
+    let sender_public_key = normalize_public_key(body.sender_public_key)?;
+    let recipient_public_key = normalize_public_key(body.recipient_public_key)?;
 
     let now = Utc::now().to_rfc3339();
     sqlx::query(
-        "UPDATE dm_messages SET ciphertext = ?, nonce = ?, edited_at = ? WHERE id = ?",
+        "UPDATE dm_messages SET ciphertext = ?, nonce = ?, sender_public_key = COALESCE(?, sender_public_key), recipient_public_key = COALESCE(?, recipient_public_key), edited_at = ? WHERE id = ?",
     )
     .bind(ct)
     .bind(nonce)
+    .bind(sender_public_key.as_deref())
+    .bind(recipient_public_key.as_deref())
     .bind(&now)
     .bind(id.to_string())
     .execute(&state.db)
