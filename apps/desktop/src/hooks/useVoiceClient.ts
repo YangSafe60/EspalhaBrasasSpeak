@@ -53,6 +53,7 @@ export function useVoiceClient() {
   const roomRef = useRef(null);
   const hostConnectedRef = useRef(false);
   const wasConnectedRef = useRef(false);
+  const voiceHostUsedRef = useRef(false);
   const joiningRef = useRef(false);
   joiningRef.current = joining;
   const leaveFallbackTimerRef = useRef<number | null>(null);
@@ -141,10 +142,18 @@ export function useVoiceClient() {
         !evt.voiceChannelId &&
         !evt.dmCallId &&
         !evt.error &&
-        !hostConnectedRef.current &&
-        !wasConnectedRef.current
+        !voiceHostUsedRef.current
       ) {
         return;
+      }
+
+      if (
+        evt.connected ||
+        evt.joining ||
+        evt.voiceChannelId ||
+        evt.dmCallId
+      ) {
+        voiceHostUsedRef.current = true;
       }
 
       hostConnectedRef.current = evt.connected;
@@ -181,6 +190,7 @@ export function useVoiceClient() {
         teardownScreenBridgeForVoiceLeave();
         void closeAllScreenPopouts();
         if (!evt.connected) {
+          voiceHostUsedRef.current = false;
           teardownVoiceHostProcess();
         }
       } else if (evt.connected) {
@@ -226,6 +236,7 @@ export function useVoiceClient() {
     const offEvt = api.onVoiceEvent((evt: VoiceHostEvent) => {
       if (evt.op === "state") applyHostState(evt);
       if (evt.op === "host-idle") {
+        voiceHostUsedRef.current = false;
         teardownVoiceHostProcess();
         resetVoiceSession();
       }
@@ -273,6 +284,7 @@ export function useVoiceClient() {
     setError(null);
     setVoiceChannelId(channelId);
     setDmCallId(null);
+    voiceHostUsedRef.current = true;
     setVoiceLocal({ voiceChannelId: channelId, dmCallId: null });
     await window.electronAPI?.ensureVoiceHost?.();
     syncLocalToHost();
@@ -284,6 +296,7 @@ export function useVoiceClient() {
     setError(null);
     setDmCallId(dmId);
     setVoiceChannelId(null);
+    voiceHostUsedRef.current = true;
     setVoiceLocal({ dmCallId: dmId, voiceChannelId: null });
     await window.electronAPI?.ensureVoiceHost?.();
     syncLocalToHost();
@@ -293,11 +306,17 @@ export function useVoiceClient() {
   const leave = useCallback(async () => {
     const wasIn = wasConnectedRef.current;
     const dmId = useAppStore.getState().dmCallId;
+    const hadVoiceHost =
+      voiceHostUsedRef.current ||
+      hostConnectedRef.current ||
+      joiningRef.current;
+    if (hadVoiceHost) {
+      send({ op: "leave" });
+    }
     resetVoiceSession();
     if (wasIn && !deafened) {
       playVoiceLeaveSound();
     }
-    send({ op: "leave" });
     try {
       if (dmId) {
         await api(`/api/dms/${dmId}/call/state`, {
@@ -313,8 +332,12 @@ export function useVoiceClient() {
     } catch {
       /* voice host also clears server state */
     }
-    scheduleVoiceHostTeardown(800);
-  }, [deafened, resetVoiceSession, scheduleVoiceHostTeardown]);
+    if (hadVoiceHost) {
+      scheduleVoiceHostTeardown(2500);
+    } else {
+      teardownVoiceHostProcess();
+    }
+  }, [deafened, resetVoiceSession, scheduleVoiceHostTeardown, teardownVoiceHostProcess]);
 
   const voiceSessionActive = useCallback(() => {
     const s = useAppStore.getState();

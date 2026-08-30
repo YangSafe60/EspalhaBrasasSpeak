@@ -144,6 +144,7 @@ export function VoiceHostApp() {
     wasActiveRef.current = false;
     void window.electronAPI?.publishVoiceEvent?.(stripScreens(engine));
     stopVoiceHostLobbyRelay();
+    void window.electronAPI?.publishVoiceEvent?.({ op: "host-idle" });
   }, [
     engine.connected,
     engine.joining,

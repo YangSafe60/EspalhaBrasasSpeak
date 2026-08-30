@@ -38,8 +38,7 @@ export function deliverMessageAlert(opts: {
   if (opts.playSound !== false) playMessageNotify();
   opts.pushToast(opts.toast);
   showDesktopNotification({
-    title: opts.toast.authorName,
-    body: opts.toast.preview,
+    toast: opts.toast,
     tag: opts.toast.id,
     onClick: () => void opts.onOpen(),
   });
@@ -53,8 +52,7 @@ export function deliverFriendRequestAlert(opts: {
   playFriendRequestNotify();
   opts.pushToast(opts.toast);
   showDesktopNotification({
-    title: opts.toast.authorName,
-    body: opts.toast.preview,
+    toast: opts.toast,
     tag: opts.toast.id,
     onClick: () => void opts.onOpen(),
   });

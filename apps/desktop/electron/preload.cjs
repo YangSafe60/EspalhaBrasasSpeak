@@ -10,6 +10,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getInfo: () => ipcRenderer.invoke("desktop:info"),
   getAppUpdate: () => ipcRenderer.invoke("app:update:get"),
   focusMain: () => ipcRenderer.invoke("window:focus-main"),
+  showNotification: (opts) => ipcRenderer.invoke("desktop:notify", opts),
+  onNotificationClick: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on("desktop:notify-click", listener);
+    return () => ipcRenderer.removeListener("desktop:notify-click", listener);
+  },
   setWindowTitle: (title) => ipcRenderer.invoke("window:set-title", title),
   setBackgroundThrottling: (enabled) =>
     ipcRenderer.invoke("window:set-background-throttling", enabled),

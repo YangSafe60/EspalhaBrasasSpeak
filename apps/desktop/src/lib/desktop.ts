@@ -17,6 +17,13 @@ export type ElectronAPI = {
   }>;
   getAppUpdate: () => Promise<AppUpdateEvent | null>;
   focusMain: () => Promise<boolean>;
+  showNotification?: (opts: {
+    title: string;
+    body: string;
+    tag?: string;
+    silent?: boolean;
+  }) => Promise<boolean>;
+  onNotificationClick?: (handler: (payload: { tag?: string }) => void) => () => void;
   /** Main window + process title (e.g. voice channel label in Task Manager). */
   setWindowTitle: (title: string) => Promise<boolean>;
   setBackgroundThrottling: (enabled: boolean) => Promise<boolean>;

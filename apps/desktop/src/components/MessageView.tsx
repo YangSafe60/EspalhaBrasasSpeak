@@ -15,10 +15,10 @@ import {
 } from "../lib/serverPerms";
 import { matchCustomEmojiToken } from "../lib/customEmoji";
 import { mediaUrl } from "../lib/mediaUrl";
-import { isImageAttachment } from "../store/helpers/messageHelpers";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { EmojiPickerButton } from "./EmojiPickerButton";
 import { GifPickerButton, type GifHit } from "./GifPickerButton";
+import { MessageAttachment } from "./MessageAttachment";
 import { MessageContent } from "./MessageContent";
 import { MessageEmbeds } from "./MessageEmbeds";
 import { useAppStore } from "../store/appStore";
@@ -622,21 +622,13 @@ export function MessageView() {
 
                 {m.attachments?.length > 0 && (
                   <div className="attachments">
-                    {m.attachments.map((a) =>
-                      isImageAttachment(a) ? (
-                        <a key={a.id} href={mediaUrl(a.url)} target="_blank" rel="noreferrer">
-                          <img
-                            src={mediaUrl(a.url)}
-                            alt={a.filename}
-                            referrerPolicy="no-referrer"
-                          />
-                        </a>
-                      ) : (
-                        <a key={a.id} href={mediaUrl(a.url)} target="_blank" rel="noreferrer">
-                          {a.filename}
-                        </a>
-                      ),
-                    )}
+                    {m.attachments.map((a) => (
+                      <MessageAttachment
+                        key={a.id}
+                        attachment={a}
+                        allowDownload={!mine}
+                      />
+                    ))}
                   </div>
                 )}
 

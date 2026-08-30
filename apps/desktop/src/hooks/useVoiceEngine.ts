@@ -249,7 +249,16 @@ export function useVoiceEngine() {
             return;
           }
           seen.add(pub.trackSid);
-          const optedIn = watchingScreensRef.current.has(pub.trackSid);
+          let optedIn = watchingScreensRef.current.has(pub.trackSid);
+          if (activeSessionRef.current?.kind === "dm") {
+            if (!optedIn) {
+              watchingScreensRef.current.add(pub.trackSid);
+              optedIn = true;
+            }
+            if (!pub.isSubscribed) {
+              pub.setSubscribed(true);
+            }
+          }
           if (!optedIn && pub.isSubscribed) {
             pub.setSubscribed(false);
           }

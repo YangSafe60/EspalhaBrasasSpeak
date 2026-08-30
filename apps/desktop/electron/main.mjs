@@ -1,4 +1,12 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, session, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  desktopCapturer,
+  ipcMain,
+  Notification,
+  session,
+  shell,
+} from "electron";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +30,8 @@ let voiceHostWindow = null;
 let voiceHostReady = false;
 /** Block respawn while tearing down or shortly after destroy. */
 let voiceHostTeardownUntil = 0;
+/** True while a voice/DM session should keep (or spin up) the hidden host. */
+let voiceHostSessionActive = false;
 /** Commands queued until the hidden voice renderer finishes booting. */
 const pendingVoiceCommands = [];
 const popouts = new Map();
@@ -63,12 +73,20 @@ function markVoiceHostReady() {
 
 function destroyVoiceHost() {
   voiceHostReady = false;
-  voiceHostTeardownUntil = Date.now() + 3000;
+  voiceHostSessionActive = false;
+  voiceHostTeardownUntil = Date.now() + 5000;
   pendingVoiceCommands.length = 0;
   if (voiceHostWindow && !voiceHostWindow.isDestroyed()) {
-    const wc = voiceHostWindow.webContents;
+    const win = voiceHostWindow;
+    voiceHostWindow = null;
+    const wc = win.webContents;
     if (wc && !wc.isDestroyed()) {
       wc.setBackgroundThrottling(true);
+      try {
+        void wc.loadURL("about:blank");
+      } catch {
+        /* ignore */
+      }
       try {
         wc.clearCache();
       } catch {
@@ -80,13 +98,27 @@ function destroyVoiceHost() {
         /* ignore */
       }
     }
-    try {
-      voiceHostWindow.destroy();
-    } catch {
-      /* ignore */
-    }
+    window.setTimeout(() => {
+      if (!win.isDestroyed()) {
+        try {
+          win.destroy();
+        } catch {
+          /* ignore */
+        }
+      }
+    }, 150);
+  } else {
+    voiceHostWindow = null;
   }
-  voiceHostWindow = null;
+}
+
+/** Commands that must never recreate the hidden LiveKit window. */
+function voiceHostNoSpawnOps(op) {
+  return op === "sync-local" || op === "leave";
+}
+
+function markVoiceHostSessionActive(active) {
+  voiceHostSessionActive = Boolean(active);
 }
 
 function voiceHostSessionOps(op) {
@@ -115,6 +147,9 @@ function voiceHostSessionOps(op) {
 
 function ensureVoiceHostWindow() {
   if (Date.now() < voiceHostTeardownUntil) {
+    return Promise.resolve(false);
+  }
+  if (!voiceHostSessionActive) {
     return Promise.resolve(false);
   }
   if (voiceHostWindow && !voiceHostWindow.isDestroyed() && voiceHostReady) {
@@ -271,6 +306,36 @@ function registerIpc() {
     return true;
   });
 
+  ipcMain.handle("desktop:notify", (_evt, opts) => {
+    if (!Notification.isSupported()) return false;
+    const title =
+      typeof opts?.title === "string" && opts.title.trim()
+        ? opts.title.trim().slice(0, 120)
+        : DEFAULT_APP_TITLE;
+    const body =
+      typeof opts?.body === "string" ? opts.body.trim().slice(0, 500) : "";
+    const tag = typeof opts?.tag === "string" ? opts.tag : undefined;
+    const icon = path.join(__dirname, "..", "public", "icon-192.png");
+    const n = new Notification({
+      title,
+      body,
+      icon,
+      silent: opts?.silent !== false,
+    });
+    n.on("click", () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
+        mainWindow.focus();
+      }
+      if (tag) {
+        sendToMainRenderer("desktop:notify-click", { tag });
+      }
+    });
+    n.show();
+    return true;
+  });
+
   /** Updates taskbar + Windows Task Manager process label while in voice. */
   ipcMain.handle("window:set-title", (_evt, title) => {
     const next =
@@ -369,7 +434,10 @@ function registerIpc() {
     return true;
   });
 
-  ipcMain.handle("voice:ensure-host", () => ensureVoiceHostWindow());
+  ipcMain.handle("voice:ensure-host", () => {
+    markVoiceHostSessionActive(true);
+    return ensureVoiceHostWindow();
+  });
 
   ipcMain.handle("voice:destroy-host", () => {
     destroyVoiceHost();
@@ -378,22 +446,50 @@ function registerIpc() {
 
   ipcMain.on("voice:cmd", (_evt, cmd) => {
     const op = cmd?.op;
+    if (op === "join" || op === "join-dm") {
+      markVoiceHostSessionActive(true);
+    }
+    if (op === "leave") {
+      markVoiceHostSessionActive(false);
+      pendingVoiceCommands.length = 0;
+      if (voiceHostReady) {
+        sendToVoiceHostRenderer("voice:cmd", cmd);
+      }
+      return;
+    }
     if (voiceHostReady) {
       sendToVoiceHostRenderer("voice:cmd", cmd);
       return;
     }
-    // Never respawn the LiveKit renderer for idle state sync.
-    if (op === "sync-local") {
+    if (voiceHostNoSpawnOps(op)) {
       return;
     }
     if (!voiceHostSessionOps(op)) {
       return;
     }
+    if (!voiceHostSessionActive) {
+      return;
+    }
     pendingVoiceCommands.push(cmd);
-    void ensureVoiceHostWindow();
+    void ensureVoiceHostWindow().then((ok) => {
+      if (!ok) {
+        pendingVoiceCommands.length = 0;
+      }
+    });
   });
 
   ipcMain.on("voice:evt", (_evt, payload) => {
+    if (payload?.op === "host-idle") {
+      destroyVoiceHost();
+    } else if (
+      payload?.op === "state" &&
+      !payload.connected &&
+      !payload.joining &&
+      !payload.voiceChannelId &&
+      !payload.dmCallId
+    ) {
+      markVoiceHostSessionActive(false);
+    }
     sendToMainRenderer("voice:evt", payload);
   });
 

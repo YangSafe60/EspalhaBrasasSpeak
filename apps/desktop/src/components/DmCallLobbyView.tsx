@@ -1,10 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { useVoice } from "../hooks/useVoice";
 import { openScreenPopout } from "../lib/popout";
 import { mediaCssUrl } from "../lib/mediaUrl";
 import { sameId } from "../lib/serverPerms";
 import { useAppStore } from "../store/appStore";
-import { LobbyScreenInvite } from "./voice/LobbyScreenInvite";
 import { LobbyScreenTile } from "./voice/LobbyScreenTile";
 
 type VoiceApi = ReturnType<typeof useVoice>;
@@ -124,13 +123,29 @@ export function DmCallLobbyView({ voice, compact = false }: Props) {
     voice.dmCallId &&
     sameId(voice.dmCallId, dmCallId) &&
     (voice.connected || voice.joining);
-  const hasStage =
+  const hasStreams =
     connectedHere &&
     (voice.localScreens.length > 0 || voice.remoteScreens.length > 0);
+  const streamTileCount =
+    voice.localScreens.length + voice.remoteScreens.length;
   const participants = dmCallByChannel[dmCallId] || [];
   const peerJoined = participants.some(
     (p) => !sameId(p.user_id, user?.id),
   );
+
+  useEffect(() => {
+    if (!connectedHere || !voice.connected) return;
+    for (const screen of voice.remoteScreens) {
+      if (!screen.subscribed) {
+        voice.joinRemoteScreen(screen.trackSid);
+      }
+    }
+  }, [
+    connectedHere,
+    voice.connected,
+    voice.joinRemoteScreen,
+    voice.remoteScreens,
+  ]);
 
   async function openPopout(trackSid: string, title: string) {
     setPopoutBusy(trackSid);
@@ -148,7 +163,7 @@ export function DmCallLobbyView({ voice, compact = false }: Props) {
 
   return (
     <section
-      className={`voice-lobby dm-call-lobby${compact ? " compact" : ""}`}
+      className={`voice-lobby dm-call-lobby${compact ? " compact" : ""}${hasStreams ? " has-stage" : " people-only"}`}
     >
       <header className="voice-lobby-header">
         <div>
@@ -179,8 +194,11 @@ export function DmCallLobbyView({ voice, compact = false }: Props) {
         {popoutError && (
           <p className="form-error voice-lobby-popout-error">{popoutError}</p>
         )}
-        {hasStage && (
-          <section className="voice-lobby-stage">
+        {hasStreams ? (
+          <section
+            className="voice-lobby-stage"
+            data-count={Math.min(streamTileCount, 4)}
+          >
             {voice.localScreens.map((s, i) => (
               <LobbyScreenTile
                 key={s.trackSid}
@@ -252,75 +270,81 @@ export function DmCallLobbyView({ voice, compact = false }: Props) {
                   }
                 />
               ) : (
-                <LobbyScreenInvite
+                <div
                   key={s.trackSid}
-                  name={s.participantName}
-                  onJoin={() => voice.joinRemoteScreen(s.trackSid)}
-                />
+                  className="lobby-screen-tile lobby-screen-pending"
+                >
+                  <div className="lobby-screen-invite-body">
+                    <p className="lobby-screen-invite-label">
+                      {s.participantName} is sharing
+                    </p>
+                    <p className="muted tiny">Connecting to stream…</p>
+                  </div>
+                </div>
               ),
             )}
           </section>
-        )}
-
-        <section className="voice-lobby-people">
-          <h3>In call</h3>
-          {lobbyUsers.length === 0 ? (
-            <p className="muted">Connecting to the call…</p>
-          ) : (
-            <div className="voice-lobby-grid">
-              {lobbyUsers.map((u) => (
-                <div
-                  key={u.user_id}
-                  className={`voice-lobby-tile${u.streaming ? " live" : ""}${u.isSelf ? " self" : ""}${voice.speakingIds.includes(u.user_id) ? " speaking" : ""}`}
-                  onClick={(e) =>
-                    openMiniProfile({
-                      userId: u.user_id,
-                      serverId: null,
-                      x: e.clientX,
-                      y: e.clientY,
-                    })
-                  }
-                >
+        ) : (
+          <section className="voice-lobby-people">
+            {!compact ? <h3>In call</h3> : null}
+            {lobbyUsers.length === 0 ? (
+              <p className="muted">Connecting to the call…</p>
+            ) : (
+              <div className="voice-lobby-grid">
+                {lobbyUsers.map((u) => (
                   <div
-                    className={`voice-lobby-tile-avatar${voice.speakingIds.includes(u.user_id) ? " speaking" : ""}`}
-                    style={
-                      u.avatar
-                        ? { backgroundImage: mediaCssUrl(u.avatar) }
-                        : undefined
+                    key={u.user_id}
+                    className={`voice-lobby-tile${u.streaming ? " live" : ""}${u.isSelf ? " self" : ""}${voice.speakingIds.includes(u.user_id) ? " speaking" : ""}`}
+                    onClick={(e) =>
+                      openMiniProfile({
+                        userId: u.user_id,
+                        serverId: null,
+                        x: e.clientX,
+                        y: e.clientY,
+                      })
                     }
                   >
-                    {!u.avatar && (u.name.charAt(0) || "?").toUpperCase()}
-                    {u.streaming && <span className="live-pill">LIVE</span>}
+                    <div
+                      className={`voice-lobby-tile-avatar${voice.speakingIds.includes(u.user_id) ? " speaking" : ""}`}
+                      style={
+                        u.avatar
+                          ? { backgroundImage: mediaCssUrl(u.avatar) }
+                          : undefined
+                      }
+                    >
+                      {!u.avatar && (u.name.charAt(0) || "?").toUpperCase()}
+                      {u.streaming && <span className="live-pill">LIVE</span>}
+                    </div>
+                    <div className="voice-lobby-tile-meta">
+                      <strong>
+                        {u.name}
+                        {u.isSelf ? " (you)" : ""}
+                      </strong>
+                      <span className="voice-lobby-tile-flags">
+                        {u.muted && <span title="Muted">Mic off</span>}
+                        {u.deafened && <span title="Deafened">Deafened</span>}
+                        {u.streaming && <span title="Sharing">Sharing</span>}
+                        {!u.isSelf &&
+                        connectedHere &&
+                        voice.connected &&
+                        !participants.some((p) => sameId(p.user_id, u.user_id)) ? (
+                          <span className="waiting">Ringing…</span>
+                        ) : null}
+                        {!u.muted &&
+                          !u.deafened &&
+                          !u.streaming &&
+                          (u.isSelf ||
+                            participants.some((p) =>
+                              sameId(p.user_id, u.user_id),
+                            )) && <span className="ok">Connected</span>}
+                      </span>
+                    </div>
                   </div>
-                  <div className="voice-lobby-tile-meta">
-                    <strong>
-                      {u.name}
-                      {u.isSelf ? " (you)" : ""}
-                    </strong>
-                    <span className="voice-lobby-tile-flags">
-                      {u.muted && <span title="Muted">Mic off</span>}
-                      {u.deafened && <span title="Deafened">Deafened</span>}
-                      {u.streaming && <span title="Sharing">Sharing</span>}
-                      {!u.isSelf &&
-                      connectedHere &&
-                      voice.connected &&
-                      !participants.some((p) => sameId(p.user_id, u.user_id)) ? (
-                        <span className="waiting">Ringing…</span>
-                      ) : null}
-                      {!u.muted &&
-                        !u.deafened &&
-                        !u.streaming &&
-                        (u.isSelf ||
-                          participants.some((p) => sameId(p.user_id, u.user_id))) && (
-                          <span className="ok">Connected</span>
-                        )}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
       </div>
     </section>
   );

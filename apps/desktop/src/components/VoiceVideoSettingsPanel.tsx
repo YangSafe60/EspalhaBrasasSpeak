@@ -405,9 +405,6 @@ export function VoiceVideoSettingsPanel() {
         <button type="button" className="btn ghost sm" onClick={() => void refreshDevices()}>
           Refresh devices
         </button>
-        <p className="muted tiny">
-          Device changes apply immediately in voice channels. LiveKit must be running for calls.
-        </p>
       </div>
     </div>
   );
