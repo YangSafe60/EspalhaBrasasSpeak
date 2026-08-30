@@ -1,0 +1,53 @@
+import { loadChannelMutes } from "../lib/channelMutePrefs";
+
+export function createInitialState() {
+  return {
+    user: null,
+    servers: [],
+    channelsByServer: {},
+    membersByServer: {},
+    rolesByServer: {},
+    rulesByServer: {},
+    overwritesByChannel: {},
+    messagesByChannel: {},
+    authors: {},
+    customEmojis: [],
+    customEmojisById: {},
+    voiceStates: [],
+    typing: {},
+    presenceByUser: {},
+    myStatus: "online" as const,
+    myStatusRevision: 0,
+
+    friendsHome: false,
+    friends: [],
+    pendingInbound: [],
+    pendingOutbound: [],
+    dmChannels: [],
+    messagesByDm: {},
+    activeDmId: null,
+    identityPublicKey: null,
+    peerPublicKeys: {},
+    dmFingerprints: {},
+
+    activeServerId: null,
+    activeChannelId: null,
+    voiceChannelId: null,
+    muted: false,
+    deafened: false,
+    streaming: false,
+
+    modal: null,
+    settingsChannelId: null,
+    inviteChannelId: null,
+    miniProfile: null,
+    pendingServerInvite: null,
+    pendingChannelInvite: null,
+    channelMutes: loadChannelMutes(),
+    unreadByChannel: {},
+    messageToasts: [],
+    bootstrapped: false,
+    connecting: false,
+    error: null,
+  };
+}

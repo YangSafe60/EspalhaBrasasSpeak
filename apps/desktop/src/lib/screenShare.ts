@@ -9,6 +9,33 @@ export { isDesktopApp };
 /** @deprecated use isDesktopApp */
 export const isTauriApp = isDesktopApp;
 
+/** Sharp text/UI; paired with maintain-framerate on the sender for lower delay. */
+export function applyScreenShareQualityHints(media: MediaStreamTrack): void {
+  try {
+    media.contentHint = "detail";
+  } catch {
+    /* optional */
+  }
+}
+
+/** After publish, prefer frame rate over resolution when bandwidth is tight. */
+export async function tunePublishedScreenShare(track: LocalVideoTrack): Promise<void> {
+  applyScreenShareQualityHints(track.mediaStreamTrack);
+  try {
+    const sender =
+      (track as LocalVideoTrack & { getSender?: () => RTCRtpSender | undefined })
+        .getSender?.() ??
+      (track as unknown as { sender?: RTCRtpSender }).sender;
+    if (!sender?.getParameters || !sender.setParameters) return;
+    const params = sender.getParameters();
+    if (!params.encodings?.length) return;
+    params.degradationPreference = "maintain-framerate";
+    await sender.setParameters(params);
+  } catch {
+    /* optional */
+  }
+}
+
 export function isShareCancelError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
   const e = err as { name?: string; message?: string };
@@ -99,12 +126,7 @@ export async function captureElectronSource(
     stream.getTracks().forEach((t) => t.stop());
     throw new Error("No video track from desktop capture");
   }
-  try {
-    // Prefer sharp text/UI over motion blur for desktop shares.
-    mediaVideo.contentHint = "detail";
-  } catch {
-    /* optional */
-  }
+  applyScreenShareQualityHints(mediaVideo);
 
   const videoTrack = new LocalVideoTrack(mediaVideo, undefined, true);
   const mediaAudio = stream.getAudioTracks()[0] ?? null;

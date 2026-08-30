@@ -12,11 +12,9 @@ import {
 import { api, getAccessToken, getApiBase } from "../api/client";
 import { getElectronAPI } from "../lib/desktop";
 import {
-  inputGainFromSettings,
   loadMediaSettings,
   outputGainFromSettings,
   subscribeMediaSettings,
-  type MediaSettings,
 } from "../lib/mediaSettings";
 import {
   clearAllScreenBridge,
@@ -26,10 +24,19 @@ import {
   focusMainWindow,
 } from "../lib/screenBridge";
 import {
+  applyScreenShareQualityHints,
   captureElectronSource,
   isShareCancelError,
   isDesktopApp,
+  tunePublishedScreenShare,
 } from "../lib/screenShare";
+import {
+  loadScreenShareQuality,
+  resolveCaptureDimensions,
+  screenShareEncoding,
+  type ScreenShareFps,
+  type ScreenShareResolution,
+} from "../lib/screenShareQuality";
 import { closeAllScreenPopouts } from "../lib/popout";
 import {
   playScreenShareStartSound,
@@ -41,150 +48,26 @@ import {
 import { getUserVoicePref, type UserVoicePref } from "../lib/userVoicePrefs";
 import { useAppStore } from "../store/appStore";
 import type { VoiceTokenResponse } from "../types";
+import {
+  applyDevicesToRoom,
+  collectScreenTracks,
+  ensureMicPermission,
+  normalizeLivekitUrl,
+  readSignalRtt,
+  stopLocalMediaExceptScreenShare,
+} from "./voice/livekitHelpers";
+import type {
+  LocalScreen,
+  RemoteScreen,
+  ScreenShareAudioState,
+} from "./voice/types";
 
-/** WebView2 often breaks ICE when the URL host is `localhost` (IPv6 ::1). */
-function normalizeLivekitUrl(url: string): string {
-  try {
-    const u = new URL(url);
-    if (u.hostname === "localhost") {
-      u.hostname = "127.0.0.1";
-    }
-    return u.toString().replace(/\/$/, "");
-  } catch {
-    return url.replace(/\/\/localhost(?=[:/]|$)/i, "//127.0.0.1");
-  }
-}
+export type { LocalScreen, RemoteScreen, ScreenShareAudioState } from "./voice/types";
 
-/** WebView2 can block PeerConnection until getUserMedia has been granted. */
-async function ensureMicPermission(): Promise<void> {
-  if (!navigator.mediaDevices?.getUserMedia) return;
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
-      video: false,
-    });
-    stream.getTracks().forEach((t) => t.stop());
-  } catch {
-    // User denied or no device — still attempt join (listen-only may work).
-  }
-}
-
-export type RemoteScreen = {
-  trackSid: string;
-  participantIdentity: string;
-  participantName: string;
-  /** Present only after the viewer opts in (Join stream). */
-  track: RemoteTrack | null;
-  subscribed: boolean;
-  /** Screen-share system/tab audio from the same participant, if any. */
-  hasAudio: boolean;
-  audioTrackSid: string | null;
-};
-
-export type ScreenShareAudioState = {
-  volume: number;
-  muted: boolean;
-};
-
-export type LocalScreen = {
-  trackSid: string;
-  track: LocalVideoTrack;
-  /** Native share source id when known (`monitor:0`, `window:123`, …). */
-  sourceId?: string;
-  label: string;
-};
-
-async function applyDevicesToRoom(room: Room, settings: MediaSettings) {
-  try {
-    if (settings.inputDeviceId) {
-      await room.switchActiveDevice("audioinput", settings.inputDeviceId);
-    }
-  } catch {
-    /* device may be unavailable */
-  }
-  try {
-    if (settings.outputDeviceId) {
-      await room.switchActiveDevice("audiooutput", settings.outputDeviceId);
-    }
-  } catch {
-    /* not all platforms support sinkId */
-  }
-  try {
-    if (settings.cameraDeviceId) {
-      await room.switchActiveDevice("videoinput", settings.cameraDeviceId);
-    }
-  } catch {
-    /* optional */
-  }
-
-  const gain = inputGainFromSettings(settings);
-  room.localParticipant.audioTrackPublications.forEach((pub) => {
-    const track = pub.track;
-    if (track && "setVolume" in track && typeof track.setVolume === "function") {
-      track.setVolume(gain);
-    }
-  });
-
-  const out = outputGainFromSettings(settings);
-  room.remoteParticipants.forEach((p) => {
-    p.audioTrackPublications.forEach((pub) => {
-      if (pub.source === getLivekit().Track.Source.ScreenShareAudio) return;
-      const track = pub.track;
-      if (track && "setVolume" in track && typeof track.setVolume === "function") {
-        track.setVolume(out);
-      }
-    });
-  });
-}
-
-function collectScreenTracks(
-  room: Room,
-): { track: LocalTrack; name?: string }[] {
-  const tracks: { track: LocalTrack; name?: string }[] = [];
-  room.localParticipant.trackPublications.forEach((pub) => {
-    if (
-      (pub.source === getLivekit().Track.Source.ScreenShare ||
-        pub.source === getLivekit().Track.Source.ScreenShareAudio) &&
-      pub.track
-    ) {
-      tracks.push({
-        track: pub.track,
-        name: pub.trackName || undefined,
-      });
-    }
-  });
-  return tracks;
-}
-
-function readSignalRtt(room: Room): number | null {
-  const rtt = (
-    room as unknown as { engine?: { client?: { rtt?: number } } }
-  ).engine?.client?.rtt;
-  if (typeof rtt !== "number" || !Number.isFinite(rtt) || rtt <= 0) {
-    return null;
-  }
-  return Math.round(rtt);
-}
-
-function stopLocalMediaExceptScreenShare(room: Room) {
-  const lk = getLivekit();
-  room.localParticipant.trackPublications.forEach((pub) => {
-    if (
-      pub.source === lk.Track.Source.ScreenShare ||
-      pub.source === lk.Track.Source.ScreenShareAudio
-    ) {
-      return;
-    }
-    const track = pub.track;
-    if (!track) return;
-    try {
-      track.stop();
-    } catch {
-      /* ignore */
-    }
-  });
-}
-
+/**
+ * LiveKit voice hook: join/leave channel, mic/camera, screen share publish/watch,
+ * remote audio routing, and lobby presence sync with the API.
+ */
 export function useVoice() {
   const voiceChannelId = useAppStore((s) => s.voiceChannelId);
   const muted = useAppStore((s) => s.muted);
@@ -227,8 +110,11 @@ export function useVoice() {
   const shareStopsRef = useRef<Map<string, () => Promise<void>>>(new Map());
   const activeShareIdsRef = useRef<string[]>([]);
   const [activeShareIds, setActiveShareIds] = useState<string[]>([]);
-  /** Last chosen screen-share frame rate (for lobby hops / republish). */
-  const shareFpsRef = useRef<30 | 60>(30);
+  /** Last chosen screen-share quality (for lobby hops / republish). */
+  const shareFpsRef = useRef<ScreenShareFps>(loadScreenShareQuality().fps);
+  const shareResolutionRef = useRef<ScreenShareResolution>(
+    loadScreenShareQuality().resolution,
+  );
   const joinPullTimersRef = useRef<number[]>([]);
   const leavingRef = useRef(false);
 
@@ -592,6 +478,9 @@ export function useVoice() {
   /** Stop all screen shares and optionally halt the underlying capture tracks. */
   const endScreenShare = useCallback(
     async (room: Room | null, stopTracks: boolean) => {
+      void closeAllScreenPopouts();
+      clearAllScreenBridge();
+
       const stops = [...shareStopsRef.current.values()];
       shareStopsRef.current.clear();
       setActiveShareIds([]);
@@ -649,16 +538,13 @@ export function useVoice() {
       tracks: { track: LocalTrack; name?: string }[],
     ) => {
       const fps = shareFpsRef.current;
-      const maxBitrate = fps === 60 ? 12_000_000 : 8_000_000;
+      const resolution = shareResolutionRef.current;
+      const encoding = screenShareEncoding(resolution, fps);
       for (const { track, name } of tracks) {
         if (track.kind === getLivekit().Track.Kind.Video) {
           const media = track.mediaStreamTrack;
           if (media) {
-            try {
-              media.contentHint = "detail";
-            } catch {
-              /* optional */
-            }
+            applyScreenShareQualityHints(media);
           }
         }
         await room.localParticipant.publishTrack(track, {
@@ -669,10 +555,11 @@ export function useVoice() {
               : getLivekit().Track.Source.ScreenShare,
           simulcast: false,
           videoEncoding:
-            track.kind === getLivekit().Track.Kind.Video
-              ? { maxBitrate, maxFramerate: fps }
-              : undefined,
+            track.kind === getLivekit().Track.Kind.Video ? encoding : undefined,
         });
+        if (track.kind === getLivekit().Track.Kind.Video) {
+          await tunePublishedScreenShare(track as LocalVideoTrack);
+        }
       }
       syncLocalScreen(room);
       refreshScreens(room);
@@ -913,8 +800,8 @@ export function useVoice() {
           return;
         }
         const room = new Room({
-          adaptiveStream: true,
-          dynacast: true,
+          adaptiveStream: false,
+          dynacast: false,
           audioCaptureDefaults: {
             deviceId: settings.inputDeviceId || undefined,
             echoCancellation: settings.echoCancellation,
@@ -1369,7 +1256,8 @@ export function useVoice() {
     async (opts: {
       sourceId: string;
       systemAudio?: boolean;
-      fps?: 30 | 60;
+      fps?: ScreenShareFps;
+      resolution?: ScreenShareResolution;
       replaceAll?: boolean;
     }) => {
       const room = roomRef.current;
@@ -1378,9 +1266,11 @@ export function useVoice() {
       setPickerBusy(true);
       setError(null);
       const fps = opts.fps === 60 ? 60 : 30;
+      const resolution = opts.resolution ?? shareResolutionRef.current;
       shareFpsRef.current = fps;
-      // Discord-like screen encode budget (text stays sharp; 60 needs more bits).
-      const maxBitrate = fps === 60 ? 12_000_000 : 8_000_000;
+      shareResolutionRef.current = resolution;
+      const capture = resolveCaptureDimensions(resolution);
+      const encoding = screenShareEncoding(resolution, fps);
       try {
         if (opts.replaceAll) {
           await endScreenShare(room, true);
@@ -1388,8 +1278,8 @@ export function useVoice() {
 
         const captured = await captureElectronSource(opts.sourceId, {
           systemAudio: opts.systemAudio !== false,
-          maxWidth: 1920,
-          maxHeight: 1080,
+          maxWidth: capture.maxWidth,
+          maxHeight: capture.maxHeight,
           maxFps: fps,
         });
 
@@ -1404,18 +1294,15 @@ export function useVoice() {
           );
         }
 
-        try {
-          captured.videoTrack.mediaStreamTrack.contentHint = "detail";
-        } catch {
-          /* optional */
-        }
+        applyScreenShareQualityHints(captured.videoTrack.mediaStreamTrack);
 
         await room.localParticipant.publishTrack(captured.videoTrack, {
           name: `screen:${opts.sourceId}`,
           source: getLivekit().Track.Source.ScreenShare,
           simulcast: false,
-          videoEncoding: { maxBitrate, maxFramerate: fps },
+          videoEncoding: encoding,
         });
+        await tunePublishedScreenShare(captured.videoTrack);
 
         if (captured.audioTrack) {
           await room.localParticipant.publishTrack(captured.audioTrack, {
@@ -1452,6 +1339,10 @@ export function useVoice() {
       await loadLivekit();
       setPickerBusy(true);
       setError(null);
+      const fps = shareFpsRef.current;
+      const resolution = shareResolutionRef.current;
+      const capture = resolveCaptureDimensions(resolution);
+      const encoding = screenShareEncoding(resolution, fps);
       try {
         if (opts?.replaceAll) {
           await endScreenShare(room, true);
@@ -1466,7 +1357,11 @@ export function useVoice() {
             suppressLocalAudioPlayback: false,
           },
           contentHint: "detail",
-          resolution: { width: 1920, height: 1080, frameRate: 60 },
+          resolution: {
+            width: capture.maxWidth,
+            height: capture.maxHeight,
+            frameRate: fps,
+          },
           systemAudio: "include",
           selfBrowserSurface: "exclude",
         });
@@ -1481,16 +1376,11 @@ export function useVoice() {
         }
 
         const stamp = Date.now();
-        shareFpsRef.current = 60;
         for (const track of tracks) {
           if (track.kind === getLivekit().Track.Kind.Video) {
             const media = track.mediaStreamTrack;
             if (media) {
-              try {
-                media.contentHint = "detail";
-              } catch {
-                /* optional */
-              }
+              applyScreenShareQualityHints(media);
             }
           }
           await room.localParticipant.publishTrack(track, {
@@ -1504,14 +1394,15 @@ export function useVoice() {
                 : getLivekit().Track.Source.ScreenShare,
             simulcast: false,
             videoEncoding:
-              track.kind === getLivekit().Track.Kind.Video
-                ? { maxBitrate: 12_000_000, maxFramerate: 60 }
-                : undefined,
+              track.kind === getLivekit().Track.Kind.Video ? encoding : undefined,
             audioPreset:
               track.kind === getLivekit().Track.Kind.Audio
                 ? { maxBitrate: 128_000 }
                 : undefined,
           });
+          if (track.kind === getLivekit().Track.Kind.Video) {
+            await tunePublishedScreenShare(track as LocalVideoTrack);
+          }
         }
         syncLocalScreen(room);
         refreshScreens(room);
@@ -1557,9 +1448,14 @@ export function useVoice() {
         const existing = pub.track;
         if (existing) {
           try {
-            await room.localParticipant.unpublishTrack(existing, false);
+            await room.localParticipant.unpublishTrack(existing, true);
           } catch {
             /* already unpublished */
+          }
+          try {
+            existing.stop();
+          } catch {
+            /* ignore */
           }
         }
       }
@@ -1628,6 +1524,8 @@ export function useVoice() {
         for (const [, stop] of leftoverStops) {
           await stop().catch(() => undefined);
         }
+        void closeAllScreenPopouts();
+        clearAllScreenBridge();
         const leftoverPubs = [
           ...room.localParticipant.trackPublications.values(),
         ] as LocalTrackPublication[];

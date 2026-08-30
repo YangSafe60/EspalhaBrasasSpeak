@@ -133,6 +133,7 @@ See [docs/self-host.md](docs/self-host.md) for Oracle sizing, TLS, backups, GitH
 - Per-channel backgrounds (blur / dim / text color) + atmosphere presets
 - LiveKit voice (mute / deafen)
 - Multi screen share: in-app picker, opt-in watch, system audio, volume, pop-out / fullscreen
+- Screen share quality: **720p**, **1080p**, or **Source** (native up to 4K) at **30/60 FPS**
 
 ### Private DM privacy (honest limits)
 
@@ -145,6 +146,11 @@ See [docs/self-host.md](docs/self-host.md) for Oracle sizing, TLS, backups, GitH
 ```
 apps/desktop/     Electron + React client (Espalha Brasas)
   electron/       Main process + preload
+  src/
+    components/   UI (voice/ = lobby screen tiles, pickers, …)
+    hooks/        React hooks (voice/ = LiveKit helpers + useVoice)
+    lib/          Client utilities (screenBridge/, screenShare*, livekit, …)
+    store/        Zustand app state + helpers/
   release/        Installers after `npm run dist` (gitignored)
 crates/server/    Axum API
 crates/shared/    Shared types + permissions
@@ -152,3 +158,18 @@ deploy/           Compose + Dockerfile + Caddy + LiveKit
 docs/             Hosting, desktop client, permission notes
 scripts/          Dev helpers (Windows)
 ```
+
+### Desktop code organization
+
+Large modules are split into focused folders so behaviour stays the same but files stay readable:
+
+| Area | Location | Role |
+|------|----------|------|
+| Voice / LiveKit | `hooks/voice/` | Types, LiveKit helpers, `useVoice` hook |
+| Voice lobby UI | `components/voice/` | Screen tiles, join cards |
+| Screen pop-out | `lib/screenBridge/` | IPC relay, JPEG capture, registry |
+| Screen capture | `lib/screenShare.ts`, `screenShareQuality.ts` | Electron capture + quality presets |
+| App state | `store/appStore.ts` + `store/slices/` + `store/helpers/` | Zustand slices (auth, server, messaging, social, ws, …) |
+| Channel list | `components/channelSidebar/` | DnD reorder, rows, categories, create modal |
+
+Functions are documented with English JSDoc comments at module boundaries (helpers, public exports).

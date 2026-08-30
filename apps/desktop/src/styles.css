@@ -2486,6 +2486,13 @@ html[data-compact="1"] .message {
   bottom: 0;
 }
 
+.lobby-screen-tile.is-expanded .lobby-screen-hover,
+.lobby-screen-tile.is-expanded:hover .lobby-screen-hover,
+.lobby-screen-tile.is-expanded:focus-within .lobby-screen-hover {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .lobby-screen-tile video {
   display: block;
   width: 100%;
@@ -3245,6 +3252,10 @@ html[data-compact="1"] .message {
 .share-fps-toggle button:disabled {
   opacity: 0.55;
   cursor: default;
+}
+
+.share-resolution-toggle button {
+  padding: 0.35rem 0.6rem;
 }
 
 .share-audio-toggle {

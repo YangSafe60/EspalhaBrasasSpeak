@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { listDesktopShareSources } from "../lib/screenShare";
+import {
+  loadScreenShareQuality,
+  saveScreenShareQuality,
+  type ScreenShareFps,
+  type ScreenShareResolution,
+} from "../lib/screenShareQuality";
 
 export type ShareSource = {
   id: string;
@@ -19,7 +25,11 @@ type Props = {
   onClose: () => void;
   onPickSource: (
     source: ShareSource,
-    opts: { systemAudio: boolean; fps: 30 | 60 },
+    opts: {
+      systemAudio: boolean;
+      fps: ScreenShareFps;
+      resolution: ScreenShareResolution;
+    },
   ) => void;
 };
 
@@ -35,7 +45,8 @@ export function ScreenSharePicker({
   const [sources, setSources] = useState<ShareSource[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [systemAudio, setSystemAudio] = useState(true);
-  const [fps, setFps] = useState<30 | 60>(30);
+  const [fps, setFps] = useState<ScreenShareFps>(30);
+  const [resolution, setResolution] = useState<ScreenShareResolution>("1080p");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -47,7 +58,9 @@ export function ScreenSharePicker({
     setError(null);
     setTab("screen");
     setSystemAudio(true);
-    setFps(30);
+    const saved = loadScreenShareQuality();
+    setFps(saved.fps);
+    setResolution(saved.resolution);
     setSources([]);
     setLoading(true);
 
@@ -91,7 +104,8 @@ export function ScreenSharePicker({
   function confirm() {
     const src = sources.find((s) => s.id === selected);
     if (!src || busy) return;
-    onPickSource(src, { systemAudio, fps });
+    saveScreenShareQuality({ fps, resolution });
+    onPickSource(src, { systemAudio, fps, resolution });
   }
 
   return createPortal(
@@ -162,7 +176,7 @@ export function ScreenSharePicker({
                   onDoubleClick={() => {
                     if (busy) return;
                     setSelected(s.id);
-                    onPickSource(s, { systemAudio, fps });
+                    onPickSource(s, { systemAudio, fps, resolution });
                   }}
                 >
                   <div className="share-thumb">
@@ -184,6 +198,35 @@ export function ScreenSharePicker({
         )}
 
         <div className="share-options">
+          <div className="share-fps" role="group" aria-label="Resolution">
+            <span className="share-options-label">Resolution</span>
+            <div className="share-fps-toggle share-resolution-toggle">
+              <button
+                type="button"
+                className={resolution === "720p" ? "active" : ""}
+                disabled={busy}
+                onClick={() => setResolution("720p")}
+              >
+                720p
+              </button>
+              <button
+                type="button"
+                className={resolution === "1080p" ? "active" : ""}
+                disabled={busy}
+                onClick={() => setResolution("1080p")}
+              >
+                1080p
+              </button>
+              <button
+                type="button"
+                className={resolution === "source" ? "active" : ""}
+                disabled={busy}
+                onClick={() => setResolution("source")}
+              >
+                Source
+              </button>
+            </div>
+          </div>
           <div className="share-fps" role="group" aria-label="Frame rate">
             <span className="share-options-label">Frame rate</span>
             <div className="share-fps-toggle">

@@ -324,6 +324,7 @@ export function VoicePanel({ voice }: Props) {
             sourceId: source.id,
             systemAudio: opts.systemAudio,
             fps: opts.fps,
+            resolution: opts.resolution,
             replaceAll: shareMode === "replace",
           });
         }}
