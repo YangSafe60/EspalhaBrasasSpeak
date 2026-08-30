@@ -275,12 +275,18 @@ export const createSocialSlice: AppStoreSlice = (set, get) => ({
   },
 
   openDmWithPeer: async (peerId) => {
-    const dmId = await get().ensureDmWithPeer(peerId);
-    if (!dmId) {
-      get().setError("Add them as a friend to send a direct message.");
-      return;
+    try {
+      const dmId = await get().ensureDmWithPeer(peerId);
+      if (!dmId) {
+        get().setError("Could not open a direct message with this user.");
+        return;
+      }
+      await get().selectDm(dmId);
+    } catch (e) {
+      get().setError(
+        e instanceof Error ? e.message : "Could not open a direct message with this user.",
+      );
     }
-    await get().selectDm(dmId);
   },
 
   ensureDmWithPeer: async (peerId) => {
@@ -294,11 +300,8 @@ export const createSocialSlice: AppStoreSlice = (set, get) => ({
       return existing.id;
     }
 
-    const friendship = get().friends.find((f) => sameId(f.peer.id, peerId));
-    if (!friendship) return null;
-
     const channel = await api<DmChannel>(
-      `/api/dms/by-friendship/${friendship.id}/open`,
+      `/api/dms/by-peer/${peerId}/open`,
       { method: "POST" },
     );
     set((s) => ({

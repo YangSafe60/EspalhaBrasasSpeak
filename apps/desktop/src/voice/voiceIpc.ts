@@ -42,7 +42,6 @@ export type VoiceHostCommand =
   | { op: "apply-user-video-hide"; userId: string; hide: boolean }
   | {
       op: "sync-local";
-      voiceChannelId?: string | null;
       muted?: boolean;
       deafened?: boolean;
       voiceStates?: Array<{
@@ -54,7 +53,6 @@ export type VoiceHostCommand =
         server_muted?: boolean;
         server_deafened?: boolean;
       }>;
-      userId?: string | null;
     };
 
 export type VoiceHostScreenMeta = Omit<LocalScreen, "track"> | Omit<RemoteScreen, "track">;

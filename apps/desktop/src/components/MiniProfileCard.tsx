@@ -251,7 +251,7 @@ export function MiniProfileCard() {
     try {
       const dmId = await ensureDmWithPeer(profile.id);
       if (!dmId) {
-        setMsgError("You must be friends to send a message.");
+        setMsgError("Could not open a direct message with this user.");
         return;
       }
       await sendDmMessage(dmId, text);

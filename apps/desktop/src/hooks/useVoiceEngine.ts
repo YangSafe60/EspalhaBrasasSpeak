@@ -907,7 +907,7 @@ export function useVoiceEngine() {
             }
           });
           onTrack();
-          if (!deafenedRef.current) playVoiceJoinSound();
+          if (!deafenedRef.current && !isVoiceHostWindow()) playVoiceJoinSound();
         });
         room.on(getLivekit().RoomEvent.ParticipantDisconnected, () => {
           onTrack();
@@ -1000,7 +1000,7 @@ export function useVoiceEngine() {
           streaming: preservedScreen.length > 0,
         });
         refreshScreens(room);
-        if (!deafenedRef.current) {
+        if (!deafenedRef.current && !isVoiceHostWindow()) {
           playVoiceJoinSound();
         }
       } catch (e) {

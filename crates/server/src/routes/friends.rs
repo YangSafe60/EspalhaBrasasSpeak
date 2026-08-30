@@ -381,6 +381,15 @@ async fn ensure_dm_channel(
     user_a: Uuid,
     user_b: Uuid,
 ) -> AppResult<DmChannel> {
+    if let Some(existing_id) = find_dm_between_users(&state.db, user_a, user_b).await? {
+        sqlx::query("UPDATE dm_channels SET friendship_id = ? WHERE id = ?")
+            .bind(friendship_id.to_string())
+            .bind(existing_id.to_string())
+            .execute(&state.db)
+            .await?;
+        return load_dm_for_user(state, existing_id, user_a).await;
+    }
+
     if let Some(existing_id) = sqlx::query_scalar::<_, String>(
         "SELECT id FROM dm_channels WHERE friendship_id = ?",
     )
@@ -416,6 +425,88 @@ async fn ensure_dm_channel(
         .hub
         .send_to_user(user_b, &WsEvent::DmChannelCreate { channel: for_b });
     Ok(for_a)
+}
+
+pub async fn find_dm_between_users(
+    db: &sqlx::SqlitePool,
+    a: Uuid,
+    b: Uuid,
+) -> AppResult<Option<Uuid>> {
+    let id: Option<String> = sqlx::query_scalar(
+        r#"SELECT d.id FROM dm_channels d
+           INNER JOIN dm_participants p1 ON p1.dm_channel_id = d.id AND p1.user_id = ?
+           INNER JOIN dm_participants p2 ON p2.dm_channel_id = d.id AND p2.user_id = ?
+           WHERE (SELECT COUNT(*) FROM dm_participants WHERE dm_channel_id = d.id) = 2
+           LIMIT 1"#,
+    )
+    .bind(a.to_string())
+    .bind(b.to_string())
+    .fetch_optional(db)
+    .await?;
+    Ok(id.and_then(|s| Uuid::parse_str(&s).ok()))
+}
+
+/// Open or create a 1:1 DM with any user (friends optional). Blocked users are rejected.
+pub async fn ensure_dm_with_peer(
+    state: &AppState,
+    viewer: Uuid,
+    peer: Uuid,
+) -> AppResult<DmChannel> {
+    if viewer == peer {
+        return Err(AppError::BadRequest("cannot message yourself".into()));
+    }
+    if is_blocked(&state.db, viewer, peer).await? {
+        return Err(AppError::Forbidden);
+    }
+    let _ = db::user_public(&state.db, peer).await?;
+
+    if let Some(dm_id) = find_dm_between_users(&state.db, viewer, peer).await? {
+        return load_dm_for_user(state, dm_id, viewer).await;
+    }
+
+    if are_friends(&state.db, viewer, peer).await? {
+        let (low, high) = pair_users(viewer, peer);
+        let friendship_id: String = sqlx::query_scalar(
+            "SELECT id FROM friendships WHERE user_low = ? AND user_high = ? AND status = 'accepted'",
+        )
+        .bind(low.to_string())
+        .bind(high.to_string())
+        .fetch_one(&state.db)
+        .await?;
+        return ensure_dm_channel(
+            state,
+            Uuid::parse_str(&friendship_id).unwrap(),
+            low,
+            high,
+        )
+        .await;
+    }
+
+    let dm_id = Uuid::new_v4();
+    let now = Utc::now().to_rfc3339();
+    sqlx::query("INSERT INTO dm_channels (id, friendship_id, created_at) VALUES (?, NULL, ?)")
+        .bind(dm_id.to_string())
+        .bind(&now)
+        .execute(&state.db)
+        .await?;
+    for uid in [viewer, peer] {
+        sqlx::query("INSERT INTO dm_participants (dm_channel_id, user_id) VALUES (?, ?)")
+            .bind(dm_id.to_string())
+            .bind(uid.to_string())
+            .execute(&state.db)
+            .await?;
+    }
+
+    let for_viewer = load_dm_for_user(state, dm_id, viewer).await?;
+    let for_peer = load_dm_for_user(state, dm_id, peer).await?;
+    state.hub.send_to_user(
+        viewer,
+        &WsEvent::DmChannelCreate {
+            channel: for_viewer.clone(),
+        },
+    );
+    state.hub.send_to_user(peer, &WsEvent::DmChannelCreate { channel: for_peer });
+    Ok(for_viewer)
 }
 
 pub async fn load_dm_for_user(

@@ -134,6 +134,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/dms/{id}/close", post(dms::close_dm))
         .route("/api/dms/{id}/open", post(dms::open_dm))
         .route(
+            "/api/dms/by-peer/{peer_id}/open",
+            post(dms::open_dm_by_peer),
+        )
+        .route(
             "/api/dms/by-friendship/{friendship_id}/open",
             post(dms::open_dm_by_friendship),
         )

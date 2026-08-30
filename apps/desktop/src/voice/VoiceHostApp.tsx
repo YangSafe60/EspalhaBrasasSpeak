@@ -107,9 +107,6 @@ export function VoiceHostApp() {
           break;
         case "sync-local":
           useAppStore.setState({
-            ...(cmd.voiceChannelId !== undefined
-              ? { voiceChannelId: cmd.voiceChannelId }
-              : {}),
             ...(cmd.muted !== undefined ? { muted: cmd.muted } : {}),
             ...(cmd.deafened !== undefined ? { deafened: cmd.deafened } : {}),
             ...(cmd.voiceStates ? { voiceStates: cmd.voiceStates } : {}),

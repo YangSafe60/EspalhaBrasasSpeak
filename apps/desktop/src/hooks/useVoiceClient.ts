@@ -4,6 +4,7 @@ import { loadScreenShareQuality } from "../lib/screenShareQuality";
 import { isDesktopApp } from "../lib/desktop";
 import { ensureScreenBridgeHost, teardownScreenBridgeForVoiceLeave } from "../lib/screenBridge";
 import { closeAllScreenPopouts } from "../lib/popout";
+import { playVoiceJoinSound, playVoiceLeaveSound } from "../lib/voiceSounds";
 import { useAppStore } from "../store/appStore";
 import type { VoiceHostCommand, VoiceHostEvent } from "../voice/voiceIpc";
 import type {
@@ -48,16 +49,15 @@ export function useVoiceClient() {
 
   const roomRef = useRef(null);
   const hostConnectedRef = useRef(false);
+  const wasConnectedRef = useRef(false);
 
   const syncLocalToHost = useCallback(() => {
     const s = useAppStore.getState();
     send({
       op: "sync-local",
-      voiceChannelId: s.voiceChannelId,
       muted: s.muted,
       deafened: s.deafened,
       voiceStates: s.voiceStates,
-      userId: s.user?.id ?? null,
     });
   }, []);
 
@@ -83,6 +83,12 @@ export function useVoiceClient() {
       });
       setLocalScreens(evt.localScreens as LocalScreen[]);
       setRemoteScreens(evt.remoteScreens as RemoteScreen[]);
+      if (evt.connected && !wasConnectedRef.current && !evt.deafened) {
+        playVoiceJoinSound();
+      } else if (!evt.connected && wasConnectedRef.current && !evt.deafened) {
+        playVoiceLeaveSound();
+      }
+      wasConnectedRef.current = evt.connected;
       if (!evt.voiceChannelId && !evt.joining) {
         setLobbyFrames({});
         hostConnectedRef.current = false;
@@ -107,11 +113,9 @@ export function useVoiceClient() {
         send({ op: "leave" });
       }
       if (
-        state.voiceChannelId !== prev.voiceChannelId ||
         state.muted !== prev.muted ||
         state.deafened !== prev.deafened ||
-        state.voiceStates !== prev.voiceStates ||
-        state.user?.id !== prev.user?.id
+        state.voiceStates !== prev.voiceStates
       ) {
         syncLocalToHost();
       }

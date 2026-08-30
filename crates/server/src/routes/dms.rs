@@ -1,7 +1,7 @@
 use crate::auth::AuthUser;
 use crate::db;
 use crate::error::{AppError, AppResult};
-use crate::routes::friends::{are_friends, is_blocked, load_dm_for_user};
+use crate::routes::friends::{ensure_dm_with_peer, is_blocked, load_dm_for_user};
 use crate::state::AppState;
 use axum::{
     extract::{Path, Query, State},
@@ -56,8 +56,8 @@ async fn peer_of_dm(
     Ok(Uuid::parse_str(&peer_id).unwrap())
 }
 
-async fn require_active_friendship(db: &sqlx::SqlitePool, a: Uuid, b: Uuid) -> AppResult<()> {
-    if !are_friends(db, a, b).await? {
+async fn require_can_message_peer(db: &sqlx::SqlitePool, a: Uuid, b: Uuid) -> AppResult<()> {
+    if is_blocked(db, a, b).await? {
         return Err(AppError::Forbidden);
     }
     Ok(())
@@ -246,7 +246,7 @@ pub async fn create_message(
     if is_blocked(&state.db, user.id, peer).await? {
         return Err(AppError::Forbidden);
     }
-    require_active_friendship(&state.db, user.id, peer).await?;
+    require_can_message_peer(&state.db, user.id, peer).await?;
 
     let ct = body.ciphertext.trim();
     let nonce = body.nonce.trim();
@@ -330,6 +330,22 @@ pub async fn open_dm(
     load_dm_for_user(&state, id, user.id).await.map(Json)
 }
 
+pub async fn open_dm_by_peer(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(peer_id): Path<Uuid>,
+) -> AppResult<Json<DmChannel>> {
+    let channel = ensure_dm_with_peer(&state, user.id, peer_id).await?;
+    sqlx::query(
+        "UPDATE dm_participants SET hidden = 0 WHERE dm_channel_id = ? AND user_id = ?",
+    )
+    .bind(channel.id.to_string())
+    .bind(user.id.to_string())
+    .execute(&state.db)
+    .await?;
+    load_dm_for_user(&state, channel.id, user.id).await.map(Json)
+}
+
 pub async fn open_dm_by_friendship(
     State(state): State<AppState>,
     user: AuthUser,
@@ -388,7 +404,7 @@ pub async fn update_message(
     }
     require_participant(&state.db, dm_id, user.id).await?;
     let peer = peer_of_dm(&state.db, dm_id, user.id).await?;
-    require_active_friendship(&state.db, user.id, peer).await?;
+    require_can_message_peer(&state.db, user.id, peer).await?;
 
     let ct = body.ciphertext.trim();
     let nonce = body.nonce.trim();
@@ -463,7 +479,7 @@ pub async fn typing(
 ) -> AppResult<Json<()>> {
     require_participant(&state.db, id, user.id).await?;
     let peer = peer_of_dm(&state.db, id, user.id).await?;
-    require_active_friendship(&state.db, user.id, peer).await?;
+    require_can_message_peer(&state.db, user.id, peer).await?;
     let author = db::user_public(&state.db, user.id).await?;
     state.hub.send_to_user(
         peer,
