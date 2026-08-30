@@ -100,6 +100,11 @@ export function clearIdentityCache(): void {
   dmKeyCache.clear();
 }
 
+export function clearDmKeyCache(dmChannelId?: string): void {
+  if (dmChannelId) dmKeyCache.delete(dmChannelId);
+  else dmKeyCache.clear();
+}
+
 async function deriveDmKey(
   myPrivate: CryptoKey,
   peerPublicB64: string,

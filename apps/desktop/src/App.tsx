@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { BrowserPreviewGate } from "./components/BrowserPreviewGate";
 import { ChannelSidebar } from "./components/ChannelSidebar";
+import { DmCallLobbyView } from "./components/DmCallLobbyView";
 import { DmMessageView } from "./components/DmMessageView";
 import { FriendsHomeView, type FriendsTab } from "./components/FriendsHomeView";
 import { FriendsSidebar } from "./components/FriendsSidebar";
@@ -104,16 +105,26 @@ function MainColumn({
 }) {
   const friendsHome = useAppStore((s) => s.friendsHome);
   const activeDmId = useAppStore((s) => s.activeDmId);
+  const dmCallId = useAppStore((s) => s.dmCallId);
   const activeChannelId = useAppStore((s) => s.activeChannelId);
   const channelsByServer = useAppStore((s) => s.channelsByServer);
   const channel = Object.values(channelsByServer)
     .flat()
     .find((c) => c.id === activeChannelId);
 
+  const showDmCallLobby = Boolean(
+    dmCallId &&
+      activeDmId &&
+      sameId(dmCallId, activeDmId) &&
+      (voice.connected || voice.joining),
+  );
+
   if (friendsHome) {
     return (
       <div className="main-column">
-        {activeDmId ? (
+        {showDmCallLobby ? (
+          <DmCallLobbyView voice={voice} />
+        ) : activeDmId ? (
           <DmMessageView />
         ) : (
           <FriendsHomeView tab={friendsTab} onTabChange={onFriendsTabChange} />

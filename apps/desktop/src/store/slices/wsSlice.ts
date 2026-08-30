@@ -1,5 +1,4 @@
 /** WebSocket event handler: real-time sync for messages, presence, voice, and social. */
-import { api } from "../../api/client";
 import { isAppFocused } from "../../lib/appFocus";
 import { channelIsMuted } from "../../lib/channelMutePrefs";
 import { messagePreview } from "../../lib/messagePreview";
@@ -8,13 +7,12 @@ import { normalizePresenceStatus } from "../../lib/presence";
 import { permBits, sameId } from "../../lib/serverPerms";
 import { upsertChannelList } from "../helpers/channelHelpers";
 import {
-  decryptWire,
+  decryptWireResilient,
   ensureIdentity,
   upsertFriendship,
 } from "../helpers/dmHelpers";
 import { upsertDm, upsertMessage } from "../helpers/messageHelpers";
 import type { AppState } from "../appStoreTypes";
-import type { UserIdentityKey } from "../../types";
 import type { AppStoreSlice } from "./sliceTypes";
 
 export const createWsSlice: AppStoreSlice = (set, get) => ({
@@ -553,20 +551,15 @@ export const createWsSlice: AppStoreSlice = (set, get) => ({
           if (!peerId || !get().user) return;
           try {
             await ensureIdentity(get().user!.id);
-            let peerKey = get().peerPublicKeys[peerId];
-            if (!peerKey) {
-              const key = await api<UserIdentityKey>(
-                `/api/crypto/identity/${peerId}`,
-              );
-              peerKey = key.public_key;
-              set((s) => ({
-                peerPublicKeys: {
-                  ...s.peerPublicKeys,
-                  [peerId]: peerKey!,
-                },
-              }));
-            }
-            const message = await decryptWire(event.message, peerKey);
+            const message = await decryptWireResilient(
+              event.message,
+              peerId,
+              (id) => get().peerPublicKeys[id],
+              (id, key) =>
+                set((s) => ({
+                  peerPublicKeys: { ...s.peerPublicKeys, [id]: key },
+                })),
+            );
             set((s) => {
               const dmId = event.message.dm_channel_id;
               if (!(dmId in s.messagesByDm) && dmId !== s.activeDmId) {
@@ -593,14 +586,15 @@ export const createWsSlice: AppStoreSlice = (set, get) => ({
           if (!dm || !get().user) return;
           try {
             await ensureIdentity(get().user!.id);
-            let peerKey = get().peerPublicKeys[dm.peer.id];
-            if (!peerKey) {
-              const key = await api<UserIdentityKey>(
-                `/api/crypto/identity/${dm.peer.id}`,
-              );
-              peerKey = key.public_key;
-            }
-            const message = await decryptWire(event.message, peerKey);
+            const message = await decryptWireResilient(
+              event.message,
+              dm.peer.id,
+              (id) => get().peerPublicKeys[id],
+              (id, key) =>
+                set((s) => ({
+                  peerPublicKeys: { ...s.peerPublicKeys, [id]: key },
+                })),
+            );
             set((s) => ({
               messagesByDm: {
                 ...s.messagesByDm,

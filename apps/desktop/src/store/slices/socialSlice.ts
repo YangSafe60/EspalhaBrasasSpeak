@@ -7,7 +7,9 @@ import {
 import { sameId } from "../../lib/serverPerms";
 import {
   decryptWire,
+  decryptWireResilient,
   ensureIdentity,
+  fetchPeerPublicKey,
   getCachedIdentity,
   upsertFriendship,
 } from "../helpers/dmHelpers";
@@ -18,7 +20,6 @@ import type {
   Friendship,
   FriendsList,
   Member,
-  UserIdentityKey,
   UserPublic,
   VoiceStateView,
 } from "../../types";
@@ -341,24 +342,25 @@ export const createSocialSlice: AppStoreSlice = (set, get) => ({
     const dm = get().dmChannels.find((c) => c.id === dmId);
     if (!dm) return;
 
-    let peerKey = get().peerPublicKeys[dm.peer.id];
-    if (!peerKey) {
-      const key = await api<UserIdentityKey>(
-        `/api/crypto/identity/${dm.peer.id}`,
-      );
-      peerKey = key.public_key;
-      set((s) => ({
-        peerPublicKeys: { ...s.peerPublicKeys, [dm.peer.id]: peerKey! },
-      }));
-    }
-
+    const peerId = dm.peer.id;
     const wires = await api<DmMessageWire[]>(`/api/dms/${dmId}/messages`);
     const messages = await Promise.all(
-      wires.map((w) => decryptWire(w, peerKey!)),
+      wires.map((w) =>
+        decryptWireResilient(
+          w,
+          peerId,
+          (id) => get().peerPublicKeys[id],
+          (id, key) =>
+            set((s) => ({
+              peerPublicKeys: { ...s.peerPublicKeys, [id]: key },
+            })),
+        ),
+      ),
     );
+    const peerKey = get().peerPublicKeys[peerId];
     let fp = get().dmFingerprints[dmId];
-    if (!fp && getCachedIdentity()) {
-      fp = await fingerprint(getCachedIdentity()!.publicKeyB64, peerKey!);
+    if (!fp && peerKey && getCachedIdentity()) {
+      fp = await fingerprint(getCachedIdentity()!.publicKeyB64, peerKey);
     }
     set((s) => ({
       messagesByDm: { ...s.messagesByDm, [dmId]: messages },
@@ -376,16 +378,17 @@ export const createSocialSlice: AppStoreSlice = (set, get) => ({
     const dm = get().dmChannels.find((c) => c.id === dmId);
     if (!dm) throw new Error("DM not found");
 
-    let peerKey = get().peerPublicKeys[dm.peer.id];
-    if (!peerKey) {
-      const key = await api<UserIdentityKey>(
-        `/api/crypto/identity/${dm.peer.id}`,
+    let peerKey: string;
+    try {
+      peerKey = await fetchPeerPublicKey(dm.peer.id, true);
+    } catch {
+      throw new Error(
+        "This person has not set up encrypted messaging on their device yet.",
       );
-      peerKey = key.public_key;
-      set((s) => ({
-        peerPublicKeys: { ...s.peerPublicKeys, [dm.peer.id]: peerKey! },
-      }));
     }
+    set((s) => ({
+      peerPublicKeys: { ...s.peerPublicKeys, [dm.peer.id]: peerKey },
+    }));
 
     const { ciphertext, nonce } = await encryptDm(
       content.trim(),
@@ -413,13 +416,16 @@ export const createSocialSlice: AppStoreSlice = (set, get) => ({
     const id = await ensureIdentity(user.id);
     const dm = get().dmChannels.find((c) => c.id === dmId);
     if (!dm) return;
-    let peerKey = get().peerPublicKeys[dm.peer.id];
-    if (!peerKey) {
-      const key = await api<UserIdentityKey>(
-        `/api/crypto/identity/${dm.peer.id}`,
-      );
-      peerKey = key.public_key;
+    let peerKey: string;
+    try {
+      peerKey = await fetchPeerPublicKey(dm.peer.id, true);
+    } catch {
+      get().setError("Could not load encryption keys for this conversation.");
+      return;
     }
+    set((s) => ({
+      peerPublicKeys: { ...s.peerPublicKeys, [dm.peer.id]: peerKey },
+    }));
     const { ciphertext, nonce } = await encryptDm(
       content.trim(),
       id.privateKey,

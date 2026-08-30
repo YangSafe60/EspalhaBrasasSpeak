@@ -202,7 +202,7 @@ export function FriendsSidebar({ onOpenFriends, friendsViewActive }: Props) {
               {filteredDms.map((dm) => (
                 <li
                   key={dm.id}
-                  className="friends-dm-row"
+                  className={`friends-dm-row${activeDmId === dm.id ? " active" : ""}`}
                   onContextMenu={(e: MouseEvent) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -211,7 +211,7 @@ export function FriendsSidebar({ onOpenFriends, friendsViewActive }: Props) {
                 >
                   <button
                     type="button"
-                    className={`friends-dm-btn ${activeDmId === dm.id ? "active" : ""}`}
+                    className="friends-dm-main"
                     onClick={() => void selectDm(dm.id)}
                   >
                     <FriendAvatar

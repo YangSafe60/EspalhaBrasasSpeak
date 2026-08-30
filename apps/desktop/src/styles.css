@@ -2956,6 +2956,11 @@ html[data-compact="1"] .message {
   background: rgba(59, 165, 93, 0.12);
 }
 
+.voice-lobby-tile-flags span.waiting {
+  color: #f0c674;
+  background: rgba(240, 198, 116, 0.12);
+}
+
 .voice-bar-info strong {
   display: block;
   font-family: var(--font-display);
@@ -5419,12 +5424,30 @@ html.is-screen-popout #root {
   align-items: center;
   gap: 0.15rem;
   min-width: 0;
+  padding: 0.4rem 0.45rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
 }
 
-.friends-dm-row .friends-dm-btn {
+.friends-dm-row:hover,
+.friends-dm-row.active {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.friends-dm-main {
   flex: 1;
   min-width: 0;
-  width: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .friends-dm-close {
@@ -5442,7 +5465,8 @@ html.is-screen-popout #root {
 }
 
 .friends-dm-row:hover .friends-dm-close,
-.friends-dm-row:focus-within .friends-dm-close {
+.friends-dm-row:focus-within .friends-dm-close,
+.friends-dm-row.active .friends-dm-close {
   opacity: 1;
   pointer-events: auto;
 }
@@ -5479,7 +5503,8 @@ html.is-screen-popout #root {
 }
 
 .friends-dm-name > :first-child,
-.friends-dm-btn .friends-dm-name {
+.friends-dm-btn .friends-dm-name,
+.friends-dm-main .friends-dm-name {
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
@@ -5756,6 +5781,19 @@ html.is-screen-popout #root {
   border-radius: 10px;
   border: 1px solid rgba(42, 155, 143, 0.35);
   background: rgba(42, 155, 143, 0.1);
+}
+
+.dm-call-lobby .voice-lobby-header h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.dm-call-lobby-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #2a9b8f;
 }
 
 .dm-e2e-badge {
