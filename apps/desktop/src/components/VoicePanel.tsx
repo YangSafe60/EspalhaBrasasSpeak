@@ -108,7 +108,9 @@ export function VoicePanel({ voice }: Props) {
     .find((c) => c.id === voice.voiceChannelId);
 
   const server = servers.find((s) => sameId(s.id, activeServerId));
-  const inVoice = Boolean(voice.voiceChannelId && channel);
+  const inVoice = Boolean(
+    (voice.voiceChannelId || voice.joining) && channel,
+  );
   const connectionSubtitle = channel
     ? server
       ? `${server.name} / ${channel.name}`

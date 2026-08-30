@@ -31,6 +31,8 @@ export function VoiceHostApp() {
   const engine = useVoiceEngine();
   const engineRef = useRef(engine);
   engineRef.current = engine;
+  /** Avoid broadcasting idle/host-idle on first mount before any voice session. */
+  const wasActiveRef = useRef(false);
 
   useEffect(() => {
     window.electronAPI?.notifyVoiceHostReady?.();
@@ -119,12 +121,25 @@ export function VoiceHostApp() {
   }, []);
 
   useEffect(() => {
-    const payload = stripScreens(engine);
-    void window.electronAPI?.publishVoiceEvent?.(payload);
-    if (!engine.voiceChannelId && !engine.joining && !engine.connected) {
-      stopVoiceHostLobbyRelay();
-      void window.electronAPI?.publishVoiceEvent?.({ op: "host-idle" });
+    const active =
+      engine.connected ||
+      engine.joining ||
+      Boolean(engine.voiceChannelId);
+
+    if (active) {
+      wasActiveRef.current = true;
+      void window.electronAPI?.publishVoiceEvent?.(stripScreens(engine));
+      return;
     }
+
+    if (!wasActiveRef.current) {
+      return;
+    }
+
+    wasActiveRef.current = false;
+    void window.electronAPI?.publishVoiceEvent?.(stripScreens(engine));
+    stopVoiceHostLobbyRelay();
+    void window.electronAPI?.publishVoiceEvent?.({ op: "host-idle" });
   }, [
     engine.connected,
     engine.joining,

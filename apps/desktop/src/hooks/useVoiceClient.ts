@@ -50,6 +50,8 @@ export function useVoiceClient() {
   const roomRef = useRef(null);
   const hostConnectedRef = useRef(false);
   const wasConnectedRef = useRef(false);
+  const joiningRef = useRef(false);
+  joiningRef.current = joining;
 
   const syncLocalToHost = useCallback(() => {
     const s = useAppStore.getState();
@@ -63,6 +65,18 @@ export function useVoiceClient() {
 
   const applyHostState = useCallback(
     (evt: Extract<VoiceHostEvent, { op: "state" }>) => {
+      // Voice host sends an idle snapshot on boot — ignore until a real session ran.
+      if (
+        !evt.connected &&
+        !evt.joining &&
+        !evt.voiceChannelId &&
+        !evt.error &&
+        !hostConnectedRef.current &&
+        !wasConnectedRef.current
+      ) {
+        return;
+      }
+
       hostConnectedRef.current = evt.connected;
       setConnected(evt.connected);
       setJoining(evt.joining);
@@ -108,7 +122,8 @@ export function useVoiceClient() {
       if (
         prev.voiceChannelId &&
         !state.voiceChannelId &&
-        hostConnectedRef.current
+        hostConnectedRef.current &&
+        !joiningRef.current
       ) {
         send({ op: "leave" });
       }
@@ -161,10 +176,12 @@ export function useVoiceClient() {
   const join = useCallback(async (channelId: string) => {
     setJoining(true);
     setError(null);
+    setVoiceChannelId(channelId);
+    setVoiceLocal({ voiceChannelId: channelId });
     await window.electronAPI?.ensureVoiceHost?.();
     syncLocalToHost();
     send({ op: "join", channelId });
-  }, [syncLocalToHost]);
+  }, [setVoiceLocal, syncLocalToHost]);
 
   const leave = useCallback(async () => {
     void window.electronAPI?.setWindowTitle?.(DEFAULT_TITLE);

@@ -65,7 +65,7 @@ export function DmMessageView() {
 
   const channel = dmChannels.find((c) => c.id === activeDmId);
   const messages = activeDmId ? messagesByDm[activeDmId] || [] : [];
-  const canSend = Boolean(channel?.friendship_id);
+  const canSend = Boolean(channel);
   const fp = activeDmId ? dmFingerprints[activeDmId] : null;
 
   const typers = (activeDmId ? typing[activeDmId] || [] : [])
@@ -436,31 +436,25 @@ export function DmMessageView() {
             {typers.join(", ")} {typers.length === 1 ? "is" : "are"} typing…
           </p>
         )}
-        {!canSend ? (
-          <p className="muted composer-locked">
-            Friendship ended — you can still read history, but cannot send.
-          </p>
-        ) : (
-          <form className="composer composer-dm" onSubmit={(e) => void onSubmit(e)}>
-            <textarea
-              ref={draftRef}
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={onKeyDown}
-              placeholder={`Message @${channel.peer.username}`}
-              rows={1}
-              disabled={busy}
-            />
-            <EmojiPickerButton onPick={insertEmoji} />
-            <button
-              type="submit"
-              className="btn primary sm"
-              disabled={busy || !draft.trim()}
-            >
-              Send
-            </button>
-          </form>
-        )}
+        <form className="composer composer-dm" onSubmit={(e) => void onSubmit(e)}>
+          <textarea
+            ref={draftRef}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={onKeyDown}
+            placeholder={`Message @${channel.peer.username}`}
+            rows={1}
+            disabled={busy}
+          />
+          <EmojiPickerButton onPick={insertEmoji} />
+          <button
+            type="submit"
+            className="btn primary sm"
+            disabled={busy || !draft.trim()}
+          >
+            Send
+          </button>
+        </form>
       </div>
 
       <ConfirmDialog

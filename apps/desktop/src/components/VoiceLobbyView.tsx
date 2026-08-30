@@ -82,7 +82,9 @@ export function VoiceLobbyView({ voice }: Props) {
 
   if (!channel || channel.channel_type !== "voice") return null;
 
-  const connectedHere = voice.voiceChannelId === channel.id;
+  const connectedHere =
+    voice.voiceChannelId === channel.id &&
+    (voice.connected || voice.joining);
   const hasStage =
     connectedHere &&
     (voice.localScreens.length > 0 || voice.remoteScreens.length > 0);

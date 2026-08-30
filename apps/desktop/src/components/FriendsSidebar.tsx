@@ -196,9 +196,6 @@ export function FriendsSidebar({ onOpenFriends, friendsViewActive }: Props) {
                     <span className="friends-dm-name">
                       {dm.peer.display_name}
                       <span className="muted">@{dm.peer.username}</span>
-                      {!dm.friendship_id && (
-                        <span className="friends-dm-tag"> closed</span>
-                      )}
                     </span>
                   </button>
                 </li>
