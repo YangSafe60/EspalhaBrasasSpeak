@@ -27,7 +27,11 @@ export async function enterFullscreen(
     await target.requestFullscreen({ navigationUI: "hide" });
     return;
   }
-  target.webkitRequestFullscreen?.();
+  if (target.webkitRequestFullscreen) {
+    target.webkitRequestFullscreen();
+    return;
+  }
+  throw new Error("Fullscreen API unavailable");
 }
 
 export async function exitFullscreen(): Promise<void> {

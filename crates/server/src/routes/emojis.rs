@@ -76,6 +76,7 @@ pub async fn list_server_emojis(
     user: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Vec<ServerEmoji>>> {
+    user.bot_server_scope(id)?;
     if !db::is_member(&state.db, id, user.id).await? {
         return Err(AppError::Forbidden);
     }
@@ -107,6 +108,7 @@ pub async fn create_server_emoji(
     Path(id): Path<Uuid>,
     Json(body): Json<CreateEmojiReq>,
 ) -> AppResult<Json<ServerEmoji>> {
+    user.bot_server_scope(id)?;
     let server = db::get_server(&state.db, id).await?;
     db::require_perm(
         &state.db,
@@ -173,6 +175,7 @@ pub async fn rename_server_emoji(
     Path((id, emoji_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<RenameEmojiReq>,
 ) -> AppResult<Json<ServerEmoji>> {
+    user.bot_server_scope(id)?;
     let server = db::get_server(&state.db, id).await?;
     db::require_perm(
         &state.db,
@@ -209,6 +212,7 @@ pub async fn delete_server_emoji(
     user: AuthUser,
     Path((id, emoji_id)): Path<(Uuid, Uuid)>,
 ) -> AppResult<Json<serde_json::Value>> {
+    user.bot_server_scope(id)?;
     let server = db::get_server(&state.db, id).await?;
     db::require_perm(
         &state.db,

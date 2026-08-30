@@ -88,6 +88,13 @@ export function playVoiceLeaveSound() {
   });
 }
 
+/** Release the shared sound context when voice is fully idle. */
+export function suspendVoiceSoundContext() {
+  if (sharedCtx?.state === "running") {
+    void sharedCtx.suspend();
+  }
+}
+
 /** Brighter rising sparkle — someone started screen sharing. */
 export function playScreenShareStartSound() {
   withCtx((ctx, t) => {

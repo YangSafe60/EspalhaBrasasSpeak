@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type CSSProperties,
   type MouseEvent,
   type ReactNode,
 } from "react";
@@ -297,6 +298,11 @@ export function useMemberContextMenu(voice?: MemberVoiceHandlers) {
             min={0}
             max={100}
             value={Math.round(menu.pref.volume * 100)}
+            style={
+              {
+                "--range-fill": `${Math.round(menu.pref.volume * 100)}%`,
+              } as CSSProperties
+            }
             onChange={(e) =>
               patchPref({ volume: Number(e.target.value) / 100 })
             }

@@ -36,6 +36,7 @@ import {
   playScreenShareStopSound,
   playVoiceJoinSound,
   playVoiceLeaveSound,
+  suspendVoiceSoundContext,
 } from "../lib/voiceSounds";
 import { getUserVoicePref, type UserVoicePref } from "../lib/userVoicePrefs";
 import { useAppStore } from "../store/appStore";
@@ -155,6 +156,16 @@ function collectScreenTracks(
   return tracks;
 }
 
+function readSignalRtt(room: Room): number | null {
+  const rtt = (
+    room as unknown as { engine?: { client?: { rtt?: number } } }
+  ).engine?.client?.rtt;
+  if (typeof rtt !== "number" || !Number.isFinite(rtt) || rtt <= 0) {
+    return null;
+  }
+  return Math.round(rtt);
+}
+
 export function useVoice() {
   const voiceChannelId = useAppStore((s) => s.voiceChannelId);
   const muted = useAppStore((s) => s.muted);
@@ -162,6 +173,8 @@ export function useVoice() {
   const setVoiceLocal = useAppStore((s) => s.setVoiceLocal);
 
   const roomRef = useRef<Room | null>(null);
+  /** Bumps when leaving or starting a new join — invalidates delayed join work. */
+  const joinGenerationRef = useRef(0);
   const voiceChannelIdRef = useRef<string | null>(voiceChannelId);
   const mutedRef = useRef(muted);
   const deafenedRef = useRef(deafened);
@@ -182,6 +195,8 @@ export function useVoice() {
   >({});
 
   const [connected, setConnected] = useState(false);
+  const [pingMs, setPingMs] = useState<number | null>(null);
+  const [cameraOn, setCameraOn] = useState(false);
   const [remoteScreens, setRemoteScreens] = useState<RemoteScreen[]>([]);
   const [localScreens, setLocalScreens] = useState<LocalScreen[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -628,7 +643,71 @@ export function useVoice() {
     [refreshScreens, syncLocalScreen],
   );
 
+  const teardownRoom = useCallback(
+    async (room: Room, stopTracks: boolean) => {
+      room.remoteParticipants.forEach((p) => {
+        p.trackPublications.forEach((pub) => {
+          const track = pub.track;
+          if (track) {
+            try {
+              track.detach();
+            } catch {
+              /* already detached */
+            }
+          }
+          try {
+            pub.setSubscribed(false);
+          } catch {
+            /* ignore */
+          }
+        });
+      });
+
+      try {
+        await room.localParticipant.setMicrophoneEnabled(false);
+      } catch {
+        /* already down */
+      }
+      try {
+        await room.localParticipant.setCameraEnabled(false);
+      } catch {
+        /* optional */
+      }
+
+      for (const pub of [
+        ...room.localParticipant.trackPublications.values(),
+      ] as LocalTrackPublication[]) {
+        const track = pub.track;
+        if (!track) continue;
+        try {
+          await room.localParticipant.unpublishTrack(track, stopTracks);
+        } catch {
+          if (stopTracks) {
+            try {
+              track.stop();
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+      }
+
+      try {
+        await room.disconnect(stopTracks);
+      } catch {
+        /* already disconnected */
+      }
+      try {
+        room.removeAllListeners();
+      } catch {
+        /* EventEmitter API */
+      }
+    },
+    [],
+  );
+
   const leave = useCallback(async () => {
+    joinGenerationRef.current += 1;
     const room = roomRef.current;
     const wasInVoice = !!room;
     roomRef.current = null;
@@ -650,49 +729,16 @@ export function useVoice() {
     for (const sid of [...remoteAudioElsRef.current.keys()]) {
       detachRemoteAudio(sid);
     }
+    remoteAudioTracksRef.current.clear();
     shareAudioStateRef.current.clear();
     setShareAudioByTrack({});
 
     if (room) {
-      try {
-        await room.localParticipant.setMicrophoneEnabled(false);
-      } catch {
-        /* already down */
-      }
-      try {
-        await room.localParticipant.setCameraEnabled(false);
-      } catch {
-        /* optional */
-      }
-      // Force-stop any leftover local media (mic / camera / share).
-      for (const pub of [
-        ...room.localParticipant.trackPublications.values(),
-      ] as LocalTrackPublication[]) {
-        const track = pub.track;
-        if (!track) continue;
-        try {
-          await room.localParticipant.unpublishTrack(track, true);
-        } catch {
-          try {
-            track.stop();
-          } catch {
-            /* ignore */
-          }
-        }
-      }
-      try {
-        await room.disconnect(true);
-      } catch {
-        /* already disconnected */
-      }
-      try {
-        room.removeAllListeners();
-      } catch {
-        /* EventEmitter API */
-      }
+      await teardownRoom(room, true);
     }
 
     void getElectronAPI()?.setBackgroundThrottling?.(true);
+    suspendVoiceSoundContext();
     setVoiceLocal({ voiceChannelId: null, streaming: false });
     try {
       await api("/api/voice/state", {
@@ -705,7 +751,7 @@ export function useVoice() {
     if (wasInVoice && !deafenedRef.current && !switchingRef.current) {
       playVoiceLeaveSound();
     }
-  }, [detachRemoteAudio, endScreenShare, setVoiceLocal]);
+  }, [detachRemoteAudio, endScreenShare, setVoiceLocal, teardownRoom]);
 
   const join = useCallback(
     async (channelId: string) => {
@@ -987,11 +1033,17 @@ export function useVoice() {
           /* may still work once a remote track arrives */
         }
         await applyDevicesToRoom(room, settings);
-        pullRemoteAudio(room);
-        // Publications can arrive a tick after connect.
-        queueMicrotask(() => pullRemoteAudio(room));
-        setTimeout(() => pullRemoteAudio(room), 250);
-        setTimeout(() => pullRemoteAudio(room), 1000);
+        const joinGen = joinGenerationRef.current;
+        const pullIfCurrent = () => {
+          if (joinGenerationRef.current !== joinGen || roomRef.current !== room) {
+            return;
+          }
+          pullRemoteAudio(room);
+        };
+        pullIfCurrent();
+        queueMicrotask(pullIfCurrent);
+        window.setTimeout(pullIfCurrent, 250);
+        window.setTimeout(pullIfCurrent, 1000);
 
         if (preservedScreen.length) {
           await republishScreenTracks(room, preservedScreen);
@@ -1131,6 +1183,13 @@ export function useVoice() {
     });
   }, [muted, deafened]);
 
+  // Server/WS can clear voice membership without going through the disconnect button.
+  useEffect(() => {
+    if (voiceChannelId != null || joining) return;
+    if (!roomRef.current) return;
+    void leave();
+  }, [voiceChannelId, joining, leave]);
+
   const toggleMute = useCallback(async () => {
     const state = useAppStore.getState();
     const me = state.voiceStates.find((v) => v.user_id === state.user?.id);
@@ -1150,6 +1209,38 @@ export function useVoice() {
       muted: next,
     });
   }, [deafened, setVoiceLocal]);
+
+  const toggleCamera = useCallback(async () => {
+    const room = roomRef.current;
+    if (!room || !connected) return;
+    const settings = loadMediaSettings();
+    const next = !room.localParticipant.isCameraEnabled;
+    try {
+      await room.localParticipant.setCameraEnabled(next, {
+        deviceId: settings.cameraDeviceId || undefined,
+      });
+      setCameraOn(next);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not toggle camera");
+    }
+  }, [connected]);
+
+  useEffect(() => {
+    if (!connected) {
+      setPingMs(null);
+      setCameraOn(false);
+      return;
+    }
+    const tick = () => {
+      const room = roomRef.current;
+      if (!room) return;
+      setPingMs(readSignalRtt(room));
+      setCameraOn(room.localParticipant.isCameraEnabled);
+    };
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [connected]);
 
   const closeScreenPicker = useCallback(() => {
     if (pickerBusy) return;
@@ -1482,6 +1573,7 @@ export function useVoice() {
     return () => {
       window.removeEventListener("beforeunload", clearPresenceKeepalive);
       window.removeEventListener("pagehide", clearPresenceKeepalive);
+      joinGenerationRef.current += 1;
       const room = roomRef.current;
       roomRef.current = null;
       const stops = [...shareStopsRef.current.values()];
@@ -1495,22 +1587,16 @@ export function useVoice() {
       remoteAudioElsRef.current.clear();
       remoteAudioTracksRef.current.clear();
       if (room) {
-        try {
-          void room.localParticipant.setMicrophoneEnabled(false);
-        } catch {
-          /* ignore */
-        }
-        void room.disconnect(true).then(() => {
-          try {
-            room.removeAllListeners();
-          } catch {
-            /* ignore */
-          }
+        void teardownRoom(room, true).finally(() => {
+          void getElectronAPI()?.setBackgroundThrottling?.(true);
+          suspendVoiceSoundContext();
         });
+      } else {
+        void getElectronAPI()?.setBackgroundThrottling?.(true);
+        suspendVoiceSoundContext();
       }
-      void getElectronAPI()?.setBackgroundThrottling?.(true);
     };
-  }, [detachRemoteAudio]);
+  }, [detachRemoteAudio, teardownRoom]);
 
   return {
     roomRef,
@@ -1518,6 +1604,8 @@ export function useVoice() {
     connected,
     joining,
     error,
+    pingMs,
+    cameraOn,
     muted,
     deafened,
     remoteScreens,
@@ -1532,6 +1620,7 @@ export function useVoice() {
     leave,
     toggleMute,
     toggleDeafen,
+    toggleCamera,
     shareScreen,
     openScreenPicker,
     closeScreenPicker,

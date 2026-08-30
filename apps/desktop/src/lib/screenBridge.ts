@@ -24,6 +24,15 @@ const JPEG_QUALITY = 0.82;
 const FRAME_INTERVAL_MS = 66; // ~15 fps
 
 let hostReady: Promise<void> | null = null;
+let activeRelayViewers = 0;
+
+function syncRelayBackgroundThrottling() {
+  const electron = getElectronAPI();
+  if (!electron?.setBackgroundThrottling) return;
+  if (activeRelayViewers > 0) {
+    void electron.setBackgroundThrottling(false);
+  }
+}
 
 async function publishSignal(msg: Signal) {
   const electron = getElectronAPI();
@@ -106,17 +115,33 @@ async function subscribeFrames(
   return () => cleanups.forEach((c) => c());
 }
 
+function mountHiddenRelayVideo(video: HTMLVideoElement) {
+  video.muted = true;
+  video.playsInline = true;
+  video.autoplay = true;
+  video.setAttribute("playsinline", "");
+  video.setAttribute("webkit-playsinline", "");
+  video.style.position = "fixed";
+  video.style.left = "-9999px";
+  video.style.top = "0";
+  video.style.width = "1px";
+  video.style.height = "1px";
+  video.style.opacity = "0";
+  video.style.pointerEvents = "none";
+  document.body.appendChild(video);
+}
+
 function startRelay(trackSid: string, track: MediaStreamTrack) {
   const existing = relays.get(trackSid);
   if (existing) {
     existing.viewers += 1;
+    activeRelayViewers += 1;
+    syncRelayBackgroundThrottling();
     return;
   }
 
   const video = document.createElement("video");
-  video.muted = true;
-  video.playsInline = true;
-  video.autoplay = true;
+  mountHiddenRelayVideo(video);
   const cloned = (() => {
     try {
       return track.clone();
@@ -130,33 +155,40 @@ function startRelay(trackSid: string, track: MediaStreamTrack) {
   };
   kickPlay();
   video.addEventListener("loadeddata", kickPlay);
+  video.addEventListener("loadedmetadata", kickPlay);
   video.addEventListener("resize", kickPlay);
+  video.addEventListener("canplay", kickPlay);
 
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d", { alpha: false });
   let timer: number | null = null;
   let stopped = false;
 
-  const tick = () => {
-    if (stopped || !ctx) return;
+  const publishSnapshot = () => {
+    if (stopped || !ctx) return false;
     const w = video.videoWidth;
     const h = video.videoHeight;
-    if (w > 0 && h > 0) {
-      const scale = w > MAX_RELAY_WIDTH ? MAX_RELAY_WIDTH / w : 1;
-      const tw = Math.max(1, Math.round(w * scale));
-      const th = Math.max(1, Math.round(h * scale));
-      if (canvas.width !== tw || canvas.height !== th) {
-        canvas.width = tw;
-        canvas.height = th;
-      }
-      ctx.drawImage(video, 0, 0, tw, th);
-      try {
-        const frame = canvas.toDataURL("image/jpeg", JPEG_QUALITY);
-        void publishFrame({ trackSid, frame });
-      } catch {
-        /* canvas tainted / empty */
-      }
+    if (w <= 0 || h <= 0) return false;
+    const scale = w > MAX_RELAY_WIDTH ? MAX_RELAY_WIDTH / w : 1;
+    const tw = Math.max(1, Math.round(w * scale));
+    const th = Math.max(1, Math.round(h * scale));
+    if (canvas.width !== tw || canvas.height !== th) {
+      canvas.width = tw;
+      canvas.height = th;
     }
+    ctx.drawImage(video, 0, 0, tw, th);
+    try {
+      const frame = canvas.toDataURL("image/jpeg", JPEG_QUALITY);
+      void publishFrame({ trackSid, frame });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const tick = () => {
+    if (stopped) return;
+    publishSnapshot();
     timer = window.setTimeout(tick, FRAME_INTERVAL_MS);
   };
 
@@ -166,6 +198,8 @@ function startRelay(trackSid: string, track: MediaStreamTrack) {
   cloned.addEventListener("ended", onEnded);
 
   timer = window.setTimeout(tick, 50);
+  activeRelayViewers += 1;
+  syncRelayBackgroundThrottling();
 
   relays.set(trackSid, {
     viewers: 1,
@@ -174,7 +208,9 @@ function startRelay(trackSid: string, track: MediaStreamTrack) {
       if (timer != null) window.clearTimeout(timer);
       cloned.removeEventListener("ended", onEnded);
       video.removeEventListener("loadeddata", kickPlay);
+      video.removeEventListener("loadedmetadata", kickPlay);
       video.removeEventListener("resize", kickPlay);
+      video.removeEventListener("canplay", kickPlay);
       try {
         if (cloned !== track) cloned.stop();
       } catch {
@@ -185,6 +221,8 @@ function startRelay(trackSid: string, track: MediaStreamTrack) {
       canvas.width = 0;
       canvas.height = 0;
       relays.delete(trackSid);
+      activeRelayViewers = Math.max(0, activeRelayViewers - 1);
+      syncRelayBackgroundThrottling();
     },
   });
 }
@@ -193,7 +231,12 @@ function releaseRelay(trackSid: string) {
   const entry = relays.get(trackSid);
   if (!entry) return;
   entry.viewers -= 1;
-  if (entry.viewers <= 0) entry.stop();
+  if (entry.viewers <= 0) {
+    entry.stop();
+    return;
+  }
+  activeRelayViewers = Math.max(0, activeRelayViewers - 1);
+  syncRelayBackgroundThrottling();
 }
 
 async function ensureHost() {
@@ -245,6 +288,8 @@ export function clearAllScreenBridge() {
   }
   relays.clear();
   tracks.clear();
+  activeRelayViewers = 0;
+  syncRelayBackgroundThrottling();
 }
 
 /** Attach a live screen share into a pop-out <img>. */

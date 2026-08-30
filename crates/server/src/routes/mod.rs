@@ -1,4 +1,5 @@
 mod auth_routes;
+mod bots;
 mod channels;
 mod dms;
 mod emojis;
@@ -7,6 +8,7 @@ mod media;
 mod messages;
 mod presence;
 mod servers;
+mod webhooks;
 pub(crate) mod voice;
 
 use crate::auth::{decode_token, AuthUser};
@@ -240,6 +242,24 @@ pub fn router(state: AppState) -> Router {
             "/api/channels/{id}/invite",
             post(channels::invite_to_channel),
         )
+        .route(
+            "/api/channels/{id}/webhooks",
+            get(webhooks::list).post(webhooks::create),
+        )
+        .route(
+            "/api/webhooks/{id}",
+            patch(webhooks::update).delete(webhooks::delete),
+        )
+        .route(
+            "/api/webhooks/{id}/{token}",
+            post(webhooks::execute),
+        )
+        .route(
+            "/api/servers/{id}/bots",
+            get(bots::list).post(bots::create),
+        )
+        .route("/api/bots/{id}", delete(bots::delete))
+        .route("/api/bots/me", get(bots::me))
         .route(
             "/api/channels/{id}/messages",
             get(messages::list).post(messages::create),

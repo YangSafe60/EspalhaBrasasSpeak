@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { copyText } from "../lib/clipboard";
 import { IMAGE_UPLOAD_HINT } from "../lib/uploadHints";
 import { mediaCssUrl, mediaUrl } from "../lib/mediaUrl";
 import {
@@ -798,7 +799,7 @@ export function ServerSettingsModal() {
                   .then(async (inv) => {
                     setInvites((prev) => [inv, ...prev.filter((i) => i.code !== inv.code)]);
                     try {
-                      await navigator.clipboard.writeText(inv.code);
+                      await copyText(inv.code);
                       setCopiedCode(inv.code);
                     } catch {
                       /* ignore */
@@ -843,10 +844,14 @@ export function ServerSettingsModal() {
                             type="button"
                             className="btn ghost sm"
                             onClick={() => {
-                              void navigator.clipboard.writeText(inv.code).then(() => {
-                                setCopiedCode(inv.code);
-                                setMsg(`Copied ${inv.code}`);
-                              });
+                              void copyText(inv.code)
+                                .then(() => {
+                                  setCopiedCode(inv.code);
+                                  setMsg(`Copied ${inv.code}`);
+                                })
+                                .catch(() => {
+                                  setErr("Could not copy invite code");
+                                });
                             }}
                           >
                             {copiedCode === inv.code ? "Copied" : "Copy"}

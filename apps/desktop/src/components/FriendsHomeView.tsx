@@ -197,7 +197,7 @@ export function FriendsHomeView({ tab, onTabChange }: Props) {
         <div className="friends-add-panel">
           <h3>Add friend</h3>
           <p className="muted">
-            Send a request with their SpeakApp username.
+            Send a request with their username.
           </p>
           <form className="friends-add-form" onSubmit={(e) => void onAdd(e)}>
             <input

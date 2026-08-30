@@ -160,6 +160,7 @@ export function ChannelSidebar({
   const openMiniProfile = useAppStore((s) => s.openMiniProfile);
   const createChannel = useAppStore((s) => s.createChannel);
   const duplicateChannel = useAppStore((s) => s.duplicateChannel);
+  const deleteChannel = useAppStore((s) => s.deleteChannel);
   const applyChannelOrder = useAppStore((s) => s.applyChannelOrder);
   const channelMutes = useAppStore((s) => s.channelMutes);
   const unreadByChannel = useAppStore((s) => s.unreadByChannel);
@@ -1147,6 +1148,13 @@ export function ChannelSidebar({
               items.push({
                 label: "Edit Channel",
                 onClick: () => setModal("channel-settings", ch.id),
+              });
+              items.push({
+                label: "Delete Channel",
+                danger: true,
+                onClick: () => {
+                  void deleteChannel(ch.id);
+                },
               });
             }
             return items;

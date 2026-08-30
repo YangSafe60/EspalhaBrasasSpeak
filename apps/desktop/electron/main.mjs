@@ -155,7 +155,7 @@ function registerIpc() {
         nodeIntegration: false,
         sandbox: true,
         spellcheck: false,
-        backgroundThrottling: true,
+        backgroundThrottling: false,
         v8CacheOptions: "code",
       },
     });

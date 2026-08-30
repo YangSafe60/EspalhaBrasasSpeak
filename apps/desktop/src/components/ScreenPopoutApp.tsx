@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import logoMark from "../assets/logo-mark.png";
 import { consumeScreenInPopout } from "../lib/screenBridge";
 
@@ -17,12 +17,13 @@ export function ScreenPopoutApp() {
     return () => document.documentElement.classList.remove("is-screen-popout");
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const trackSid = trackParam();
     if (!trackSid) {
       setError("Missing track parameter.");
       return;
     }
+
     const el = imgRef.current;
     if (!el) return;
 

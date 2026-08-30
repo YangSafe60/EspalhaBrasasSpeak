@@ -60,6 +60,7 @@ pub async fn token(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<VoiceTokenResponse>> {
     let channel = db::get_channel(&state.db, id).await?;
+    user.bot_server_scope(channel.server_id)?;
     if channel.channel_type != ChannelType::Voice {
         return Err(AppError::BadRequest("not a voice channel".into()));
     }
@@ -72,7 +73,9 @@ pub async fn token(
         Permissions::CONNECT,
     )
     .await?;
-    db::require_not_timed_out(&state.db, server.id, user.id).await?;
+    if !user.is_bot() {
+        db::require_not_timed_out(&state.db, server.id, user.id).await?;
+    }
 
     if channel.user_limit > 0 {
         let count: (i64,) = sqlx::query_as(
@@ -460,6 +463,7 @@ pub async fn list_states(
     user: AuthUser,
     Query(q): Query<ListVoiceQuery>,
 ) -> AppResult<Json<Vec<VoiceStateView>>> {
+    user.bot_server_scope(q.server_id)?;
     if !db::is_member(&state.db, q.server_id, user.id).await? {
         return Err(AppError::Forbidden);
     }

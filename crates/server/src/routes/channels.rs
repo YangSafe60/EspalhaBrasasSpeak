@@ -53,6 +53,7 @@ pub async fn list(
     user: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Vec<Channel>>> {
+    user.bot_server_scope(id)?;
     if !db::is_member(&state.db, id, user.id).await? {
         return Err(AppError::Forbidden);
     }
@@ -75,6 +76,7 @@ pub async fn create(
     Path(id): Path<Uuid>,
     Json(body): Json<CreateChannelReq>,
 ) -> AppResult<Json<Channel>> {
+    user.bot_server_scope(id)?;
     let server = db::get_server(&state.db, id).await?;
     db::require_perm(
         &state.db,
@@ -137,6 +139,7 @@ pub async fn duplicate(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Channel>> {
     let source = db::get_channel(&state.db, id).await?;
+    user.bot_server_scope(source.server_id)?;
     let server = db::get_server(&state.db, source.server_id).await?;
     db::require_perm(
         &state.db,
@@ -222,6 +225,7 @@ pub async fn get(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Channel>> {
     let channel = db::get_channel(&state.db, id).await?;
+    user.bot_server_scope(channel.server_id)?;
     if !db::is_member(&state.db, channel.server_id, user.id).await? {
         return Err(AppError::Forbidden);
     }
@@ -244,6 +248,7 @@ pub async fn update(
     Json(body): Json<UpdateChannelReq>,
 ) -> AppResult<Json<Channel>> {
     let channel = db::get_channel(&state.db, id).await?;
+    user.bot_server_scope(channel.server_id)?;
     let server = db::get_server(&state.db, channel.server_id).await?;
     db::require_perm(
         &state.db,
@@ -360,6 +365,7 @@ pub async fn delete(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
     let channel = db::get_channel(&state.db, id).await?;
+    user.bot_server_scope(channel.server_id)?;
     let server = db::get_server(&state.db, channel.server_id).await?;
     db::require_perm(
         &state.db,
@@ -389,6 +395,7 @@ pub async fn list_overwrites(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Vec<PermissionOverwrite>>> {
     let channel = db::get_channel(&state.db, id).await?;
+    user.bot_server_scope(channel.server_id)?;
     if !db::is_member(&state.db, channel.server_id, user.id).await? {
         return Err(AppError::Forbidden);
     }
@@ -400,6 +407,7 @@ pub async fn list_server_overwrites(
     user: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Vec<PermissionOverwrite>>> {
+    user.bot_server_scope(id)?;
     if !db::is_member(&state.db, id, user.id).await? {
         return Err(AppError::Forbidden);
     }
@@ -413,6 +421,7 @@ pub async fn set_overwrites(
     Json(body): Json<SetOverwritesReq>,
 ) -> AppResult<Json<Vec<PermissionOverwrite>>> {
     let channel = db::get_channel(&state.db, id).await?;
+    user.bot_server_scope(channel.server_id)?;
     let server = db::get_server(&state.db, channel.server_id).await?;
     let perms = db::effective_permissions(&state.db, &server, Some(id), user.id).await?;
     if !perms.has(Permissions::MANAGE_ROLES) && !perms.has(Permissions::MANAGE_CHANNELS) {
@@ -491,6 +500,7 @@ pub async fn invite_to_channel(
         return Err(AppError::BadRequest("cannot invite yourself".into()));
     }
     let channel = db::get_channel(&state.db, id).await?;
+    user.bot_server_scope(channel.server_id)?;
     if channel.channel_type == ChannelType::Category {
         return Err(AppError::BadRequest("cannot invite to a category".into()));
     }

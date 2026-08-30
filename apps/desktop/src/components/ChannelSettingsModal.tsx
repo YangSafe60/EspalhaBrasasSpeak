@@ -17,6 +17,7 @@ import {
   type PermissionOverwrite,
   type Role,
 } from "../types";
+import { ChannelIntegrationsPanel } from "./ChannelIntegrationsPanel";
 
 type Tab = "overview" | "permissions" | "integrations" | "danger";
 
@@ -217,6 +218,11 @@ export function ChannelSettingsModal() {
       Perm.MANAGE_CHANNELS,
     );
   }, [server, roles, me, user?.id, overwritesForChannel]);
+
+  const canManageServer = useMemo(() => {
+    const serverPerms = effectiveServerPerms(server, roles, me, user?.id);
+    return hasPerm(serverPerms, Perm.MANAGE_SERVER);
+  }, [server, roles, me, user?.id]);
 
   const [tab, setTab] = useState<Tab>("overview");
   const [name, setName] = useState("");
@@ -937,25 +943,14 @@ export function ChannelSettingsModal() {
             </div>
           )}
 
-          {tab === "integrations" && (
-            <div className="stack settings-form">
-              <div className="settings-section">
-                <h4>Webhooks</h4>
-                <p className="muted">
-                  Webhooks and bots aren’t available in this build yet. This page is ready for
-                  webhook management in a later update.
-                </p>
-                <button type="button" className="btn ghost" disabled>
-                  Create Webhook (soon)
-                </button>
-              </div>
-              <div className="settings-section">
-                <h4>Apps</h4>
-                <p className="muted">
-                  Channel-linked integrations will show up here once the bot API ships.
-                </p>
-              </div>
-            </div>
+          {tab === "integrations" && channel && (
+            <ChannelIntegrationsPanel
+              channelId={channel.id}
+              channelType={channel.channel_type}
+              serverId={channel.server_id}
+              canManageChannel={canManageThisChannel}
+              canManageServer={canManageServer}
+            />
           )}
 
           {tab === "danger" && (

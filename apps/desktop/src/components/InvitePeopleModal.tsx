@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { copyText } from "../lib/clipboard";
 import { mediaUrl } from "../lib/mediaUrl";
 import { useAppStore } from "../store/appStore";
 import type { UserPublic } from "../types";
@@ -150,7 +151,7 @@ export function InvitePeopleModal() {
     setError(null);
     try {
       const code = await ensureInviteCode();
-      await navigator.clipboard.writeText(code);
+      await copyText(code);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
     } catch (e) {

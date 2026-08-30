@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import type { useVoice } from "../hooks/useVoice";
 import {
   getFullscreenElement,
@@ -335,18 +341,20 @@ function LobbyScreenTile({
   }, []);
 
   async function toggleFullscreen() {
-    const video = ref.current;
     const tile = tileRef.current;
-    if (!video && !tile) return;
+    const video = ref.current;
+    if (!tile && !video) return;
 
-    if (getFullscreenElement()) {
-      await toggleElementFullscreen(getFullscreenElement());
+    const active = getFullscreenElement();
+    if (active) {
+      await toggleElementFullscreen(active);
       return;
     }
 
+    // Prefer the tile container — keeps controls visible and works reliably in Electron.
     const ok =
-      (video && (await toggleElementFullscreen(video))) ||
-      (tile && (await toggleElementFullscreen(tile)));
+      (tile && (await toggleElementFullscreen(tile))) ||
+      (video && (await toggleElementFullscreen(video)));
     if (!ok) {
       /* fullscreen may be blocked */
     }
@@ -417,6 +425,11 @@ function LobbyScreenTile({
                 min={0}
                 max={100}
                 value={Math.round(audioControls.volume * 100)}
+                style={
+                  {
+                    "--range-fill": `${Math.round(audioControls.volume * 100)}%`,
+                  } as CSSProperties
+                }
                 aria-label="Stream audio volume"
                 title="Stream volume"
                 onChange={(e) =>

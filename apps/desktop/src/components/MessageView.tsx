@@ -27,9 +27,23 @@ const QUICK_EMOJIS = ["👍", "🔥", "😂"];
 /** Discord-like: group consecutive messages from the same author within this window. */
 const GROUP_WINDOW_MS = 7 * 60 * 1000;
 
+function messageIdentity(m: Message): string {
+  if (m.webhook_id) return `wh:${m.webhook_id}`;
+  if (m.bot_id) return `bot:${m.bot_id}`;
+  return `user:${m.author_id}`;
+}
+
+function messageDisplayName(m: Message, authorName?: string): string {
+  return m.webhook_name || m.bot_name || authorName || "Unknown";
+}
+
+function isIntegrationMessage(m: Message): boolean {
+  return Boolean(m.webhook_id || m.bot_id);
+}
+
 function shouldStartGroup(prev: Message | undefined, current: Message): boolean {
   if (!prev) return true;
-  if (prev.author_id !== current.author_id) return true;
+  if (messageIdentity(prev) !== messageIdentity(current)) return true;
   const gap =
     new Date(current.created_at).getTime() - new Date(prev.created_at).getTime();
   return gap > GROUP_WINDOW_MS;
@@ -412,7 +426,9 @@ export function MessageView() {
           const author = authors[m.author_id];
           const prev = i > 0 ? messages[i - 1] : undefined;
           const isGroupStart = shouldStartGroup(prev, m);
-          const mine = user?.id === m.author_id;
+          const mine = user?.id === m.author_id && !isIntegrationMessage(m);
+          const displayName = messageDisplayName(m, author?.display_name);
+          const integration = isIntegrationMessage(m);
           const editing = editingId === m.id;
           const selected = selectedIds.has(m.id);
           const mentioned = messageMentionsMe(m.content || "", mentionCtx);
@@ -425,6 +441,11 @@ export function MessageView() {
             >
               <div className="avatar-col">
                 {isGroupStart ? (
+                  integration ? (
+                    <div className="avatar integration-avatar" aria-hidden>
+                      <span>{displayName.charAt(0).toUpperCase()}</span>
+                    </div>
+                  ) : (
                   <button
                     type="button"
                     className="avatar clickable-user"
@@ -449,6 +470,7 @@ export function MessageView() {
                       </span>
                     )}
                   </button>
+                  )
                 ) : (
                   <time className="grouped-time" dateTime={m.created_at} title={formatTime(m.created_at)}>
                     {new Date(m.created_at).toLocaleTimeString([], {
@@ -461,6 +483,12 @@ export function MessageView() {
               <div className="message-body">
                 {isGroupStart && (
                   <div className="message-meta">
+                    {integration ? (
+                      <span className="message-author integration-author">
+                        {displayName}
+                        {m.bot_id && <span className="bot-tag">APP</span>}
+                      </span>
+                    ) : (
                     <button
                       type="button"
                       className="message-author-btn"
@@ -473,8 +501,9 @@ export function MessageView() {
                         })
                       }
                     >
-                      {author?.display_name || "Unknown"}
+                      {displayName}
                     </button>
+                    )}
                     <time dateTime={m.created_at}>{formatTime(m.created_at)}</time>
                   </div>
                 )}

@@ -763,9 +763,13 @@ pub async fn load_message(db: &SqlitePool, id: Uuid, viewer_id: Uuid) -> AppResu
         reply_to_id: Option<String>,
         edited_at: Option<String>,
         created_at: String,
+        webhook_id: Option<String>,
+        webhook_name: Option<String>,
+        bot_id: Option<String>,
+        bot_name: Option<String>,
     }
     let row = sqlx::query_as::<_, MRow>(
-        "SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at FROM messages WHERE id = ?",
+        "SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, webhook_id, webhook_name, bot_id, bot_name FROM messages WHERE id = ?",
     )
     .bind(id.to_string())
     .fetch_optional(db)
@@ -791,6 +795,10 @@ pub async fn load_message(db: &SqlitePool, id: Uuid, viewer_id: Uuid) -> AppResu
             .unwrap_or_else(|_| Utc::now()),
         attachments,
         reactions,
+        webhook_id: row.webhook_id.and_then(|x| Uuid::parse_str(&x).ok()),
+        webhook_name: row.webhook_name,
+        bot_id: row.bot_id.and_then(|x| Uuid::parse_str(&x).ok()),
+        bot_name: row.bot_name,
     })
 }
 

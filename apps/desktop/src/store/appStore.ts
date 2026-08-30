@@ -1690,9 +1690,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...s.membersByServer,
         [serverId]: [
           ...(s.membersByServer[serverId] || []).filter(
-            (m) => m.user.id !== userId,
+            (m) => !sameId(m.user.id, userId),
           ),
-          member,
+          {
+            ...member,
+            role_ids: (member.role_ids || []).map(String),
+          },
         ],
       },
     }));
@@ -2104,34 +2107,45 @@ export const useAppStore = create<AppState>((set, get) => ({
         });
         break;
       case "channel_create":
-        set((s) => ({
-          channelsByServer: {
-            ...s.channelsByServer,
-            [event.channel.server_id]: upsertChannelList(
-              s.channelsByServer[event.channel.server_id] || [],
-              event.channel,
-            ),
-          },
-        }));
+        set((s) => {
+          const serverKey =
+            Object.keys(s.channelsByServer).find((id) =>
+              sameId(id, event.channel.server_id),
+            ) || event.channel.server_id;
+          return {
+            channelsByServer: {
+              ...s.channelsByServer,
+              [serverKey]: upsertChannelList(
+                s.channelsByServer[serverKey] || [],
+                event.channel,
+              ),
+            },
+          };
+        });
         // Overwrite saves rebroadcast as channel_create — refresh lock state.
         void get().loadChannelOverwrites(event.channel.id).catch(() => {});
         break;
       case "channel_update":
         set((s) => {
-          const list = s.channelsByServer[event.channel.server_id] || [];
+          const serverKey =
+            Object.keys(s.channelsByServer).find((id) =>
+              sameId(id, event.channel.server_id),
+            ) || event.channel.server_id;
+          const list = s.channelsByServer[serverKey] || [];
           return {
             channelsByServer: {
               ...s.channelsByServer,
-              [event.channel.server_id]: upsertChannelList(
-                list,
-                event.channel,
-              ),
+              [serverKey]: upsertChannelList(list, event.channel),
             },
           };
         });
         break;
       case "channel_delete":
         set((s) => {
+          const serverKey =
+            Object.keys(s.channelsByServer).find((id) =>
+              sameId(id, event.server_id),
+            ) || event.server_id;
           const overwritesByChannel = Object.fromEntries(
             Object.entries(s.overwritesByChannel).filter(
               ([id]) => !sameId(id, event.channel_id),
@@ -2140,17 +2154,18 @@ export const useAppStore = create<AppState>((set, get) => ({
           return {
             channelsByServer: {
               ...s.channelsByServer,
-              [event.server_id]: (s.channelsByServer[event.server_id] || [])
-                .filter((c) => c.id !== event.channel_id)
+              [serverKey]: (s.channelsByServer[serverKey] || [])
+                .filter((c) => !sameId(c.id, event.channel_id))
                 .map((c) =>
-                  c.category_id === event.channel_id
+                  sameId(c.category_id, event.channel_id)
                     ? { ...c, category_id: null }
                     : c,
                 ),
             },
             overwritesByChannel,
-            activeChannelId:
-              s.activeChannelId === event.channel_id ? null : s.activeChannelId,
+            activeChannelId: sameId(s.activeChannelId, event.channel_id)
+              ? null
+              : s.activeChannelId,
           };
         });
         break;
@@ -2163,21 +2178,30 @@ export const useAppStore = create<AppState>((set, get) => ({
         break;
       case "member_join": {
         const joinedSelf = state.user?.id === event.member.user.id;
-        const knownServer = state.servers.some(
-          (s) => s.id === event.member.server_id,
+        const knownServer = state.servers.some((s) =>
+          sameId(s.id, event.member.server_id),
         );
-        set((s) => ({
-          authors: { ...s.authors, [event.member.user.id]: event.member.user },
-          membersByServer: {
-            ...s.membersByServer,
-            [event.member.server_id]: [
-              ...(s.membersByServer[event.member.server_id] || []).filter(
-                (m) => m.user.id !== event.member.user.id,
-              ),
-              event.member,
-            ],
-          },
-        }));
+        set((s) => {
+          const serverKey =
+            Object.keys(s.membersByServer).find((id) =>
+              sameId(id, event.member.server_id),
+            ) || event.member.server_id;
+          return {
+            authors: { ...s.authors, [event.member.user.id]: event.member.user },
+            membersByServer: {
+              ...s.membersByServer,
+              [serverKey]: [
+                ...(s.membersByServer[serverKey] || []).filter(
+                  (m) => !sameId(m.user.id, event.member.user.id),
+                ),
+                {
+                  ...event.member,
+                  role_ids: (event.member.role_ids || []).map(String),
+                },
+              ],
+            },
+          };
+        });
         // Friend invite: pull the new server into the rail when we were added.
         if (joinedSelf && !knownServer) {
           void get().loadServers().then(() => get().loadMyEmojis());
@@ -2187,21 +2211,32 @@ export const useAppStore = create<AppState>((set, get) => ({
         break;
       }
       case "member_update":
-        set((s) => ({
-          authors: { ...s.authors, [event.member.user.id]: event.member.user },
-          membersByServer: {
-            ...s.membersByServer,
-            [event.member.server_id]: [
-              ...(s.membersByServer[event.member.server_id] || []).filter(
-                (m) => m.user.id !== event.member.user.id,
-              ),
-              event.member,
-            ],
-          },
-          voiceStates: event.member.timeout_until
-            ? s.voiceStates.filter((v) => v.user_id !== event.member.user.id)
-            : s.voiceStates,
-        }));
+        set((s) => {
+          const serverKey =
+            Object.keys(s.membersByServer).find((id) =>
+              sameId(id, event.member.server_id),
+            ) || event.member.server_id;
+          return {
+            authors: { ...s.authors, [event.member.user.id]: event.member.user },
+            membersByServer: {
+              ...s.membersByServer,
+              [serverKey]: [
+                ...(s.membersByServer[serverKey] || []).filter(
+                  (m) => !sameId(m.user.id, event.member.user.id),
+                ),
+                {
+                  ...event.member,
+                  role_ids: (event.member.role_ids || []).map(String),
+                },
+              ],
+            },
+            voiceStates: event.member.timeout_until
+              ? s.voiceStates.filter(
+                  (v) => !sameId(v.user_id, event.member.user.id),
+                )
+              : s.voiceStates,
+          };
+        });
         break;
       case "server_invite": {
         set({
@@ -2245,14 +2280,73 @@ export const useAppStore = create<AppState>((set, get) => ({
         break;
       }
       case "member_leave":
-        set((s) => ({
-          membersByServer: {
-            ...s.membersByServer,
-            [event.server_id]: (s.membersByServer[event.server_id] || []).filter(
-              (m) => m.user.id !== event.user_id,
+        set((s) => {
+          const serverKey =
+            Object.keys(s.membersByServer).find((id) =>
+              sameId(id, event.server_id),
+            ) || event.server_id;
+          return {
+            membersByServer: {
+              ...s.membersByServer,
+              [serverKey]: (s.membersByServer[serverKey] || []).filter(
+                (m) => !sameId(m.user.id, event.user_id),
+              ),
+            },
+          };
+        });
+        break;
+      case "role_create":
+      case "role_update":
+        set((s) => {
+          const serverKey =
+            Object.keys(s.rolesByServer).find((id) =>
+              sameId(id, event.role.server_id),
+            ) || event.role.server_id;
+          const normalized = {
+            ...event.role,
+            id: String(event.role.id),
+            server_id: String(event.role.server_id),
+            permissions: permBits(event.role.permissions),
+            is_everyone: Boolean(
+              event.role.is_everyone || event.role.name === "@everyone",
             ),
-          },
-        }));
+          };
+          const list = s.rolesByServer[serverKey] || [];
+          const next = list.some((r) => sameId(r.id, normalized.id))
+            ? list.map((r) => (sameId(r.id, normalized.id) ? normalized : r))
+            : [...list, normalized];
+          return {
+            rolesByServer: {
+              ...s.rolesByServer,
+              [serverKey]: next,
+            },
+          };
+        });
+        break;
+      case "role_delete":
+        set((s) => {
+          const serverKey =
+            Object.keys(s.rolesByServer).find((id) =>
+              sameId(id, event.server_id),
+            ) || event.server_id;
+          return {
+            rolesByServer: {
+              ...s.rolesByServer,
+              [serverKey]: (s.rolesByServer[serverKey] || []).filter(
+                (r) => !sameId(r.id, event.role_id),
+              ),
+            },
+            membersByServer: {
+              ...s.membersByServer,
+              [serverKey]: (s.membersByServer[serverKey] || []).map((m) => ({
+                ...m,
+                role_ids: (m.role_ids || []).filter(
+                  (id) => !sameId(id, event.role_id),
+                ),
+              })),
+            },
+          };
+        });
         break;
       case "voice_state_update": {
         set((s) => {

@@ -145,6 +145,47 @@ pub struct Message {
     pub created_at: DateTime<Utc>,
     pub attachments: Vec<Attachment>,
     pub reactions: Vec<ReactionSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webhook_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webhook_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelWebhook {
+    pub id: Uuid,
+    pub channel_id: Uuid,
+    pub name: String,
+    pub avatar_url: Option<String>,
+    pub creator_id: Uuid,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelWebhookCreated {
+    #[serde(flatten)]
+    pub webhook: ChannelWebhook,
+    pub token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerBot {
+    pub id: Uuid,
+    pub server_id: Uuid,
+    pub name: String,
+    pub creator_id: Uuid,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerBotCreated {
+    #[serde(flatten)]
+    pub bot: ServerBot,
+    pub token: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -329,6 +370,16 @@ pub enum WsEvent {
     MemberLeave {
         server_id: Uuid,
         user_id: Uuid,
+    },
+    RoleCreate {
+        role: Role,
+    },
+    RoleUpdate {
+        role: Role,
+    },
+    RoleDelete {
+        server_id: Uuid,
+        role_id: Uuid,
     },
     ReactionAdd {
         channel_id: Uuid,

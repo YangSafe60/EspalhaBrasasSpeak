@@ -108,7 +108,32 @@ export interface Message {
   created_at: string;
   attachments: Attachment[];
   reactions: ReactionSummary[];
+  webhook_id?: string | null;
+  webhook_name?: string | null;
+  bot_id?: string | null;
+  bot_name?: string | null;
 }
+
+export interface ChannelWebhook {
+  id: string;
+  channel_id: string;
+  name: string;
+  avatar_url: string | null;
+  creator_id: string;
+  created_at: string;
+}
+
+export type ChannelWebhookCreated = ChannelWebhook & { token: string };
+
+export interface ServerBot {
+  id: string;
+  server_id: string;
+  name: string;
+  creator_id: string;
+  created_at: string;
+}
+
+export type ServerBotCreated = ServerBot & { token: string };
 
 export interface Invite {
   code: string;
@@ -274,6 +299,9 @@ export type WsEvent =
       online_count: number;
     }
   | { type: "member_leave"; server_id: string; user_id: string }
+  | { type: "role_create"; role: Role }
+  | { type: "role_update"; role: Role }
+  | { type: "role_delete"; server_id: string; role_id: string }
   | {
       type: "reaction_add";
       channel_id: string;

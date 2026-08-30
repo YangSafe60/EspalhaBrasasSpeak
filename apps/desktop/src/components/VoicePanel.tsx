@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { useVoice } from "../hooks/useVoice";
 import { mediaCssUrl } from "../lib/mediaUrl";
+import { sameId } from "../lib/serverPerms";
 import { useAppStore } from "../store/appStore";
 import { ScreenSharePicker } from "./ScreenSharePicker";
 import { StatusPicker } from "./StatusPicker";
@@ -46,6 +47,18 @@ function IconScreen() {
   );
 }
 
+function IconCamera({ off }: { off?: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden fill="currentColor">
+      {off ? (
+        <path d="M21 6.5h-4.35l-1.3-1.74A1.5 1.5 0 0 0 14.12 4H9.88c-.56 0-1.08.3-1.35.76L7.35 6.5H3A2.5 2.5 0 0 0 .5 9v8A2.5 2.5 0 0 0 3 19.5h18a2.5 2.5 0 0 0 2.5-2.5V9A2.5 2.5 0 0 0 21 6.5zM3 8h18a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1zm9 2.75A3.25 3.25 0 1 0 12 17a3.25 3.25 0 0 0 0-6.5zM2.1 2.1 1 3.2l4.2 4.2H3A2.5 2.5 0 0 0 .5 9.7v.3H2V9a1 1 0 0 1 1-1h1.9L2.1 2.1z" />
+      ) : (
+        <path d="M21 6.5h-4.35l-1.3-1.74A1.5 1.5 0 0 0 14.12 4H9.88c-.56 0-1.08.3-1.35.76L7.35 6.5H3A2.5 2.5 0 0 0 .5 9v8A2.5 2.5 0 0 0 3 19.5h18a2.5 2.5 0 0 0 2.5-2.5V9A2.5 2.5 0 0 0 21 6.5zM3 8h18a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1zm9 2.75A3.25 3.25 0 1 0 12 17a3.25 3.25 0 0 0 0-6.5z" />
+      )}
+    </svg>
+  );
+}
+
 function IconDisconnect() {
   return (
     <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden fill="currentColor">
@@ -73,6 +86,7 @@ function IconSignal() {
 
 export function VoicePanel({ voice }: Props) {
   const channelsByServer = useAppStore((s) => s.channelsByServer);
+  const servers = useAppStore((s) => s.servers);
   const user = useAppStore((s) => s.user);
   const activeServerId = useAppStore((s) => s.activeServerId);
   const streaming = useAppStore((s) => s.streaming);
@@ -83,6 +97,7 @@ export function VoicePanel({ voice }: Props) {
   const shareBtnRef = useRef<HTMLButtonElement>(null);
   const [liveMenuOpen, setLiveMenuOpen] = useState(false);
   const [shareMode, setShareMode] = useState<ShareMode>("new");
+  const [signalHover, setSignalHover] = useState(false);
   const [menuPos, setMenuPos] = useState<{
     bottom: number;
     left: number;
@@ -92,7 +107,13 @@ export function VoicePanel({ voice }: Props) {
     .flat()
     .find((c) => c.id === voice.voiceChannelId);
 
+  const server = servers.find((s) => sameId(s.id, activeServerId));
   const inVoice = Boolean(voice.voiceChannelId && channel);
+  const connectionSubtitle = channel
+    ? server
+      ? `${server.name} / ${channel.name}`
+      : channel.name
+    : "";
 
   useLayoutEffect(() => {
     if (!liveMenuOpen || !shareBtnRef.current) {
@@ -141,28 +162,59 @@ export function VoicePanel({ voice }: Props) {
   return (
     <div className="user-voice-dock">
       {inVoice && channel && (
-        <div className="voice-connection-bar">
-          <button
-            type="button"
-            className="voice-connection-info"
-            title="Open lobby"
-            onClick={() => void selectChannel(channel.id)}
-          >
-            <span className={`voice-signal ${voice.connected ? "on" : ""}`}>
-              <IconSignal />
-            </span>
-            <div className="voice-connection-text">
-              <strong>
-                {voice.connected
-                  ? "Voice Connected"
-                  : voice.joining
-                    ? "Connecting…"
-                    : "Voice"}
-              </strong>
-              <p>{channel.name}</p>
-            </div>
-          </button>
-          <div className="voice-icon-controls">
+        <div className="voice-connection-dock">
+          <div className="voice-connection-bar">
+            <button
+              type="button"
+              className="voice-connection-info"
+              title="Open voice channel"
+              onClick={() => void selectChannel(channel.id)}
+            >
+              <span
+                className={`voice-signal ${voice.connected ? "on" : ""}${signalHover ? " show-ping" : ""}`}
+                title={
+                  voice.connected
+                    ? voice.pingMs != null
+                      ? `${voice.pingMs} ms ping`
+                      : "Measuring ping…"
+                    : "Not connected"
+                }
+                onMouseEnter={() => setSignalHover(true)}
+                onMouseLeave={() => setSignalHover(false)}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {signalHover && voice.connected ? (
+                  <span className="voice-ping-label">
+                    {voice.pingMs != null ? `${voice.pingMs} ms` : "…"}
+                  </span>
+                ) : (
+                  <IconSignal />
+                )}
+              </span>
+              <div className="voice-connection-text">
+                <strong>
+                  {voice.connected
+                    ? "Voice Connected"
+                    : voice.joining
+                      ? "Connecting…"
+                      : "Voice"}
+                </strong>
+                <p>{connectionSubtitle}</p>
+              </div>
+            </button>
+          </div>
+
+          <div className="voice-connection-actions">
+            <button
+              type="button"
+              className={`voice-icon-btn${voice.cameraOn ? " active accent" : ""}`}
+              title={voice.cameraOn ? "Turn off camera" : "Turn on camera"}
+              aria-label={voice.cameraOn ? "Turn off camera" : "Turn on camera"}
+              disabled={!voice.connected || voice.pickerBusy}
+              onClick={() => void voice.toggleCamera()}
+            >
+              <IconCamera off={!voice.cameraOn} />
+            </button>
             <button
               ref={shareBtnRef}
               type="button"

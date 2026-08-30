@@ -25,7 +25,10 @@ function displayName(m: Member): string {
 
 function highestRoleColor(m: Member, roles: Role[]): string | undefined {
   const owned = roles
-    .filter((r) => !r.is_everyone && m.role_ids.includes(r.id))
+    .filter(
+      (r) =>
+        !r.is_everyone && m.role_ids.some((id) => sameId(id, r.id)),
+    )
     .sort((a, b) => b.position - a.position);
   return owned[0]?.color || undefined;
 }
@@ -112,10 +115,14 @@ export function MemberList({ voice }: { voice?: MemberVoiceHandlers }) {
   }, [open]);
 
   const server = servers.find((s) => sameId(s.id, activeServerId));
-  const members = activeServerId
-    ? membersByServer[activeServerId] || []
-    : [];
-  const roles = activeServerId ? rolesByServer[activeServerId] || [] : [];
+  const membersKey = activeServerId
+    ? Object.keys(membersByServer).find((id) => sameId(id, activeServerId))
+    : undefined;
+  const rolesKey = activeServerId
+    ? Object.keys(rolesByServer).find((id) => sameId(id, activeServerId))
+    : undefined;
+  const members = membersKey ? membersByServer[membersKey] || [] : [];
+  const roles = rolesKey ? rolesByServer[rolesKey] || [] : [];
 
   function isServerOwner(member: Member): boolean {
     return Boolean(server && sameId(server.owner_id, member.user.id));

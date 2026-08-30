@@ -13,6 +13,45 @@ use speakapp_shared::{
 };
 use uuid::Uuid;
 
+/// Push create/delete channel events so a member's sidebar matches their perms.
+async fn sync_member_channel_visibility(
+    state: &AppState,
+    server: &Server,
+    user_id: Uuid,
+) -> AppResult<()> {
+    let channels = db::server_channels(&state.db, server.id).await?;
+    for ch in channels {
+        let can = db::effective_permissions(&state.db, server, Some(ch.id), user_id)
+            .await?
+            .has(Permissions::VIEW_CHANNEL);
+        if can {
+            state.hub.send_to_user(
+                user_id,
+                &WsEvent::ChannelCreate {
+                    channel: ch,
+                },
+            );
+        } else {
+            state.hub.send_to_user(
+                user_id,
+                &WsEvent::ChannelDelete {
+                    server_id: server.id,
+                    channel_id: ch.id,
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn sync_server_channel_visibility(state: &AppState, server: &Server) -> AppResult<()> {
+    let members = db::server_member_ids(&state.db, server.id).await?;
+    for uid in members {
+        sync_member_channel_visibility(state, server, uid).await?;
+    }
+    Ok(())
+}
+
 #[derive(Deserialize)]
 pub struct CreateServerReq {
     pub name: String,
@@ -101,6 +140,11 @@ pub async fn list(
     State(state): State<AppState>,
     user: AuthUser,
 ) -> AppResult<Json<Vec<Server>>> {
+    if let Some(bot) = &user.bot {
+        user.bot_server_scope(bot.server_id)?;
+        let server = db::get_server(&state.db, bot.server_id).await?;
+        return Ok(Json(vec![server]));
+    }
     Ok(Json(db::user_servers(&state.db, user.id).await?))
 }
 
@@ -109,6 +153,7 @@ pub async fn create(
     user: AuthUser,
     Json(body): Json<CreateServerReq>,
 ) -> AppResult<Json<Server>> {
+    user.ensure_human()?;
     let name = body.name.trim();
     if name.is_empty() {
         return Err(AppError::BadRequest("name required".into()));
@@ -194,6 +239,8 @@ pub async fn get(
     user: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Server>> {
+    user.bot_server_scope(id)?;
+    user.bot_server_scope(id)?;
     if !db::is_member(&state.db, id, user.id).await? {
         return Err(AppError::Forbidden);
     }
@@ -206,6 +253,8 @@ pub async fn update(
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateServerReq>,
 ) -> AppResult<Json<Server>> {
+    user.bot_server_scope(id)?;
+    user.bot_server_scope(id)?;
     let server = db::get_server(&state.db, id).await?;
     db::require_perm(
         &state.db,
@@ -252,6 +301,7 @@ pub async fn update(
             .await?;
     }
 
+    user.bot_server_scope(id)?;
     let server = db::get_server(&state.db, id).await?;
     state
         .hub
@@ -264,6 +314,8 @@ pub async fn delete(
     user: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
+    user.bot_server_scope(id)?;
+    user.bot_server_scope(id)?;
     let server = db::get_server(&state.db, id).await?;
     if server.owner_id != user.id {
         return Err(AppError::Forbidden);
@@ -287,6 +339,8 @@ pub async fn transfer_ownership(
     Path(id): Path<Uuid>,
     Json(body): Json<TransferOwnershipReq>,
 ) -> AppResult<Json<Server>> {
+    user.ensure_human()?;
+    user.bot_server_scope(id)?;
     let server = db::get_server(&state.db, id).await?;
     if server.owner_id != user.id {
         return Err(AppError::Forbidden);
@@ -304,6 +358,7 @@ pub async fn transfer_ownership(
         .bind(id.to_string())
         .execute(&state.db)
         .await?;
+    user.bot_server_scope(id)?;
     let server = db::get_server(&state.db, id).await?;
     state
         .hub
@@ -316,6 +371,7 @@ pub async fn list_members(
     user: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Vec<Member>>> {
+    user.bot_server_scope(id)?;
     if !db::is_member(&state.db, id, user.id).await? {
         return Err(AppError::Forbidden);
     }
@@ -338,6 +394,7 @@ pub async fn list_presence(
     user: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Vec<PresenceView>>> {
+    user.bot_server_scope(id)?;
     if !db::is_member(&state.db, id, user.id).await? {
         return Err(AppError::Forbidden);
     }
@@ -359,6 +416,7 @@ pub async fn kick_member(
     user: AuthUser,
     Path((id, user_id)): Path<(Uuid, Uuid)>,
 ) -> AppResult<Json<serde_json::Value>> {
+    user.bot_server_scope(id)?;
     let server = db::get_server(&state.db, id).await?;
     db::require_perm(&state.db, &server, None, user.id, Permissions::KICK_MEMBERS)
         .await?;
@@ -414,6 +472,7 @@ pub async fn moderate_voice(
     Path((id, user_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<ModVoiceReq>,
 ) -> AppResult<Json<crate::routes::voice::VoiceStateView>> {
+    user.bot_server_scope(id)?;
     let server = db::get_server(&state.db, id).await?;
     db::require_perm(&state.db, &server, None, user.id, Permissions::MUTE_MEMBERS)
         .await?;
@@ -442,6 +501,7 @@ pub async fn timeout_member(
     Path((id, user_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<TimeoutReq>,
 ) -> AppResult<Json<Member>> {
+    user.bot_server_scope(id)?;
     let server = db::get_server(&state.db, id).await?;
     let perms = db::effective_permissions(&state.db, &server, None, user.id).await?;
     if !perms.has(Permissions::MUTE_MEMBERS) && !perms.has(Permissions::KICK_MEMBERS) {
@@ -533,6 +593,7 @@ pub async fn ban_member(
     Path(id): Path<Uuid>,
     Json(body): Json<BanReq>,
 ) -> AppResult<Json<serde_json::Value>> {
+    user.bot_server_scope(id)?;
     let server = db::get_server(&state.db, id).await?;
     db::require_perm(&state.db, &server, None, user.id, Permissions::BAN_MEMBERS)
         .await?;
@@ -589,6 +650,7 @@ pub async fn unban_member(
     user: AuthUser,
     Path((id, user_id)): Path<(Uuid, Uuid)>,
 ) -> AppResult<Json<serde_json::Value>> {
+    user.bot_server_scope(id)?;
     let server = db::get_server(&state.db, id).await?;
     db::require_perm(&state.db, &server, None, user.id, Permissions::BAN_MEMBERS)
         .await?;
@@ -605,6 +667,7 @@ pub async fn list_bans(
     user: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Vec<BanInfo>>> {
+    user.bot_server_scope(id)?;
     let server = db::get_server(&state.db, id).await?;
     db::require_perm(&state.db, &server, None, user.id, Permissions::BAN_MEMBERS)
         .await?;
@@ -639,6 +702,7 @@ pub async fn create_invite(
     Path(id): Path<Uuid>,
     Json(body): Json<CreateInviteReq>,
 ) -> AppResult<Json<Invite>> {
+    user.bot_server_scope(id)?;
     let server = db::get_server(&state.db, id).await?;
     db::require_perm(
         &state.db,
@@ -696,6 +760,7 @@ pub async fn list_invites(
     user: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Vec<Invite>>> {
+    user.bot_server_scope(id)?;
     let server = db::get_server(&state.db, id).await?;
     // Creators can view the list; managers always can.
     let ok = db::require_perm(
@@ -757,6 +822,7 @@ pub async fn delete_invite(
     user: AuthUser,
     Path((id, code)): Path<(Uuid, String)>,
 ) -> AppResult<Json<serde_json::Value>> {
+    user.bot_server_scope(id)?;
     let server = db::get_server(&state.db, id).await?;
     db::require_perm(
         &state.db,
@@ -792,6 +858,7 @@ pub async fn invite_friend(
     if body.user_id == user.id {
         return Err(AppError::BadRequest("cannot invite yourself".into()));
     }
+    user.bot_server_scope(id)?;
     let server = db::get_server(&state.db, id).await?;
     db::require_perm(
         &state.db,
@@ -874,6 +941,7 @@ pub async fn join_invite(
     user: AuthUser,
     Path(code): Path<String>,
 ) -> AppResult<Json<Server>> {
+    user.ensure_human()?;
     let invite = load_invite(&state, &code).await?;
     let banned: (i64,) =
         sqlx::query_as("SELECT COUNT(1) FROM bans WHERE server_id = ? AND user_id = ?")
@@ -975,6 +1043,7 @@ pub async fn list_roles(
     user: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Vec<Role>>> {
+    user.bot_server_scope(id)?;
     if !db::is_member(&state.db, id, user.id).await? {
         return Err(AppError::Forbidden);
     }
@@ -987,6 +1056,7 @@ pub async fn create_role(
     Path(id): Path<Uuid>,
     Json(body): Json<CreateRoleReq>,
 ) -> AppResult<Json<Role>> {
+    user.bot_server_scope(id)?;
     let server = db::get_server(&state.db, id).await?;
     db::require_perm(&state.db, &server, None, user.id, Permissions::MANAGE_ROLES)
         .await?;
@@ -1024,9 +1094,11 @@ pub async fn create_role(
     .execute(&state.db)
     .await?;
     let roles = db::server_roles(&state.db, id).await?;
-    Ok(Json(
-        roles.into_iter().find(|r| r.id == role_id).unwrap(),
-    ))
+    let role = roles.into_iter().find(|r| r.id == role_id).unwrap();
+    state
+        .hub
+        .broadcast_server(id, &WsEvent::RoleCreate { role: role.clone() });
+    Ok(Json(role))
 }
 
 pub async fn update_role(
@@ -1035,6 +1107,7 @@ pub async fn update_role(
     Path((id, role_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<UpdateRoleReq>,
 ) -> AppResult<Json<Role>> {
+    user.bot_server_scope(id)?;
     let server = db::get_server(&state.db, id).await?;
     db::require_perm(&state.db, &server, None, user.id, Permissions::MANAGE_ROLES)
         .await?;
@@ -1085,15 +1158,15 @@ pub async fn update_role(
             .execute(&state.db)
             .await?;
     }
-    if let Some(pos) = body.position {
-        let mut next_pos = pos;
+    if let Some(position) = body.position {
+        let mut next_pos = position;
         if user.id != server.owner_id {
             let actor_pos = db::member_highest_position(&state.db, id, user.id).await?;
             if next_pos >= actor_pos {
                 next_pos = actor_pos.saturating_sub(1);
             }
         }
-        sqlx::query("UPDATE roles SET position = ? WHERE id = ? AND server_id = ?")
+        sqlx::query("UPDATE roles SET position = ? WHERE id = ? AND server_id = ? AND is_everyone = 0")
             .bind(next_pos)
             .bind(role_id.to_string())
             .bind(id.to_string())
@@ -1101,11 +1174,17 @@ pub async fn update_role(
             .await?;
     }
     let roles = db::server_roles(&state.db, id).await?;
-    roles
+    let role = roles
         .into_iter()
         .find(|r| r.id == role_id)
-        .map(Json)
-        .ok_or(AppError::NotFound)
+        .ok_or(AppError::NotFound)?;
+    state
+        .hub
+        .broadcast_server(id, &WsEvent::RoleUpdate { role: role.clone() });
+    if body.permissions.is_some() {
+        sync_server_channel_visibility(&state, &server).await?;
+    }
+    Ok(Json(role))
 }
 
 pub async fn delete_role(
@@ -1113,6 +1192,7 @@ pub async fn delete_role(
     user: AuthUser,
     Path((id, role_id)): Path<(Uuid, Uuid)>,
 ) -> AppResult<Json<serde_json::Value>> {
+    user.bot_server_scope(id)?;
     let server = db::get_server(&state.db, id).await?;
     db::require_perm(&state.db, &server, None, user.id, Permissions::MANAGE_ROLES)
         .await?;
@@ -1135,6 +1215,14 @@ pub async fn delete_role(
         .bind(id.to_string())
         .execute(&state.db)
         .await?;
+    state.hub.broadcast_server(
+        id,
+        &WsEvent::RoleDelete {
+            server_id: id,
+            role_id,
+        },
+    );
+    sync_server_channel_visibility(&state, &server).await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -1144,6 +1232,7 @@ pub async fn set_member_roles(
     Path((id, user_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<SetRolesReq>,
 ) -> AppResult<Json<Member>> {
+    user.bot_server_scope(id)?;
     let server = db::get_server(&state.db, id).await?;
     db::require_perm(&state.db, &server, None, user.id, Permissions::MANAGE_ROLES)
         .await?;
@@ -1192,7 +1281,12 @@ pub async fn set_member_roles(
         .execute(&state.db)
         .await?;
     }
-    Ok(Json(db::get_member(&state.db, id, user_id).await?))
+    let member = db::get_member(&state.db, id, user_id).await?;
+    state
+        .hub
+        .broadcast_server(id, &WsEvent::MemberUpdate { member: member.clone() });
+    sync_member_channel_visibility(&state, &server, user_id).await?;
+    Ok(Json(member))
 }
 
 pub async fn list_rules(
@@ -1200,6 +1294,7 @@ pub async fn list_rules(
     user: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Vec<ServerRule>>> {
+    user.bot_server_scope(id)?;
     if !db::is_member(&state.db, id, user.id).await? {
         return Err(AppError::Forbidden);
     }
@@ -1212,6 +1307,7 @@ pub async fn set_rules(
     Path(id): Path<Uuid>,
     Json(body): Json<RulesReq>,
 ) -> AppResult<Json<Vec<ServerRule>>> {
+    user.bot_server_scope(id)?;
     let server = db::get_server(&state.db, id).await?;
     db::require_perm(
         &state.db,
@@ -1245,6 +1341,7 @@ pub async fn accept_rules(
     user: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
+    user.bot_server_scope(id)?;
     if !db::is_member(&state.db, id, user.id).await? {
         return Err(AppError::Forbidden);
     }
