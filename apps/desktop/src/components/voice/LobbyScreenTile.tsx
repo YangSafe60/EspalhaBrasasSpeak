@@ -11,10 +11,12 @@ import {
 
 export type LobbyScreenTileProps = {
   trackSid: string;
-  track: {
+  track?: {
     attach: (el: HTMLMediaElement) => void;
     detach: (el?: HTMLMediaElement) => void;
-  };
+  } | null;
+  /** JPEG data URL relayed from the isolated voice host (desktop). */
+  relayFrame?: string | null;
   name: string;
   badge?: string;
   busy: boolean;
@@ -36,6 +38,7 @@ export type LobbyScreenTileProps = {
 export function LobbyScreenTile({
   trackSid,
   track,
+  relayFrame,
   name,
   badge,
   busy,
@@ -45,22 +48,34 @@ export function LobbyScreenTile({
   audioControls,
 }: LobbyScreenTileProps) {
   const tileRef = useRef<HTMLDivElement>(null);
-  const ref = useRef<HTMLVideoElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
   const [expanded, setExpanded] = useState(false);
+  const useRelay = relayFrame !== undefined;
 
   useEffect(() => {
-    const el = ref.current;
+    if (useRelay || !track) return;
+    const el = videoRef.current;
     if (!el) return;
     track.attach(el);
     return () => {
       track.detach(el);
     };
-  }, [track]);
+  }, [track, useRelay]);
 
   useEffect(() => {
-    registerScreenCapture(trackSid, () => ref.current);
+    if (!useRelay) return;
+    const img = imgRef.current;
+    if (!img || !relayFrame) return;
+    img.src = relayFrame;
+  }, [relayFrame, useRelay]);
+
+  useEffect(() => {
+    registerScreenCapture(trackSid, () =>
+      useRelay ? imgRef.current : videoRef.current,
+    );
     return () => unregisterScreenCapture(trackSid);
-  }, [trackSid]);
+  }, [trackSid, useRelay]);
 
   useEffect(() => {
     if (!expanded) return;
@@ -85,13 +100,22 @@ export function LobbyScreenTile({
       className={`lobby-screen-tile${expanded ? " is-expanded" : ""}`}
       ref={tileRef}
     >
-      <video
-        ref={ref}
-        autoPlay
-        playsInline
-        muted
-        onDoubleClick={() => toggleExpanded()}
-      />
+      {useRelay ? (
+        <img
+          ref={imgRef}
+          className="lobby-screen-relay-img"
+          alt=""
+          onDoubleClick={() => toggleExpanded()}
+        />
+      ) : (
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          onDoubleClick={() => toggleExpanded()}
+        />
+      )}
       <div
         className="lobby-screen-meta"
         onClick={(e) => e.stopPropagation()}
@@ -110,7 +134,7 @@ export function LobbyScreenTile({
             >
               <button
                 type="button"
-                className={`btn ghost sm lobby-screen-icon-btn${audioControls.muted ? " is-muted" : ""}`}
+                className={`btn sm lobby-screen-icon-btn${audioControls.muted ? " is-muted" : ""}`}
                 title={audioControls.muted ? "Unmute stream audio" : "Mute stream audio"}
                 aria-label={
                   audioControls.muted ? "Unmute stream audio" : "Mute stream audio"
@@ -154,7 +178,7 @@ export function LobbyScreenTile({
           )}
           <button
             type="button"
-            className="btn ghost sm lobby-screen-icon-btn"
+            className="btn sm lobby-screen-icon-btn"
             title={expanded ? "Exit fullscreen" : "Fullscreen"}
             aria-label={expanded ? "Exit fullscreen" : "Fullscreen"}
             onClick={() => toggleExpanded()}
@@ -177,7 +201,7 @@ export function LobbyScreenTile({
           </button>
           <button
             type="button"
-            className="btn ghost sm"
+            className="btn sm"
             disabled={busy}
             onClick={onPopout}
           >

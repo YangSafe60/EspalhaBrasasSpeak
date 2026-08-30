@@ -43,6 +43,23 @@ pub struct GifSearchResponse {
     pub gifs: Vec<GifHit>,
 }
 
+#[derive(Serialize)]
+pub struct ImgbbKeyResponse {
+    pub key: String,
+}
+
+pub async fn imgbb_upload_key(
+    State(state): State<AppState>,
+    _user: AuthUser,
+) -> AppResult<Json<ImgbbKeyResponse>> {
+    let key = state.config.imgbb_api_key.as_deref().ok_or_else(|| {
+        AppError::BadRequest("image upload is not configured (set IMGBB_API_KEY)".into())
+    })?;
+    Ok(Json(ImgbbKeyResponse {
+        key: key.to_string(),
+    }))
+}
+
 pub async fn upload(
     State(state): State<AppState>,
     user: AuthUser,
@@ -95,7 +112,7 @@ pub async fn register_remote(
     let url = body.url.trim().to_string();
     if !is_allowed_remote_url(&url) {
         return Err(AppError::BadRequest(
-            "URL host is not allowed (Klipy / Litterbox / Catbox only)".into(),
+            "URL host is not allowed (ImgBB / Klipy / Litterbox / Catbox only)".into(),
         ));
     }
     let filename = body
@@ -190,14 +207,22 @@ fn is_klipy_url(raw: &str) -> bool {
     host_matches(raw, |h| h == "klipy.com" || h.ends_with(".klipy.com"))
 }
 
+fn is_imgbb_url(raw: &str) -> bool {
+    host_matches(raw, |h| {
+        h == "ibb.co"
+            || h.ends_with(".ibb.co")
+            || h == "imgbb.com"
+            || h.ends_with(".imgbb.com")
+    })
+}
+
 /// HTTPS hosts we trust for URL-only attachment registration (bytes never stored on this server).
 fn is_allowed_remote_url(raw: &str) -> bool {
-    host_matches(raw, |h| {
-        h == "klipy.com"
-            || h.ends_with(".klipy.com")
-            || h == "litter.catbox.moe"
-            || h == "files.catbox.moe"
-    })
+    is_klipy_url(raw)
+        || is_imgbb_url(raw)
+        || host_matches(raw, |h| {
+            h == "litter.catbox.moe" || h == "files.catbox.moe"
+        })
 }
 
 fn host_matches(raw: &str, pred: impl FnOnce(&str) -> bool) -> bool {

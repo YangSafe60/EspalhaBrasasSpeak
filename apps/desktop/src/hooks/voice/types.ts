@@ -22,7 +22,8 @@ export type ScreenShareAudioState = {
 /** Local screen share tile shown to the publisher. */
 export type LocalScreen = {
   trackSid: string;
-  track: LocalVideoTrack;
+  /** Present in the voice-host renderer; lobby UI uses JPEG relay on the main window. */
+  track?: LocalVideoTrack | null;
   /** Native share source id when known (`monitor:0`, `window:123`, …). */
   sourceId?: string;
   label: string;

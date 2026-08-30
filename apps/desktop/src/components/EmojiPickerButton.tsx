@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { customEmojiToken } from "../lib/customEmoji";
 import { loadEmojiCatalog, searchEmojis } from "../lib/emojiCatalog";
 import { EMOJI_CATEGORIES, type EmojiCategory } from "../lib/emojis";
@@ -21,7 +22,9 @@ type Props = {
 };
 
 const PANEL_EST_HEIGHT = 420;
+const PANEL_EST_WIDTH = 420;
 const PANEL_GAP = 8;
+const VIEWPORT_PAD = 8;
 
 function findScrollParent(el: HTMLElement | null): HTMLElement | null {
   let node = el?.parentElement ?? null;
@@ -110,6 +113,7 @@ export function EmojiPickerButton({
   const [categoryId, setCategoryId] = useState(
     EMOJI_CATEGORIES[0]?.id ?? "smileys-emotion",
   );
+  const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -132,9 +136,10 @@ export function EmojiPickerButton({
     if (!open) return;
     void loadMyEmojis();
     const onDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const target = e.target as Node;
+      if (rootRef.current?.contains(target)) return;
+      if (panelRef.current?.contains(target)) return;
+      setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
@@ -185,16 +190,50 @@ export function EmojiPickerButton({
     if (!toggle) return;
 
     const updatePlacement = () => {
-      const panelHeight = panelRef.current?.offsetHeight ?? PANEL_EST_HEIGHT;
-      if (placement === "auto") {
-        setResolvedPlacement(resolveAutoPlacement(toggle, panelHeight));
-      } else {
-        setResolvedPlacement(placement);
+      const panel = panelRef.current;
+      const panelHeight = panel?.offsetHeight ?? PANEL_EST_HEIGHT;
+      const panelWidth = panel?.offsetWidth ?? PANEL_EST_WIDTH;
+      const nextPlacement =
+        placement === "auto"
+          ? resolveAutoPlacement(toggle, panelHeight)
+          : placement;
+      setResolvedPlacement(nextPlacement);
+
+      const rect = toggle.getBoundingClientRect();
+      let top =
+        nextPlacement === "up"
+          ? rect.top - panelHeight - PANEL_GAP
+          : rect.bottom + PANEL_GAP;
+      let left = rect.left;
+
+      if (left + panelWidth > window.innerWidth - VIEWPORT_PAD) {
+        left = window.innerWidth - panelWidth - VIEWPORT_PAD;
       }
+      if (left < VIEWPORT_PAD) left = VIEWPORT_PAD;
+
+      if (top + panelHeight > window.innerHeight - VIEWPORT_PAD) {
+        top = window.innerHeight - panelHeight - VIEWPORT_PAD;
+      }
+      if (top < VIEWPORT_PAD) top = VIEWPORT_PAD;
+
+      setPanelStyle({
+        position: "fixed",
+        top,
+        left,
+        bottom: "auto",
+        right: "auto",
+        width: panelWidth,
+      });
     };
 
     updatePlacement();
     requestAnimationFrame(updatePlacement);
+    window.addEventListener("resize", updatePlacement);
+    window.addEventListener("scroll", updatePlacement, true);
+    return () => {
+      window.removeEventListener("resize", updatePlacement);
+      window.removeEventListener("scroll", updatePlacement, true);
+    };
   }, [open, placement, query, searching, customGroups.length]);
 
   const searchHits = useMemo(
@@ -234,6 +273,187 @@ export function EmojiPickerButton({
     pick(customEmojiToken(emoji));
   }
 
+  const panel = open ? (
+    <div
+      ref={panelRef}
+      className={`emoji-picker-panel is-portaled ${resolvedPlacement === "up" ? "up" : "down"}`}
+      style={panelStyle}
+      role="dialog"
+      aria-label="Emoji picker"
+    >
+      <div className="emoji-picker-layout">
+        {!searching && (
+          <aside className="emoji-picker-rail" aria-label="Emoji categories">
+            {customGroups.length > 0 && (
+              <>
+                {customGroups.map((g) => {
+                  const sid = serverSectionId(g.serverId);
+                  const initial = (g.serverName.charAt(0) || "?").toUpperCase();
+                  return (
+                    <button
+                      key={g.serverId}
+                      type="button"
+                      className={`emoji-rail-btn emoji-rail-server${
+                        categoryId === sid ? " active" : ""
+                      }`}
+                      title={g.serverName}
+                      aria-label={g.serverName}
+                      aria-current={categoryId === sid ? "true" : undefined}
+                      onClick={() => jumpToGroup(sid)}
+                    >
+                      <span
+                        className="emoji-rail-server-icon"
+                        style={
+                          g.iconUrl
+                            ? { backgroundImage: mediaCssUrl(g.iconUrl) }
+                            : undefined
+                        }
+                      >
+                        {!g.iconUrl && initial}
+                      </span>
+                    </button>
+                  );
+                })}
+                <div className="emoji-rail-sep" aria-hidden />
+              </>
+            )}
+            {categories.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                className={`emoji-rail-btn${categoryId === c.id ? " active" : ""}`}
+                title={c.label}
+                aria-label={c.label}
+                aria-current={categoryId === c.id ? "true" : undefined}
+                onClick={() => jumpToGroup(c.id)}
+              >
+                {c.icon || c.emojis[0]}
+              </button>
+            ))}
+          </aside>
+        )}
+
+        <div className="emoji-picker-main">
+          <input
+            className="emoji-picker-search"
+            type="search"
+            placeholder="Search emoji"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            autoFocus
+          />
+          <div className="emoji-picker-body" ref={bodyRef}>
+            {searching ? (
+              <>
+                {customSearchHits.length > 0 && (
+                  <>
+                    <p className="emoji-group-title">Custom</p>
+                    <div className="emoji-picker-grid">
+                      {customSearchHits.map((e) => (
+                        <button
+                          key={e.id}
+                          type="button"
+                          className="emoji-picker-cell custom"
+                          title={`:${e.name}:`}
+                          onClick={() => pickCustom(e)}
+                        >
+                          <img
+                            src={mediaUrl(e.image_url)}
+                            alt={`:${e.name}:`}
+                            referrerPolicy="no-referrer"
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+                <p className="emoji-group-title">Unicode</p>
+                {searchHits.length === 0 && customSearchHits.length === 0 ? (
+                  <p className="muted tiny emoji-empty">
+                    No emojis match “{query.trim()}”.
+                  </p>
+                ) : searchHits.length === 0 ? null : (
+                  <div className="emoji-picker-grid">
+                    {searchHits.map((emoji) => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        className="emoji-picker-cell"
+                        onClick={() => pick(emoji)}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                {customGroups.map((g) => {
+                  const sid = serverSectionId(g.serverId);
+                  return (
+                    <section
+                      key={g.serverId}
+                      className="emoji-group"
+                      ref={(el) => {
+                        sectionRefs.current[sid] = el;
+                      }}
+                    >
+                      <h4 className="emoji-group-title">{g.serverName}</h4>
+                      <div className="emoji-picker-grid">
+                        {g.emojis.map((e) => (
+                          <button
+                            key={e.id}
+                            type="button"
+                            className="emoji-picker-cell custom"
+                            title={`:${e.name}:`}
+                            onClick={() => pickCustom(e)}
+                          >
+                            <img
+                              src={mediaUrl(e.image_url)}
+                              alt={`:${e.name}:`}
+                              referrerPolicy="no-referrer"
+                            />
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+                  );
+                })}
+                {categories.map((c) => (
+                  <section
+                    key={c.id}
+                    className="emoji-group"
+                    ref={(el) => {
+                      sectionRefs.current[c.id] = el;
+                    }}
+                  >
+                    <h4 className="emoji-group-title">
+                      <span aria-hidden>{c.icon || c.emojis[0]}</span>
+                      {c.label}
+                    </h4>
+                    <div className="emoji-picker-grid">
+                      {c.emojis.map((emoji) => (
+                        <button
+                          key={`${c.id}-${emoji}`}
+                          type="button"
+                          className="emoji-picker-cell"
+                          onClick={() => pick(emoji)}
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                ))}
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   return (
     <div className={`emoji-picker-root${className ? ` ${className}` : ""}`} ref={rootRef}>
       <button
@@ -247,190 +467,7 @@ export function EmojiPickerButton({
       >
         {children ?? (variant === "reaction" ? <ReactionSmileIcon /> : "🙂")}
       </button>
-      {open && (
-        <div
-          ref={panelRef}
-          className={`emoji-picker-panel ${resolvedPlacement === "up" ? "up" : "down"}`}
-          role="dialog"
-          aria-label="Emoji picker"
-        >
-          <div className="emoji-picker-layout">
-            {!searching && (
-              <aside
-                className="emoji-picker-rail"
-                aria-label="Emoji categories"
-              >
-                {customGroups.length > 0 && (
-                  <>
-                    {customGroups.map((g) => {
-                      const sid = serverSectionId(g.serverId);
-                      const initial = (g.serverName.charAt(0) || "?").toUpperCase();
-                      return (
-                        <button
-                          key={g.serverId}
-                          type="button"
-                          className={`emoji-rail-btn emoji-rail-server${
-                            categoryId === sid ? " active" : ""
-                          }`}
-                          title={g.serverName}
-                          aria-label={g.serverName}
-                          aria-current={categoryId === sid ? "true" : undefined}
-                          onClick={() => jumpToGroup(sid)}
-                        >
-                          <span
-                            className="emoji-rail-server-icon"
-                            style={
-                              g.iconUrl
-                                ? { backgroundImage: mediaCssUrl(g.iconUrl) }
-                                : undefined
-                            }
-                          >
-                            {!g.iconUrl && initial}
-                          </span>
-                        </button>
-                      );
-                    })}
-                    <div className="emoji-rail-sep" aria-hidden />
-                  </>
-                )}
-                {categories.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    className={`emoji-rail-btn${
-                      categoryId === c.id ? " active" : ""
-                    }`}
-                    title={c.label}
-                    aria-label={c.label}
-                    aria-current={categoryId === c.id ? "true" : undefined}
-                    onClick={() => jumpToGroup(c.id)}
-                  >
-                    {c.icon || c.emojis[0]}
-                  </button>
-                ))}
-              </aside>
-            )}
-
-            <div className="emoji-picker-main">
-              <input
-                className="emoji-picker-search"
-                type="search"
-                placeholder="Search emoji"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                autoFocus
-              />
-              <div className="emoji-picker-body" ref={bodyRef}>
-                {searching ? (
-                  <>
-                    {customSearchHits.length > 0 && (
-                      <>
-                        <p className="emoji-group-title">Custom</p>
-                        <div className="emoji-picker-grid">
-                          {customSearchHits.map((e) => (
-                            <button
-                              key={e.id}
-                              type="button"
-                              className="emoji-picker-cell custom"
-                              title={`:${e.name}:`}
-                              onClick={() => pickCustom(e)}
-                            >
-                              <img
-                                src={mediaUrl(e.image_url)}
-                                alt={`:${e.name}:`}
-                                referrerPolicy="no-referrer"
-                              />
-                            </button>
-                          ))}
-                        </div>
-                      </>
-                    )}
-                    <p className="emoji-group-title">Unicode</p>
-                    {searchHits.length === 0 && customSearchHits.length === 0 ? (
-                      <p className="muted tiny emoji-empty">
-                        No emojis match “{query.trim()}”.
-                      </p>
-                    ) : searchHits.length === 0 ? null : (
-                      <div className="emoji-picker-grid">
-                        {searchHits.map((emoji) => (
-                          <button
-                            key={emoji}
-                            type="button"
-                            className="emoji-picker-cell"
-                            onClick={() => pick(emoji)}
-                          >
-                            {emoji}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    {customGroups.map((g) => {
-                      const sid = serverSectionId(g.serverId);
-                      return (
-                        <section
-                          key={g.serverId}
-                          className="emoji-group"
-                          ref={(el) => {
-                            sectionRefs.current[sid] = el;
-                          }}
-                        >
-                          <h4 className="emoji-group-title">{g.serverName}</h4>
-                          <div className="emoji-picker-grid">
-                            {g.emojis.map((e) => (
-                              <button
-                                key={e.id}
-                                type="button"
-                                className="emoji-picker-cell custom"
-                                title={`:${e.name}:`}
-                                onClick={() => pickCustom(e)}
-                              >
-                                <img
-                                  src={mediaUrl(e.image_url)}
-                                  alt={`:${e.name}:`}
-                                  referrerPolicy="no-referrer"
-                                />
-                              </button>
-                            ))}
-                          </div>
-                        </section>
-                      );
-                    })}
-                    {categories.map((c) => (
-                      <section
-                        key={c.id}
-                        className="emoji-group"
-                        ref={(el) => {
-                          sectionRefs.current[c.id] = el;
-                        }}
-                      >
-                        <h4 className="emoji-group-title">
-                          <span aria-hidden>{c.icon || c.emojis[0]}</span>
-                          {c.label}
-                        </h4>
-                        <div className="emoji-picker-grid">
-                          {c.emojis.map((emoji) => (
-                            <button
-                              key={`${c.id}-${emoji}`}
-                              type="button"
-                              className="emoji-picker-cell"
-                              onClick={() => pick(emoji)}
-                            >
-                              {emoji}
-                            </button>
-                          ))}
-                        </div>
-                      </section>
-                    ))}
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {panel && createPortal(panel, document.body)}
     </div>
   );
 }

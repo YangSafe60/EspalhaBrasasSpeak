@@ -70,7 +70,7 @@ export function MiniProfileCard() {
   const dmChannels = useAppStore((s) => s.dmChannels);
   const presenceByUser = useAppStore((s) => s.presenceByUser);
   const myStatus = useAppStore((s) => s.myStatus);
-  const openDmWithPeer = useAppStore((s) => s.openDmWithPeer);
+  const ensureDmWithPeer = useAppStore((s) => s.ensureDmWithPeer);
   const sendDmMessage = useAppStore((s) => s.sendDmMessage);
 
   const panelRef = useRef<HTMLDivElement>(null);
@@ -81,6 +81,7 @@ export function MiniProfileCard() {
   const [roleError, setRoleError] = useState<string | null>(null);
   const [msgDraft, setMsgDraft] = useState("");
   const [msgBusy, setMsgBusy] = useState(false);
+  const [msgError, setMsgError] = useState<string | null>(null);
 
   const membersKey = miniProfile?.serverId
     ? Object.keys(membersByServer).find((id) =>
@@ -148,6 +149,7 @@ export function MiniProfileCard() {
     setRoleError(null);
     setMsgDraft("");
     setMsgBusy(false);
+    setMsgError(null);
   }, [miniProfile?.userId, miniProfile?.serverId]);
 
   useEffect(() => {
@@ -243,16 +245,22 @@ export function MiniProfileCard() {
     e?.preventDefault();
     if (!profile || msgBusy) return;
     const text = msgDraft.trim();
+    if (!text) return;
     setMsgBusy(true);
+    setMsgError(null);
     try {
-      await openDmWithPeer(profile.id);
-      if (text) {
-        const dmId = useAppStore.getState().activeDmId;
-        if (dmId) await sendDmMessage(dmId, text);
+      const dmId = await ensureDmWithPeer(profile.id);
+      if (!dmId) {
+        setMsgError("You must be friends to send a message.");
+        return;
       }
+      await sendDmMessage(dmId, text);
+      setMsgDraft("");
       closeMiniProfile();
-    } catch {
-      /* ignore — friendship may be required */
+    } catch (err) {
+      setMsgError(
+        err instanceof Error ? err.message : "Could not send message",
+      );
     } finally {
       setMsgBusy(false);
     }
@@ -402,6 +410,9 @@ export function MiniProfileCard() {
               className="mini-profile-msg"
               onSubmit={(e) => void messageUser(e)}
             >
+              {msgError && (
+                <p className="form-error tiny mini-profile-msg-error">{msgError}</p>
+              )}
               <input
                 ref={msgInputRef}
                 type="text"

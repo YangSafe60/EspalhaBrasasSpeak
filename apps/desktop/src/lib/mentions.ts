@@ -1,4 +1,9 @@
 import { createElement, type ReactNode } from "react";
+import {
+  collectUrlHits,
+  mergeUrlHitsWithBlocked,
+  renderTextWithLinks,
+} from "./linkify";
 import type { Role, UserPublic } from "../types";
 
 const UUID_RE =
@@ -226,24 +231,34 @@ function collectHits(text: string, ctx: MentionContext): Hit[] {
   return hits.sort((a, b) => a.start - b.start);
 }
 
-/** Turn plain text into nodes with mention pills. */
+/** Turn plain text into nodes with mention pills and clickable links. */
 export function renderTextWithMentions(
   text: string,
   ctx: MentionContext | undefined,
   keyPrefix: string,
 ): ReactNode[] {
   if (!text) return [];
-  if (!ctx) return [text];
 
-  const hits = collectHits(text, ctx);
-  if (hits.length === 0) return [text];
+  const mentionHits = ctx ? collectHits(text, ctx) : [];
+  const urlHits = collectUrlHits(text);
+
+  if (mentionHits.length === 0 && urlHits.length === 0) return [text];
+
+  if (mentionHits.length === 0) {
+    return renderTextWithLinks(text, keyPrefix);
+  }
 
   const nodes: ReactNode[] = [];
   let last = 0;
   let key = 0;
-  for (const h of hits) {
+
+  for (const h of mentionHits) {
     if (h.start < last) continue;
-    if (h.start > last) nodes.push(text.slice(last, h.start));
+    if (h.start > last) {
+      nodes.push(
+        ...renderSegmentWithLinks(text.slice(last, h.start), `${keyPrefix}-p-${key++}`),
+      );
+    }
     nodes.push(
       createElement(
         "span",
@@ -253,7 +268,43 @@ export function renderTextWithMentions(
     );
     last = h.end;
   }
-  if (last < text.length) nodes.push(text.slice(last));
+
+  if (last < text.length) {
+    nodes.push(
+      ...renderSegmentWithLinks(text.slice(last), `${keyPrefix}-p-${key++}`),
+    );
+  }
+
+  return nodes;
+}
+
+function renderSegmentWithLinks(segment: string, keyPrefix: string): ReactNode[] {
+  if (!segment) return [];
+  const urlHits = collectUrlHits(segment);
+  if (urlHits.length === 0) return [segment];
+
+  const parts = mergeUrlHitsWithBlocked(segment, urlHits, []);
+  const nodes: ReactNode[] = [];
+  let key = 0;
+  for (const seg of parts) {
+    if (seg.kind === "text") {
+      nodes.push(segment.slice(seg.start, seg.end));
+      continue;
+    }
+    nodes.push(
+      createElement(
+        "a",
+        {
+          key: `${keyPrefix}-l-${key++}`,
+          className: "message-link",
+          href: seg.url,
+          target: "_blank",
+          rel: "noreferrer noopener",
+        },
+        seg.url,
+      ),
+    );
+  }
   return nodes;
 }
 

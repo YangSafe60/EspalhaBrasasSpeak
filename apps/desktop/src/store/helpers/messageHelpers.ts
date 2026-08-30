@@ -40,6 +40,23 @@ export function guessContentType(name: string): string | null {
   }
 }
 
+export function isImageAttachment(a: {
+  content_type: string;
+  filename: string;
+}): boolean {
+  if (a.content_type.toLowerCase().startsWith("image/")) return true;
+  const ext = a.filename.split(".").pop()?.toLowerCase();
+  return (
+    ext === "png" ||
+    ext === "jpg" ||
+    ext === "jpeg" ||
+    ext === "gif" ||
+    ext === "webp" ||
+    ext === "bmp" ||
+    ext === "svg"
+  );
+}
+
 /** Insert or update a DM message, keeping a bounded in-memory window. */
 export function upsertDm(list: DmMessage[], message: DmMessage): DmMessage[] {
   const idx = list.findIndex((m) => m.id === message.id);

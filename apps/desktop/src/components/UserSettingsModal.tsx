@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { IMAGE_UPLOAD_HINT } from "../lib/uploadHints";
 import { mediaCssUrl, mediaUrl } from "../lib/mediaUrl";
 import { getElectronAPI } from "../lib/desktop";
 import { useAppStore } from "../store/appStore";
 import { AccessibilitySettings } from "./AccessibilitySettings";
+import { ProfileMediaEditControl } from "./ProfileMediaEditControl";
 import { ThemeSettings } from "./ThemeSettings";
 import { VoiceVideoSettingsPanel } from "./VoiceVideoSettingsPanel";
 
@@ -313,27 +313,27 @@ export function UserSettingsModal() {
             <div className="stack account-settings-sections">
               <form className="stack" onSubmit={saveAccount}>
                 <div className="user-profile-editor">
-                  <button
-                    type="button"
+                  <ProfileMediaEditControl
+                    kind="banner"
+                    disabled={busy}
+                    hasMedia={Boolean(bannerUrl)}
+                    onChange={() => bannerRef.current?.click()}
+                    onRemove={() => void removeBanner()}
                     className={`user-profile-banner-edit${bannerUrl ? "" : " is-empty"}`}
                     style={
                       bannerUrl
                         ? { backgroundImage: mediaCssUrl(bannerUrl) }
                         : undefined
                     }
-                    onClick={() => bannerRef.current?.click()}
-                    title="Change banner"
-                    disabled={busy}
-                  >
-                    {!bannerUrl && <span>Change banner</span>}
-                  </button>
+                  />
                   <div className="user-profile-avatar-edit-wrap">
-                    <button
-                      type="button"
-                      className="user-profile-avatar-edit"
-                      onClick={() => avatarRef.current?.click()}
-                      title="Change avatar"
+                    <ProfileMediaEditControl
+                      kind="avatar"
                       disabled={busy}
+                      hasMedia={Boolean(avatarUrl)}
+                      onChange={() => avatarRef.current?.click()}
+                      onRemove={() => void removeAvatar()}
+                      className="user-profile-avatar-edit"
                     >
                       {avatarUrl ? (
                         <img
@@ -344,47 +344,8 @@ export function UserSettingsModal() {
                       ) : (
                         <span>{initial}</span>
                       )}
-                    </button>
+                    </ProfileMediaEditControl>
                   </div>
-                  <div className="user-profile-edit-actions">
-                    <button
-                      type="button"
-                      className="btn sm"
-                      disabled={busy}
-                      onClick={() => bannerRef.current?.click()}
-                    >
-                      Change banner
-                    </button>
-                    {bannerUrl && (
-                      <button
-                        type="button"
-                        className="btn sm"
-                        disabled={busy}
-                        onClick={() => void removeBanner()}
-                      >
-                        Remove banner
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className="btn sm"
-                      disabled={busy}
-                      onClick={() => avatarRef.current?.click()}
-                    >
-                      Change avatar
-                    </button>
-                    {avatarUrl && (
-                      <button
-                        type="button"
-                        className="btn sm"
-                        disabled={busy}
-                        onClick={() => void removeAvatar()}
-                      >
-                        Remove avatar
-                      </button>
-                    )}
-                  </div>
-                  <p className="muted tiny">{IMAGE_UPLOAD_HINT} GIFs allowed.</p>
                   <input
                     ref={bannerRef}
                     type="file"
@@ -415,12 +376,14 @@ export function UserSettingsModal() {
                   />
                 </label>
                 <label>
-                  Username
+                  <span className="field-label-row">
+                    <span>Username</span>
+                    <span className="field-label-hint">
+                      Your @username is permanent and shown to others.
+                    </span>
+                  </span>
                   <input value={`@${user.username}`} readOnly disabled />
                 </label>
-                <p className="muted tiny">
-                  Your @username is permanent and shown to others.
-                </p>
                 <label>
                   Email
                   <input

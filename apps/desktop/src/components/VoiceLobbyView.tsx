@@ -135,7 +135,12 @@ export function VoiceLobbyView({ voice }: Props) {
               <LobbyScreenTile
                 key={s.trackSid}
                 trackSid={s.trackSid}
-                track={s.track}
+                track={"track" in s ? s.track : null}
+                relayFrame={
+                  "lobbyFrames" in voice
+                    ? voice.lobbyFrames[s.trackSid]
+                    : undefined
+                }
                 name={
                   voice.localScreens.length > 1
                     ? `Screen share ${i + 1}`
@@ -161,11 +166,16 @@ export function VoiceLobbyView({ voice }: Props) {
               />
             ))}
             {voice.remoteScreens.map((s) =>
-              s.subscribed && s.track ? (
+              s.subscribed ? (
                 <LobbyScreenTile
                   key={s.trackSid}
                   trackSid={s.trackSid}
                   track={s.track}
+                  relayFrame={
+                    "lobbyFrames" in voice
+                      ? voice.lobbyFrames[s.trackSid]
+                      : undefined
+                  }
                   name={s.participantName}
                   busy={popoutBusy === s.trackSid}
                   onPopout={() =>

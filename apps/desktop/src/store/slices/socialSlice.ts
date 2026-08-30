@@ -275,26 +275,40 @@ export const createSocialSlice: AppStoreSlice = (set, get) => ({
   },
 
   openDmWithPeer: async (peerId) => {
-    let friendship = get().friends.find((f) => f.peer.id === peerId);
-    let existing = get().dmChannels.find((d) => d.peer.id === peerId);
-    if (existing) {
-      await get().selectDm(existing.id);
+    const dmId = await get().ensureDmWithPeer(peerId);
+    if (!dmId) {
+      get().setError("Add them as a friend to send a direct message.");
       return;
     }
-    if (friendship) {
-      const channel = await api<DmChannel>(
-        `/api/dms/by-friendship/${friendship.id}/open`,
-        { method: "POST" },
-      );
-      set((s) => ({
-        dmChannels: [
-          channel,
-          ...s.dmChannels.filter((d) => d.id !== channel.id),
-        ],
-        authors: { ...s.authors, [channel.peer.id]: channel.peer },
-      }));
-      await get().selectDm(channel.id);
+    await get().selectDm(dmId);
+  },
+
+  ensureDmWithPeer: async (peerId) => {
+    const existing = get().dmChannels.find((d) => sameId(d.peer.id, peerId));
+    if (existing) {
+      try {
+        await api(`/api/dms/${existing.id}/open`, { method: "POST" });
+      } catch {
+        /* already open or older server */
+      }
+      return existing.id;
     }
+
+    const friendship = get().friends.find((f) => sameId(f.peer.id, peerId));
+    if (!friendship) return null;
+
+    const channel = await api<DmChannel>(
+      `/api/dms/by-friendship/${friendship.id}/open`,
+      { method: "POST" },
+    );
+    set((s) => ({
+      dmChannels: [
+        channel,
+        ...s.dmChannels.filter((d) => d.id !== channel.id),
+      ],
+      authors: { ...s.authors, [channel.peer.id]: channel.peer },
+    }));
+    return channel.id;
   },
 
   loadDmMessages: async (dmId) => {

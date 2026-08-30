@@ -276,6 +276,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/channels/{id}/voice/token", post(voice::token))
         .route("/api/voice/state", put(voice::update_state).get(voice::list_states))
         .route("/api/media/upload", post(media::upload))
+        .route("/api/media/imgbb-key", get(media::imgbb_upload_key))
         .route("/api/media/remote", post(media::register_remote))
         .route("/api/gifs/search", get(media::search_gifs))
         .route("/api/ws", get(ws_upgrade))

@@ -12,6 +12,7 @@ import {
   syncRelayBackgroundThrottling,
 } from "./relay";
 import { bridgeRuntime, captureSources, relays, tracks } from "./state";
+import type { CaptureElement } from "./state";
 import { publishSignal, subscribeFrames, subscribeSignals } from "./transport";
 
 async function ensureHost() {
@@ -58,7 +59,7 @@ export function registerScreenTrack(trackSid: string, track: MediaStreamTrack) {
 /** Register the on-screen lobby video used for pop-out relay capture. */
 export function registerScreenCapture(
   trackSid: string,
-  getVideo: () => HTMLVideoElement | null,
+  getVideo: () => CaptureElement | null,
 ) {
   captureSources.set(trackSid, getVideo);
   void ensureHost();

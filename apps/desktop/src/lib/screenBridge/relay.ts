@@ -7,6 +7,7 @@ import {
   captureSources,
   relays,
   tracks,
+  type CaptureElement,
 } from "./state";
 import { publishFrame } from "./transport";
 
@@ -48,7 +49,14 @@ export function purgeOrphanRelayElements() {
   });
 }
 
-function resolveCaptureVideo(trackSid: string): HTMLVideoElement | null {
+function captureDimensions(source: CaptureElement): { w: number; h: number } {
+  if (source instanceof HTMLImageElement) {
+    return { w: source.naturalWidth, h: source.naturalHeight };
+  }
+  return { w: source.videoWidth, h: source.videoHeight };
+}
+
+function resolveCaptureVideo(trackSid: string): CaptureElement | null {
   return captureSources.get(trackSid)?.() ?? null;
 }
 
@@ -104,8 +112,7 @@ export function startRelay(trackSid: string) {
     if (stopped || !ctx) return false;
     const source = resolveCaptureVideo(trackSid) ?? fallbackVideo;
     if (!source) return false;
-    const w = source.videoWidth;
-    const h = source.videoHeight;
+    const { w, h } = captureDimensions(source);
     if (w <= 0 || h <= 0) return false;
     const now = performance.now();
     if (now - lastPublishedAt < FRAME_INTERVAL_MS) return false;
@@ -132,7 +139,7 @@ export function startRelay(trackSid: string) {
     if (stopped) return;
     const source = resolveCaptureVideo(trackSid) ?? fallbackVideo;
     if (
-      source &&
+      source instanceof HTMLVideoElement &&
       "requestVideoFrameCallback" in source &&
       typeof source.requestVideoFrameCallback === "function"
     ) {
@@ -163,12 +170,14 @@ export function startRelay(trackSid: string) {
       if (stopped) return;
       stopped = true;
       if (timer != null) window.clearTimeout(timer);
-      if (
-        rVfcHandle != null &&
-        "cancelVideoFrameCallback" in HTMLVideoElement.prototype
-      ) {
+      if (rVfcHandle != null) {
         const source = resolveCaptureVideo(trackSid) ?? fallbackVideo;
-        source?.cancelVideoFrameCallback?.(rVfcHandle);
+        if (
+          source instanceof HTMLVideoElement &&
+          "cancelVideoFrameCallback" in source
+        ) {
+          source.cancelVideoFrameCallback(rVfcHandle);
+        }
       }
       cloned?.removeEventListener("ended", onEnded);
       if (fallbackVideo) {

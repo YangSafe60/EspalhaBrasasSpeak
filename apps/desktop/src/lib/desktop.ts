@@ -17,7 +17,11 @@ export type ElectronAPI = {
   }>;
   getAppUpdate: () => Promise<AppUpdateEvent | null>;
   focusMain: () => Promise<boolean>;
+  /** Main window + process title (e.g. voice channel label in Task Manager). */
+  setWindowTitle: (title: string) => Promise<boolean>;
   setBackgroundThrottling: (enabled: boolean) => Promise<boolean>;
+  /** Hint Chromium to drop caches after voice teardown (best-effort). */
+  trimMemory: () => Promise<boolean>;
   listShareSources: (opts?: {
     types?: Array<"screen" | "window">;
   }) => Promise<DesktopShareSource[]>;
@@ -44,6 +48,33 @@ export type ElectronAPI = {
     filename: string;
     contentType: string;
   }>;
+  /** Upload an image to ImgBB from the desktop process (no VPS storage). */
+  uploadImage: (payload: {
+    filename: string;
+    contentType: string;
+    data: ArrayBuffer;
+    apiKey: string;
+  }) => Promise<{
+    url: string;
+    size: number;
+    filename: string;
+    contentType: string;
+  }>;
+  ensureVoiceHost?: () => Promise<boolean>;
+  destroyVoiceHost?: () => Promise<boolean>;
+  sendVoiceCommand?: (cmd: import("../voice/voiceIpc").VoiceHostCommand) => void;
+  publishVoiceEvent?: (evt: import("../voice/voiceIpc").VoiceHostEvent) => void;
+  publishLobbyFrame?: (frame: import("../voice/voiceIpc").VoiceLobbyFrame) => void;
+  notifyVoiceHostReady?: () => void;
+  onVoiceCommand?: (
+    handler: (cmd: import("../voice/voiceIpc").VoiceHostCommand) => void,
+  ) => () => void;
+  onVoiceEvent?: (
+    handler: (evt: import("../voice/voiceIpc").VoiceHostEvent) => void,
+  ) => () => void;
+  onLobbyFrame?: (
+    handler: (frame: import("../voice/voiceIpc").VoiceLobbyFrame) => void,
+  ) => () => void;
 };
 
 export type AppUpdateEvent = {
@@ -57,6 +88,13 @@ declare global {
   interface Window {
     electronAPI?: ElectronAPI;
   }
+}
+
+/** Hidden renderer that owns LiveKit + screen capture (voice-host.html). */
+export function isVoiceHostWindow(): boolean {
+  if (typeof window === "undefined") return false;
+  const href = `${window.location.pathname}${window.location.href}`;
+  return /voice-host\.html/i.test(href);
 }
 
 export function isDesktopApp(): boolean {

@@ -744,7 +744,6 @@ export function ServerSettingsModal() {
               </ul>
             )}
             {msg && <p className="form-ok">{msg}</p>}
-            {err && <p className="form-error">{err}</p>}
           </div>
         )}
 

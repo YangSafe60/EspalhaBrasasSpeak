@@ -7,6 +7,7 @@ const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
 const DEV_URL = process.env.VITE_DEV_SERVER_URL || "http://127.0.0.1:1420";
+const DEFAULT_APP_TITLE = "Espalha Brasas";
 
 /** Optional separate profile for multi-account testing. */
 if (process.env.ELECTRON_USER_DATA) {
@@ -14,10 +15,13 @@ if (process.env.ELECTRON_USER_DATA) {
 }
 
 /** Performance-oriented Chromium flags (voice + screen share). */
-// Prefer normal Chromium memory reclaim; voice join toggles throttling via IPC.
-// Keep GPU / HW decode for video (do not call disableHardwareAcceleration).
+app.commandLine.appendSwitch("js-flags", "--expose-gc");
 
 let mainWindow = null;
+let voiceHostWindow = null;
+let voiceHostReady = false;
+/** Commands queued until the hidden voice renderer finishes booting. */
+const pendingVoiceCommands = [];
 const popouts = new Map();
 /** Last update payload so the renderer can catch up if it mounted late. */
 let lastUpdatePayload = null;
@@ -26,10 +30,110 @@ function preloadPath() {
   return path.join(__dirname, "preload.cjs");
 }
 
+function voiceHostPageUrl() {
+  if (isDev) return `${DEV_URL}/voice-host.html`;
+  return path.join(__dirname, "..", "dist", "voice-host.html");
+}
+
+function sendToMainRenderer(channel, payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel, payload);
+  }
+}
+
+function sendToVoiceHostRenderer(channel, payload) {
+  if (voiceHostWindow && !voiceHostWindow.isDestroyed()) {
+    voiceHostWindow.webContents.send(channel, payload);
+  }
+}
+
+function flushPendingVoiceCommands() {
+  while (pendingVoiceCommands.length) {
+    const cmd = pendingVoiceCommands.shift();
+    sendToVoiceHostRenderer("voice:cmd", cmd);
+  }
+}
+
+function markVoiceHostReady() {
+  voiceHostReady = true;
+  flushPendingVoiceCommands();
+}
+
+function destroyVoiceHost() {
+  voiceHostReady = false;
+  pendingVoiceCommands.length = 0;
+  if (voiceHostWindow && !voiceHostWindow.isDestroyed()) {
+    voiceHostWindow.destroy();
+  }
+  voiceHostWindow = null;
+}
+
+function ensureVoiceHostWindow() {
+  if (voiceHostWindow && !voiceHostWindow.isDestroyed() && voiceHostReady) {
+    return Promise.resolve(true);
+  }
+  if (voiceHostWindow && !voiceHostWindow.isDestroyed()) {
+    return new Promise((resolve) => {
+      const waitReady = () => {
+        if (voiceHostReady) {
+          resolve(true);
+          return;
+        }
+        setTimeout(waitReady, 50);
+      };
+      waitReady();
+    });
+  }
+
+  voiceHostReady = false;
+  voiceHostWindow = new BrowserWindow({
+    show: false,
+    width: 640,
+    height: 480,
+    backgroundColor: "#000000",
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: preloadPath(),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: false,
+      backgroundThrottling: false,
+      v8CacheOptions: "code",
+    },
+  });
+
+  voiceHostWindow.on("closed", () => {
+    voiceHostWindow = null;
+    voiceHostReady = false;
+  });
+
+  if (isDev) {
+    void voiceHostWindow.loadURL(voiceHostPageUrl());
+  } else {
+    void voiceHostWindow.loadFile(voiceHostPageUrl());
+  }
+
+  return new Promise((resolve) => {
+    const waitReady = () => {
+      if (voiceHostReady) {
+        resolve(true);
+        return;
+      }
+      if (!voiceHostWindow || voiceHostWindow.isDestroyed()) {
+        resolve(false);
+        return;
+      }
+      setTimeout(waitReady, 50);
+    };
+    waitReady();
+  });
+}
+
 function createMainWindow() {
   const iconPath = path.join(__dirname, "icon.png");
   mainWindow = new BrowserWindow({
-    title: "Espalha Brasas",
+    title: DEFAULT_APP_TITLE,
     width: 1280,
     height: 800,
     minWidth: 960,
@@ -65,6 +169,7 @@ function createMainWindow() {
   }
 
   mainWindow.on("closed", () => {
+    destroyVoiceHost();
     mainWindow = null;
   });
 }
@@ -113,6 +218,19 @@ function registerIpc() {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
     mainWindow.focus();
+    return true;
+  });
+
+  /** Updates taskbar + Windows Task Manager process label while in voice. */
+  ipcMain.handle("window:set-title", (_evt, title) => {
+    const next =
+      typeof title === "string" && title.trim()
+        ? title.trim().slice(0, 120)
+        : DEFAULT_APP_TITLE;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setTitle(next);
+    }
+    process.title = next;
     return true;
   });
 
@@ -189,6 +307,46 @@ function registerIpc() {
     return true;
   });
 
+  ipcMain.handle("memory:trim", async () => {
+    const ses = session.defaultSession;
+    try {
+      await ses.clearCache();
+      ses.clearHostResolverCache();
+      ses.clearAuthCache();
+    } catch (err) {
+      console.warn("memory:trim", err);
+    }
+    return true;
+  });
+
+  ipcMain.handle("voice:ensure-host", () => ensureVoiceHostWindow());
+
+  ipcMain.handle("voice:destroy-host", () => {
+    destroyVoiceHost();
+    return true;
+  });
+
+  ipcMain.on("voice:cmd", (_evt, cmd) => {
+    if (voiceHostReady) {
+      sendToVoiceHostRenderer("voice:cmd", cmd);
+      return;
+    }
+    pendingVoiceCommands.push(cmd);
+    void ensureVoiceHostWindow();
+  });
+
+  ipcMain.on("voice:evt", (_evt, payload) => {
+    sendToMainRenderer("voice:evt", payload);
+  });
+
+  ipcMain.on("voice:lobby-frame", (_evt, payload) => {
+    sendToMainRenderer("voice:lobby-frame", payload);
+  });
+
+  ipcMain.on("voice:host-ready", () => {
+    markVoiceHostReady();
+  });
+
   ipcMain.handle("relay:signal", (_evt, payload) => {
     // Host (main window) owns MediaStreamTracks — only it needs request/stop.
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -253,6 +411,65 @@ function registerIpc() {
       );
     }
     return { url: text, size: buf.length, filename, contentType };
+  });
+
+  /** Upload images to ImgBB from the desktop process (bypasses VPS for file bytes). */
+  ipcMain.handle("media:upload-image", async (_evt, payload = {}) => {
+    const apiKey = String(payload.apiKey || "").trim();
+    if (!apiKey) {
+      throw new Error("ImgBB API key required");
+    }
+    const filename = String(payload.filename || "image.png").replace(/[/\\]/g, "_");
+    const contentType = String(payload.contentType || "image/png");
+    const raw = payload.data;
+    if (!raw) {
+      throw new Error("file data required");
+    }
+    const buf = Buffer.isBuffer(raw)
+      ? raw
+      : Buffer.from(raw instanceof ArrayBuffer ? raw : new Uint8Array(raw));
+    if (buf.length === 0) {
+      throw new Error("empty file");
+    }
+    const maxBytes = 25 * 1024 * 1024;
+    if (buf.length > maxBytes) {
+      throw new Error("file too large (max 25 MB)");
+    }
+
+    const form = new FormData();
+    form.append(
+      "image",
+      new Blob([new Uint8Array(buf)], { type: contentType }),
+      filename,
+    );
+
+    const res = await fetch(
+      `https://api.imgbb.com/1/upload?key=${encodeURIComponent(apiKey)}`,
+      { method: "POST", body: form },
+    );
+    let body;
+    try {
+      body = await res.json();
+    } catch {
+      throw new Error(`ImgBB upload failed (${res.status})`);
+    }
+    if (!res.ok || body?.success !== true) {
+      const detail =
+        typeof body?.error?.message === "string"
+          ? body.error.message
+          : `HTTP ${res.status}`;
+      throw new Error(`ImgBB upload failed: ${detail}`);
+    }
+    const url =
+      typeof body?.data?.url === "string"
+        ? body.data.url
+        : typeof body?.data?.display_url === "string"
+          ? body.data.display_url
+          : "";
+    if (!/^https:\/\//i.test(url)) {
+      throw new Error("ImgBB response missing url");
+    }
+    return { url, size: buf.length, filename, contentType };
   });
 }
 

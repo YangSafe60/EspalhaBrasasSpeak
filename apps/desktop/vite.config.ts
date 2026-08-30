@@ -1,5 +1,9 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   plugins: [react()],
@@ -19,6 +23,10 @@ export default defineConfig({
     // Vite 8 reporter currently treats this value as bytes (not kB).
     chunkSizeWarningLimit: 600_000,
     rolldownOptions: {
+      input: {
+        main: path.resolve(__dirname, "index.html"),
+        voiceHost: path.resolve(__dirname, "voice-host.html"),
+      },
       output: {
         codeSplitting: {
           groups: [

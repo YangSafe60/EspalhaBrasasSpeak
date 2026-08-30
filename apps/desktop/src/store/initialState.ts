@@ -41,6 +41,11 @@ export function createInitialState() {
     settingsChannelId: null,
     inviteChannelId: null,
     miniProfile: null,
+    pendingComposerInsert: null as {
+      channelId: string;
+      text: string;
+    } | null,
+    pendingVoiceJoinChannelId: null as string | null,
     pendingServerInvite: null,
     pendingChannelInvite: null,
     channelMutes: loadChannelMutes(),

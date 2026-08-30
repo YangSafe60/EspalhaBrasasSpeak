@@ -23,7 +23,9 @@ export const tracks = new Map<string, MediaStreamTrack>();
  * Prefer capturing the lobby `<video>` — remote WebRTC tracks often won't
  * decode in an off-DOM clone.
  */
-export const captureSources = new Map<string, () => HTMLVideoElement | null>();
+export type CaptureElement = HTMLVideoElement | HTMLImageElement;
+
+export const captureSources = new Map<string, () => CaptureElement | null>();
 
 export const relays = new Map<string, RelayEntry>();
 

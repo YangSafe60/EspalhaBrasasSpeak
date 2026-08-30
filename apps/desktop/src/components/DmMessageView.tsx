@@ -5,6 +5,7 @@ import { mediaUrl } from "../lib/mediaUrl";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { EmojiPickerButton } from "./EmojiPickerButton";
 import { MessageContent } from "./MessageContent";
+import { MessageEmbeds } from "./MessageEmbeds";
 import { useAppStore } from "../store/appStore";
 import type { DmMessage } from "../types";
 
@@ -365,9 +366,12 @@ export function DmMessageView() {
                     {m.edited_at && <span className="edited"> (edited)</span>}
                   </p>
                 ) : (
-                  <MessageContent content={m.content}>
-                    {m.edited_at && <span className="edited"> (edited)</span>}
-                  </MessageContent>
+                  <>
+                    <MessageContent content={m.content}>
+                      {m.edited_at && <span className="edited"> (edited)</span>}
+                    </MessageContent>
+                    <MessageEmbeds content={m.content} />
+                  </>
                 )}
 
                 {mine && canSend && !editing && (

@@ -76,6 +76,12 @@ export function useMemberContextMenu(voice?: MemberVoiceHandlers) {
   const moderateMemberVoice = useAppStore((s) => s.moderateMemberVoice);
   const transferOwnership = useAppStore((s) => s.transferOwnership);
   const blockUser = useAppStore((s) => s.blockUser);
+  const openMiniProfile = useAppStore((s) => s.openMiniProfile);
+  const openDmWithPeer = useAppStore((s) => s.openDmWithPeer);
+  const mentionMemberInChat = useAppStore((s) => s.mentionMemberInChat);
+  const requestVoiceJoin = useAppStore((s) => s.requestVoiceJoin);
+  const setError = useAppStore((s) => s.setError);
+  const channelsByServer = useAppStore((s) => s.channelsByServer);
 
   const [menu, setMenu] = useState<MenuState>(null);
   const [timeoutDraft, setTimeoutDraft] = useState<TimeoutDraft | null>(null);
@@ -291,6 +297,64 @@ export function useMemberContextMenu(voice?: MemberVoiceHandlers) {
             <span className="muted">@{menu.username}</span>
           ) : null}
         </div>
+        <button
+          type="button"
+          className="ctx-menu-item"
+          onClick={() => {
+            openMiniProfile({
+              userId: menu.userId,
+              serverId: activeServerId,
+              x: menu.x,
+              y: menu.y,
+            });
+            closeMenu();
+          }}
+        >
+          Profile
+        </button>
+        <button
+          type="button"
+          className="ctx-menu-item"
+          disabled={!menu.username}
+          onClick={() => {
+            if (!menu.username) return;
+            mentionMemberInChat(menu.username);
+            closeMenu();
+          }}
+        >
+          Mention
+        </button>
+        <button
+          type="button"
+          className="ctx-menu-item"
+          onClick={() => {
+            void openDmWithPeer(menu.userId);
+            closeMenu();
+          }}
+        >
+          Message
+        </button>
+        <button
+          type="button"
+          className="ctx-menu-item"
+          onClick={() => {
+            const vs = voiceStates.find((v) => sameId(v.user_id, menu.userId));
+            const channels = channelsByServer[activeServerId] || [];
+            const voiceChannel = vs?.channel_id
+              ? channels.find((c) => sameId(c.id, vs.channel_id))
+              : undefined;
+            if (!vs?.channel_id || !voiceChannel) {
+              setError("They aren't in a voice channel on this server.");
+              closeMenu();
+              return;
+            }
+            requestVoiceJoin(vs.channel_id);
+            closeMenu();
+          }}
+        >
+          Start call
+        </button>
+        <div className="member-ctx-sep" />
         <label className="member-ctx-volume">
           <span>User volume</span>
           <input

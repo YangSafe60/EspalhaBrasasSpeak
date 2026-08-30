@@ -18,6 +18,7 @@ import { UpdateOverlay } from "./components/UpdateOverlay";
 import { VoiceLobbyView } from "./components/VoiceLobbyView";
 import { VoicePanel } from "./components/VoicePanel";
 import { useVoice } from "./hooks/useVoice";
+import { useVoiceWindowTitle } from "./hooks/useVoiceWindowTitle";
 import { useAutoIdlePresence } from "./hooks/useAutoIdlePresence";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { applyTheme, loadTheme } from "./lib/theme";
@@ -141,7 +142,12 @@ function MainApp() {
   const bootstrap = useAppStore((s) => s.bootstrap);
   const selectChannel = useAppStore((s) => s.selectChannel);
   const voiceChannelId = useAppStore((s) => s.voiceChannelId);
+  const pendingVoiceJoinChannelId = useAppStore(
+    (s) => s.pendingVoiceJoinChannelId,
+  );
+  const clearPendingVoiceJoin = useAppStore((s) => s.clearPendingVoiceJoin);
   const voice = useVoice();
+  useVoiceWindowTitle(!!user);
   const [pendingVoiceId, setPendingVoiceId] = useState<string | null>(null);
   const [micBusy, setMicBusy] = useState(false);
   const [friendsTab, setFriendsTab] = useState<FriendsTab>("online");
@@ -185,6 +191,13 @@ function MainApp() {
     }
     void joinVoice(id);
   }
+
+  useEffect(() => {
+    if (!pendingVoiceJoinChannelId) return;
+    const channelId = pendingVoiceJoinChannelId;
+    clearPendingVoiceJoin();
+    onJoinVoice(channelId);
+  }, [pendingVoiceJoinChannelId, clearPendingVoiceJoin, voiceChannelId]);
 
   function onOpenFriends(tab: FriendsTab = "online") {
     setFriendsTab(tab);

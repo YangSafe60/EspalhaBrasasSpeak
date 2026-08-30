@@ -84,6 +84,10 @@ export interface AppState {
   /** When opening invite-people from a channel row. */
   inviteChannelId: string | null;
   miniProfile: MiniProfileState | null;
+  /** Insert text into a channel composer (e.g. @mention from member menu). */
+  pendingComposerInsert: { channelId: string; text: string } | null;
+  /** Join voice from member menu "Start call" (consumed by App). */
+  pendingVoiceJoinChannelId: string | null;
   /** Shown when a friend invites you into a server. */
   pendingServerInvite: {
     server: Server;
@@ -118,6 +122,10 @@ export interface AppState {
     y: number;
   }) => void;
   closeMiniProfile: () => void;
+  mentionMemberInChat: (username: string) => void;
+  clearPendingComposerInsert: () => void;
+  requestVoiceJoin: (channelId: string) => void;
+  clearPendingVoiceJoin: () => void;
   clearPendingServerInvite: () => void;
   clearPendingChannelInvite: () => void;
   muteChannel: (channelId: string, durationMs: number | null) => void;
@@ -264,6 +272,8 @@ export interface AppState {
   ) => Promise<void>;
   closeDm: (dmId: string) => Promise<void>;
   selectDm: (dmId: string) => Promise<void>;
+  /** Open/create a DM channel without changing the current view. Returns dm id. */
+  ensureDmWithPeer: (peerId: string) => Promise<string | null>;
   openDmWithPeer: (peerId: string) => Promise<void>;
   loadDmMessages: (dmId: string) => Promise<void>;
   sendDmMessage: (dmId: string, content: string) => Promise<void>;

@@ -13,13 +13,14 @@ import {
   hasPerm,
   Perm,
 } from "../lib/serverPerms";
-import { ATTACH_UPLOAD_HINT } from "../lib/uploadHints";
 import { matchCustomEmojiToken } from "../lib/customEmoji";
 import { mediaUrl } from "../lib/mediaUrl";
+import { isImageAttachment } from "../store/helpers/messageHelpers";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { EmojiPickerButton } from "./EmojiPickerButton";
 import { GifPickerButton, type GifHit } from "./GifPickerButton";
 import { MessageContent } from "./MessageContent";
+import { MessageEmbeds } from "./MessageEmbeds";
 import { useAppStore } from "../store/appStore";
 import type { Atmosphere, Channel, Message } from "../types";
 
@@ -88,11 +89,17 @@ export function MessageView() {
   const servers = useAppStore((s) => s.servers);
   const membersByServer = useAppStore((s) => s.membersByServer);
   const rolesByServer = useAppStore((s) => s.rolesByServer);
+  const pendingComposerInsert = useAppStore((s) => s.pendingComposerInsert);
+  const clearPendingComposerInsert = useAppStore(
+    (s) => s.clearPendingComposerInsert,
+  );
 
   const [draft, setDraft] = useState("");
   const [pendingFiles, setPendingFiles] = useState<
-    { id: string; url: string; name: string }[]
+    { id: string; url: string; name: string; preview: boolean }[]
   >([]);
+  const [fileUploading, setFileUploading] = useState(false);
+  const [composerErr, setComposerErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
@@ -172,6 +179,25 @@ export function MessageView() {
   }, [activeChannelId]);
 
   useEffect(() => {
+    if (!pendingComposerInsert || !activeChannelId) return;
+    if (pendingComposerInsert.channelId !== activeChannelId) return;
+    const insert = pendingComposerInsert.text;
+    setDraft((prev) => prev + insert);
+    clearPendingComposerInsert();
+    requestAnimationFrame(() => {
+      const el = draftRef.current;
+      if (!el) return;
+      el.focus();
+      const pos = el.value.length;
+      el.setSelectionRange(pos, pos);
+    });
+  }, [
+    pendingComposerInsert,
+    activeChannelId,
+    clearPendingComposerInsert,
+  ]);
+
+  useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key === "Escape" && selectedIds.size > 0) {
         setSelectedIds(new Set());
@@ -237,8 +263,10 @@ export function MessageView() {
 
   async function onSubmit(e?: FormEvent) {
     e?.preventDefault();
-    if (!activeChannelId || (!draft.trim() && !pendingFiles.length)) return;
+    if (!activeChannelId || fileUploading) return;
+    if (!draft.trim() && !pendingFiles.length) return;
     setBusy(true);
+    setComposerErr(null);
     try {
       await sendMessage(
         activeChannelId,
@@ -248,6 +276,10 @@ export function MessageView() {
       setDraft("");
       setPendingFiles([]);
       setMentionQuery(null);
+    } catch (error) {
+      setComposerErr(
+        error instanceof Error ? error.message : "Failed to send message",
+      );
     } finally {
       setBusy(false);
     }
@@ -319,12 +351,33 @@ export function MessageView() {
   }
 
   async function onPickFile(file: File | null) {
-    if (!file) return;
-    const uploaded = await uploadFile(file);
-    setPendingFiles((prev) => [
-      ...prev,
-      { id: uploaded.id, url: uploaded.url, name: file.name },
-    ]);
+    if (!file || !activeChannelId) return;
+    setFileUploading(true);
+    setComposerErr(null);
+    try {
+      const uploaded = await uploadFile(file);
+      const preview =
+        file.type.startsWith("image/") ||
+        /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(file.name || "");
+      setPendingFiles((prev) => [
+        ...prev,
+        {
+          id: uploaded.id,
+          url: uploaded.url,
+          name: file.name,
+          preview,
+        },
+      ]);
+    } catch (error) {
+      setComposerErr(error instanceof Error ? error.message : "Upload failed");
+    } finally {
+      setFileUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  function removePendingFile(id: string) {
+    setPendingFiles((prev) => prev.filter((f) => f.id !== id));
   }
 
   function startEdit(m: Message) {
@@ -551,12 +604,15 @@ export function MessageView() {
                 ) : (
                   <>
                     {m.content && (
-                      <MessageContent
-                        content={m.content}
-                        serverId={channel.server_id}
-                      >
-                        {m.edited_at && <span className="edited"> (edited)</span>}
-                      </MessageContent>
+                      <>
+                        <MessageContent
+                          content={m.content}
+                          serverId={channel.server_id}
+                        >
+                          {m.edited_at && <span className="edited"> (edited)</span>}
+                        </MessageContent>
+                        <MessageEmbeds content={m.content} />
+                      </>
                     )}
                     {!m.content && m.edited_at && (
                       <span className="edited"> (edited)</span>
@@ -567,9 +623,13 @@ export function MessageView() {
                 {m.attachments?.length > 0 && (
                   <div className="attachments">
                     {m.attachments.map((a) =>
-                      a.content_type.startsWith("image/") ? (
+                      isImageAttachment(a) ? (
                         <a key={a.id} href={mediaUrl(a.url)} target="_blank" rel="noreferrer">
-                          <img src={mediaUrl(a.url)} alt={a.filename} />
+                          <img
+                            src={mediaUrl(a.url)}
+                            alt={a.filename}
+                            referrerPolicy="no-referrer"
+                          />
                         </a>
                       ) : (
                         <a key={a.id} href={mediaUrl(a.url)} target="_blank" rel="noreferrer">
@@ -813,16 +873,39 @@ export function MessageView() {
         {pendingFiles.length > 0 && (
           <div className="pending-files">
             {pendingFiles.map((f) => (
-              <span key={f.id}>{f.name}</span>
+              <div key={f.id} className="pending-file-chip">
+                {f.preview ? (
+                  <img
+                    className="pending-file-thumb"
+                    src={mediaUrl(f.url)}
+                    alt={f.name}
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <span className="pending-file-name">{f.name}</span>
+                )}
+                <button
+                  type="button"
+                  className="pending-file-remove"
+                  aria-label={`Remove ${f.name}`}
+                  onClick={() => removePendingFile(f.id)}
+                >
+                  ×
+                </button>
+              </div>
             ))}
-            <p className="muted tiny pending-upload-hint">{ATTACH_UPLOAD_HINT}</p>
           </div>
         )}
+        {fileUploading && (
+          <p className="muted tiny pending-upload-status">Uploading…</p>
+        )}
+        {composerErr && <p className="form-error composer-error">{composerErr}</p>}
         <form className="composer" onSubmit={(e) => void onSubmit(e)}>
           <button
             type="button"
             className="icon-btn"
-            title={`Attach file — ${ATTACH_UPLOAD_HINT}`}
+            title="Attach file"
+            disabled={fileUploading}
             onClick={() => fileRef.current?.click()}
           >
             +
@@ -854,7 +937,7 @@ export function MessageView() {
           />
           <EmojiPickerButton onPick={insertEmoji} />
           <GifPickerButton onPick={(g) => void onPickGif(g)} />
-          <button type="submit" className="btn primary sm" disabled={busy}>
+          <button type="submit" className="btn primary sm" disabled={busy || fileUploading}>
             Send
           </button>
         </form>

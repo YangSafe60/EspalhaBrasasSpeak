@@ -5,7 +5,7 @@ import {
 } from "../../lib/channelMutePrefs";
 import type { AppStoreSlice } from "./sliceTypes";
 
-export const createUiSlice: AppStoreSlice = (set) => ({
+export const createUiSlice: AppStoreSlice = (set, get) => ({
   setError: (error) => set({ error }),
   setModal: (modal, channelId = null) =>
     set({
@@ -27,6 +27,36 @@ export const createUiSlice: AppStoreSlice = (set) => ({
       modal: null,
     }),
   closeMiniProfile: () => set({ miniProfile: null }),
+  mentionMemberInChat: (username) => {
+    const trimmed = username.trim();
+    const { activeServerId, activeChannelId, channelsByServer } = get();
+    if (!activeServerId || !trimmed) return;
+    const channels = channelsByServer[activeServerId] || [];
+    const active = channels.find((c) => c.id === activeChannelId);
+    let targetId =
+      active?.channel_type === "text" ? activeChannelId : null;
+    if (!targetId) {
+      targetId =
+        channels.find((c) => c.channel_type === "text")?.id ?? null;
+    }
+    if (!targetId) {
+      set({ error: "No text channel to mention in." });
+      return;
+    }
+    if (targetId !== activeChannelId) {
+      void get().selectChannel(targetId);
+    }
+    set({
+      pendingComposerInsert: {
+        channelId: targetId,
+        text: `@${trimmed} `,
+      },
+    });
+  },
+  clearPendingComposerInsert: () => set({ pendingComposerInsert: null }),
+  requestVoiceJoin: (channelId) =>
+    set({ pendingVoiceJoinChannelId: channelId }),
+  clearPendingVoiceJoin: () => set({ pendingVoiceJoinChannelId: null }),
   clearPendingServerInvite: () => set({ pendingServerInvite: null }),
   clearPendingChannelInvite: () => set({ pendingChannelInvite: null }),
   muteChannel: (channelId, durationMs) => {

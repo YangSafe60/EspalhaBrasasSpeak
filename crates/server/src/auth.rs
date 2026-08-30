@@ -76,7 +76,7 @@ fn bot_may_access(method: &Method, path: &str) -> bool {
     if path.starts_with("/api/messages/") {
         return true;
     }
-    if path == "/api/media/upload" || path == "/api/media/remote" {
+    if path == "/api/media/upload" || path == "/api/media/remote" || path == "/api/media/imgbb-key" {
         return true;
     }
     if path == "/api/gifs/search" {
