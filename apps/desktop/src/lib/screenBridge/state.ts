@@ -31,4 +31,5 @@ export const relays = new Map<string, RelayEntry>();
 export const bridgeRuntime = {
   hostReady: null as Promise<void> | null,
   activeRelayViewers: 0,
+  signalUnlisten: null as Unlisten | null,
 };

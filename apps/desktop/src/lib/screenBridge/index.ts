@@ -17,7 +17,8 @@ import { publishSignal, subscribeFrames, subscribeSignals } from "./transport";
 async function ensureHost() {
   if (bridgeRuntime.hostReady) return bridgeRuntime.hostReady;
   bridgeRuntime.hostReady = (async () => {
-    await subscribeSignals((msg) => {
+    if (bridgeRuntime.signalUnlisten) return;
+    bridgeRuntime.signalUnlisten = await subscribeSignals((msg) => {
       if (!msg || typeof msg !== "object") return;
       if (msg.type === "request") {
         const media = tracks.get(msg.trackSid);
@@ -34,6 +35,13 @@ async function ensureHost() {
     });
   })();
   return bridgeRuntime.hostReady;
+}
+
+/** Stop IPC/BroadcastChannel listeners when voice is fully idle. */
+export function releaseScreenBridgeHost() {
+  bridgeRuntime.signalUnlisten?.();
+  bridgeRuntime.signalUnlisten = null;
+  bridgeRuntime.hostReady = null;
 }
 
 /** Main window must call this before opening a pop-out so relay IPC is listening. */
@@ -86,6 +94,12 @@ export function clearAllScreenBridge() {
   bridgeRuntime.activeRelayViewers = 0;
   syncRelayBackgroundThrottling();
   purgeOrphanRelayElements();
+}
+
+/** Full voice leave: relays, registered tracks, and the persistent host listener. */
+export function teardownScreenBridgeForVoiceLeave() {
+  clearAllScreenBridge();
+  releaseScreenBridgeHost();
 }
 
 /** Attach a live screen share into a pop-out `<img>`. Returns a cleanup fn. */

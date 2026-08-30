@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getLivekit,
   loadLivekit,
+  purgeLivekitDomArtifacts,
+  releaseLivekitModule,
   type LocalTrack,
   type LocalTrackPublication,
   type LocalVideoTrack,
@@ -22,6 +24,7 @@ import {
   unregisterScreenTrack,
   pruneScreenTracks,
   focusMainWindow,
+  teardownScreenBridgeForVoiceLeave,
 } from "../lib/screenBridge";
 import {
   applyScreenShareQualityHints,
@@ -577,90 +580,33 @@ export function useVoice() {
     [refreshScreens, syncLocalScreen],
   );
 
-  const teardownRoom = useCallback(
-    async (room: Room, stopTracks: boolean) => {
-      try {
-        room.removeAllListeners();
-      } catch {
-        /* EventEmitter API */
-      }
+  const teardownRoom = useCallback(async (room: Room, stopTracks: boolean) => {
+    purgeRemoteAudio();
+    purgeLivekitDomArtifacts();
 
-      room.remoteParticipants.forEach((p) => {
-        p.trackPublications.forEach((pub) => {
-          const track = pub.track;
-          if (track) {
-            try {
-              track.detach();
-            } catch {
-              /* already detached */
-            }
-          }
-          try {
-            pub.setSubscribed(false);
-          } catch {
-            /* ignore */
-          }
-        });
-      });
+    try {
+      await room.disconnect(stopTracks);
+    } catch {
+      /* already disconnected */
+    }
 
-      try {
-        await room.localParticipant.setMicrophoneEnabled(false);
-      } catch {
-        /* already down */
+    try {
+      const ctx = (room as unknown as { audioContext?: AudioContext }).audioContext;
+      if (ctx && ctx.state !== "closed") {
+        await ctx.close();
       }
-      try {
-        await room.localParticipant.setCameraEnabled(false);
-      } catch {
-        /* optional */
-      }
+    } catch {
+      /* ignore */
+    }
 
-      for (const pub of [
-        ...room.localParticipant.trackPublications.values(),
-      ] as LocalTrackPublication[]) {
-        const track = pub.track;
-        if (!track) continue;
-        try {
-          await room.localParticipant.unpublishTrack(track, stopTracks);
-        } catch {
-          if (stopTracks) {
-            try {
-              track.stop();
-            } catch {
-              /* ignore */
-            }
-          }
-        }
-      }
+    purgeLivekitDomArtifacts();
 
-      if (stopTracks) {
-        stopLocalMediaExceptScreenShare(room);
-        room.localParticipant.trackPublications.forEach((pub) => {
-          const track = pub.track;
-          if (!track) return;
-          try {
-            track.stop();
-          } catch {
-            /* ignore */
-          }
-        });
-      }
-
-      try {
-        await (
-          room as Room & { stopAudio?: () => Promise<void> }
-        ).stopAudio?.();
-      } catch {
-        /* optional */
-      }
-
-      try {
-        await room.disconnect(stopTracks);
-      } catch {
-        /* already disconnected */
-      }
-    },
-    [],
-  );
+    try {
+      room.removeAllListeners();
+    } catch {
+      /* EventEmitter API */
+    }
+  }, [purgeRemoteAudio]);
 
   const leave = useCallback(async () => {
     if (leavingRef.current) return;
@@ -680,7 +626,7 @@ export function useVoice() {
 
       // Leaving the lobby entirely always ends the stream + capture.
       await endScreenShare(room, true);
-      clearAllScreenBridge();
+      teardownScreenBridgeForVoiceLeave();
 
       setConnected(false);
       setRemoteScreens([]);
@@ -688,7 +634,6 @@ export function useVoice() {
       setSpeakingIds([]);
       watchingScreensRef.current.clear();
 
-      purgeRemoteAudio();
       shareAudioStateRef.current.clear();
       setShareAudioByTrack({});
 
@@ -697,7 +642,11 @@ export function useVoice() {
       }
 
       void getElectronAPI()?.setBackgroundThrottling?.(true);
+      if (wasInVoice && !deafenedRef.current && !switchingRef.current) {
+        playVoiceLeaveSound();
+      }
       closeVoiceSoundContext();
+      releaseLivekitModule();
       setVoiceLocal({ voiceChannelId: null, streaming: false });
       try {
         await api("/api/voice/state", {
@@ -706,9 +655,6 @@ export function useVoice() {
         });
       } catch {
         /* best effort */
-      }
-      if (wasInVoice && !deafenedRef.current && !switchingRef.current) {
-        playVoiceLeaveSound();
       }
     } finally {
       leavingRef.current = false;
@@ -771,8 +717,8 @@ export function useVoice() {
             setRemoteScreens([]);
             setLocalScreens([]);
             watchingScreensRef.current.clear();
-            clearAllScreenBridge();
-            void closeAllScreenPopouts();
+      teardownScreenBridgeForVoiceLeave();
+      void closeAllScreenPopouts();
             purgeRemoteAudio();
             await teardownRoom(oldRoom, true);
           }
@@ -967,6 +913,7 @@ export function useVoice() {
           setSpeakingIds(speakers.map((p) => p.identity));
         });
         room.on(getLivekit().RoomEvent.Disconnected, () => {
+          if (leavingRef.current) return;
           if (roomRef.current === room) {
             roomRef.current = null;
           }
@@ -979,10 +926,11 @@ export function useVoice() {
           setShareAudioByTrack({});
           if (!switchingRef.current) {
             setLocalScreens([]);
-            clearAllScreenBridge();
+            teardownScreenBridgeForVoiceLeave();
             void closeAllScreenPopouts();
             void getElectronAPI()?.setBackgroundThrottling?.(true);
             closeVoiceSoundContext();
+            releaseLivekitModule();
           }
         });
 
@@ -1592,17 +1540,19 @@ export function useVoice() {
       const stops = [...shareStopsRef.current.values()];
       shareStopsRef.current.clear();
       for (const stop of stops) void stop();
-      clearAllScreenBridge();
+      teardownScreenBridgeForVoiceLeave();
       void closeAllScreenPopouts();
       purgeRemoteAudio();
       if (room) {
         void teardownRoom(room, true).finally(() => {
           void getElectronAPI()?.setBackgroundThrottling?.(true);
           closeVoiceSoundContext();
+          releaseLivekitModule();
         });
       } else {
         void getElectronAPI()?.setBackgroundThrottling?.(true);
         closeVoiceSoundContext();
+        releaseLivekitModule();
       }
     };
   }, [clearJoinPullTimers, purgeRemoteAudio, teardownRoom]);

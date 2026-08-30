@@ -92,17 +92,6 @@ export function LobbyScreenTile({
         muted
         onDoubleClick={() => toggleExpanded()}
       />
-      {!expanded && (
-        <div className="lobby-screen-hover">
-          <button
-            type="button"
-            className="btn danger sm lobby-screen-hover-btn"
-            onClick={onHoverAction}
-          >
-            {hoverActionLabel}
-          </button>
-        </div>
-      )}
       <div
         className="lobby-screen-meta"
         onClick={(e) => e.stopPropagation()}
@@ -194,15 +183,13 @@ export function LobbyScreenTile({
           >
             {busy ? "…" : "Pop out"}
           </button>
-          {expanded && (
-            <button
-              type="button"
-              className="btn danger sm"
-              onClick={onHoverAction}
-            >
-              {hoverActionLabel}
-            </button>
-          )}
+          <button
+            type="button"
+            className="btn danger sm"
+            onClick={onHoverAction}
+          >
+            {hoverActionLabel}
+          </button>
         </div>
       </div>
     </div>

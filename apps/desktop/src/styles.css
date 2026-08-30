@@ -2470,13 +2470,16 @@ html[data-compact="1"] .message {
   border-radius: 0;
   border: none;
   background: #000;
+  overflow: hidden;
 }
 
 .lobby-screen-tile.is-expanded video {
+  position: absolute;
+  inset: 0;
   width: 100%;
-  height: calc(100vh - 3.25rem);
+  height: 100%;
   max-height: none;
-  object-fit: contain;
+  object-fit: cover;
 }
 
 .lobby-screen-tile.is-expanded .lobby-screen-meta {
@@ -2484,13 +2487,6 @@ html[data-compact="1"] .message {
   left: 0;
   right: 0;
   bottom: 0;
-}
-
-.lobby-screen-tile.is-expanded .lobby-screen-hover,
-.lobby-screen-tile.is-expanded:hover .lobby-screen-hover,
-.lobby-screen-tile.is-expanded:focus-within .lobby-screen-hover {
-  opacity: 0;
-  pointer-events: none;
 }
 
 .lobby-screen-tile video {
@@ -2501,34 +2497,20 @@ html[data-compact="1"] .message {
   background: #000;
 }
 
-.lobby-screen-hover {
+.lobby-screen-meta {
   position: absolute;
-  inset: 0 0 3.25rem 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   display: flex;
   align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.45);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.15s ease;
-  z-index: 2;
-}
-
-.lobby-screen-tile:hover .lobby-screen-hover,
-.lobby-screen-tile:focus-within .lobby-screen-hover {
-  opacity: 1;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.55rem 0.7rem;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.85));
+  font-size: 0.88rem;
+  z-index: 4;
   pointer-events: auto;
-}
-
-.lobby-screen-tile:fullscreen .lobby-screen-hover,
-.lobby-screen-tile:fullscreen:hover .lobby-screen-hover,
-.lobby-screen-tile:fullscreen:focus-within .lobby-screen-hover {
-  opacity: 0;
-  pointer-events: none;
-}
-
-.lobby-screen-hover-btn {
-  min-width: 8.5rem;
 }
 
 .lobby-screen-invite {
@@ -2553,22 +2535,6 @@ html[data-compact="1"] .message {
   margin: 0;
   font-weight: 600;
   font-size: 1rem;
-}
-
-.lobby-screen-meta {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.55rem 0.7rem;
-  background: linear-gradient(transparent, rgba(0, 0, 0, 0.85));
-  font-size: 0.88rem;
-  z-index: 4;
-  pointer-events: auto;
 }
 
 .lobby-screen-meta-actions {
@@ -2668,7 +2634,7 @@ html[data-compact="1"] .message {
   width: 100%;
   height: 100%;
   max-height: none;
-  object-fit: contain;
+  object-fit: cover;
 }
 
 .voice-lobby-popout-error {
