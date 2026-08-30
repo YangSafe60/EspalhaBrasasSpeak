@@ -8,6 +8,7 @@ import type { ScreenShareFps, ScreenShareResolution } from "../lib/screenShareQu
 
 export type VoiceHostCommand =
   | { op: "join"; channelId: string }
+  | { op: "join-dm"; dmId: string }
   | { op: "leave" }
   | { op: "toggle-mute" }
   | { op: "toggle-deafen" }
@@ -66,6 +67,7 @@ export type VoiceHostEvent =
       pingMs: number | null;
       cameraOn: boolean;
       voiceChannelId: string | null;
+      dmCallId: string | null;
       muted: boolean;
       deafened: boolean;
       streaming: boolean;

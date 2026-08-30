@@ -13,6 +13,7 @@ function stripScreens(engine: ReturnType<typeof useVoiceEngine>): VoiceHostEvent
     pingMs: engine.pingMs,
     cameraOn: engine.cameraOn,
     voiceChannelId: engine.voiceChannelId,
+    dmCallId: engine.dmCallId,
     muted: engine.muted,
     deafened: engine.deafened,
     streaming: engine.localScreens.length > 0,
@@ -46,6 +47,9 @@ export function VoiceHostApp() {
       switch (cmd.op) {
         case "join":
           void e.join(cmd.channelId);
+          break;
+        case "join-dm":
+          void e.joinDm(cmd.dmId);
           break;
         case "leave":
           void e.leave();
@@ -124,7 +128,8 @@ export function VoiceHostApp() {
     const active =
       engine.connected ||
       engine.joining ||
-      Boolean(engine.voiceChannelId);
+      Boolean(engine.voiceChannelId) ||
+      Boolean(engine.dmCallId);
 
     if (active) {
       wasActiveRef.current = true;
@@ -139,7 +144,6 @@ export function VoiceHostApp() {
     wasActiveRef.current = false;
     void window.electronAPI?.publishVoiceEvent?.(stripScreens(engine));
     stopVoiceHostLobbyRelay();
-    void window.electronAPI?.publishVoiceEvent?.({ op: "host-idle" });
   }, [
     engine.connected,
     engine.joining,
@@ -147,6 +151,7 @@ export function VoiceHostApp() {
     engine.pingMs,
     engine.cameraOn,
     engine.voiceChannelId,
+    engine.dmCallId,
     engine.muted,
     engine.deafened,
     engine.speakingIds,

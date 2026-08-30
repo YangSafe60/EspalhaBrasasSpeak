@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type M
 import logoMark from "../assets/logo-mark.png";
 import { insertAtCursor } from "../lib/emojis";
 import { mediaUrl } from "../lib/mediaUrl";
+import { sameId } from "../lib/serverPerms";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { EmojiPickerButton } from "./EmojiPickerButton";
 import { MessageContent } from "./MessageContent";
@@ -45,11 +46,13 @@ export function DmMessageView() {
   const typing = useAppStore((s) => s.typing);
   const user = useAppStore((s) => s.user);
   const openMiniProfile = useAppStore((s) => s.openMiniProfile);
-  const dmFingerprints = useAppStore((s) => s.dmFingerprints);
   const sendDmMessage = useAppStore((s) => s.sendDmMessage);
   const editDmMessage = useAppStore((s) => s.editDmMessage);
   const deleteDmMessage = useAppStore((s) => s.deleteDmMessage);
   const sendDmTyping = useAppStore((s) => s.sendDmTyping);
+  const requestDmCallJoin = useAppStore((s) => s.requestDmCallJoin);
+  const dmCallByChannel = useAppStore((s) => s.dmCallByChannel);
+  const dmCallId = useAppStore((s) => s.dmCallId);
 
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -62,11 +65,31 @@ export function DmMessageView() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const typingTimer = useRef<number | null>(null);
   const draftRef = useRef<HTMLTextAreaElement>(null);
+  const refocusComposerRef = useRef(false);
+
+  function focusComposer() {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const el = draftRef.current;
+        if (!el) return;
+        el.focus();
+        const pos = el.value.length;
+        el.setSelectionRange(pos, pos);
+      });
+    });
+  }
 
   const channel = dmChannels.find((c) => c.id === activeDmId);
   const messages = activeDmId ? messagesByDm[activeDmId] || [] : [];
   const canSend = Boolean(channel);
-  const fp = activeDmId ? dmFingerprints[activeDmId] : null;
+  const dmCallParticipants = activeDmId ? dmCallByChannel[activeDmId] || [] : [];
+  const selfInCall = Boolean(
+    activeDmId && dmCallId && sameId(dmCallId, activeDmId),
+  );
+  const peerInCall = Boolean(
+    channel &&
+      dmCallParticipants.some((p) => sameId(p.user_id, channel.peer.id)),
+  );
 
   const typers = (activeDmId ? typing[activeDmId] || [] : [])
     .filter((t) => t.expires > Date.now() && t.username !== user?.username)
@@ -74,6 +97,10 @@ export function DmMessageView() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (refocusComposerRef.current) {
+      refocusComposerRef.current = false;
+      focusComposer();
+    }
   }, [messages.length, activeDmId]);
 
   useEffect(() => {
@@ -127,11 +154,13 @@ export function DmMessageView() {
     e?.preventDefault();
     if (!activeDmId || !draft.trim() || !canSend) return;
     setBusy(true);
+    refocusComposerRef.current = true;
     try {
       await sendDmMessage(activeDmId, draft.trim());
       setDraft("");
     } finally {
       setBusy(false);
+      focusComposer();
     }
   }
 
@@ -235,16 +264,46 @@ export function DmMessageView() {
           <h2>@{channel.peer.username}</h2>
           <p className="topic">{channel.peer.display_name}</p>
         </div>
-        <div className="dm-e2e-badge" title={fp ? `Fingerprint: ${fp}` : undefined}>
-          <span className="dm-e2e-lock" aria-hidden>
+        <div className="dm-header-actions">
+          <button
+            type="button"
+            className={`icon-btn dm-call-btn${selfInCall ? " active" : ""}`}
+            title={selfInCall ? "In call" : "Start call"}
+            aria-label={selfInCall ? "In call" : "Start call"}
+            onClick={() => {
+              if (activeDmId) requestDmCallJoin(activeDmId);
+            }}
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden fill="currentColor">
+              <path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.01-.24c1.12.37 2.33.57 3.58.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.85 21 3 13.15 3 3a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.46.57 3.58a1 1 0 0 1-.24 1.01l-2.2 2.2z" />
+            </svg>
+          </button>
+          <span
+            className="dm-e2e-badge"
+            title="End-to-end encrypted"
+            aria-label="End-to-end encrypted"
+          >
             E2E
           </span>
-          <div>
-            <strong>End-to-end encrypted</strong>
-            {fp && <span className="muted dm-fingerprint">{fp}</span>}
-          </div>
         </div>
       </header>
+
+      {peerInCall && !selfInCall ? (
+        <div className="dm-call-banner">
+          <span>
+            <strong>{channel.peer.display_name}</strong> started a call
+          </span>
+          <button
+            type="button"
+            className="btn primary sm"
+            onClick={() => {
+              if (activeDmId) requestDmCallJoin(activeDmId);
+            }}
+          >
+            Join
+          </button>
+        </div>
+      ) : null}
 
       <div className="message-list">
         {messages.map((m, i) => {
@@ -444,13 +503,13 @@ export function DmMessageView() {
             onKeyDown={onKeyDown}
             placeholder={`Message @${channel.peer.username}`}
             rows={1}
-            disabled={busy}
           />
           <EmojiPickerButton onPick={insertEmoji} />
           <button
             type="submit"
             className="btn primary sm"
             disabled={busy || !draft.trim()}
+            onMouseDown={(e) => e.preventDefault()}
           >
             Send
           </button>

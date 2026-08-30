@@ -16,6 +16,7 @@ import type {
   UserAccount,
   UserPublic,
   VoiceStateView,
+  DmCallParticipant,
   WsEvent,
 } from "../types";
 import type { ChannelMuteMap } from "../lib/channelMutePrefs";
@@ -75,6 +76,9 @@ export interface AppState {
   activeServerId: string | null;
   activeChannelId: string | null;
   voiceChannelId: string | null;
+  dmCallId: string | null;
+  /** Who is currently in each DM voice call. */
+  dmCallByChannel: Record<string, DmCallParticipant[]>;
   muted: boolean;
   deafened: boolean;
   streaming: boolean;
@@ -88,6 +92,8 @@ export interface AppState {
   pendingComposerInsert: { channelId: string; text: string } | null;
   /** Join voice from member menu "Start call" (consumed by App). */
   pendingVoiceJoinChannelId: string | null;
+  /** Join a private DM call (consumed by App). */
+  pendingDmCallJoinId: string | null;
   /** Shown when a friend invites you into a server. */
   pendingServerInvite: {
     server: Server;
@@ -126,6 +132,8 @@ export interface AppState {
   clearPendingComposerInsert: () => void;
   requestVoiceJoin: (channelId: string) => void;
   clearPendingVoiceJoin: () => void;
+  requestDmCallJoin: (dmId: string) => void;
+  clearPendingDmCallJoin: () => void;
   clearPendingServerInvite: () => void;
   clearPendingChannelInvite: () => void;
   muteChannel: (channelId: string, durationMs: number | null) => void;
@@ -135,6 +143,7 @@ export interface AppState {
   setActiveChannel: (id: string | null) => void;
   setVoiceLocal: (partial: {
     voiceChannelId?: string | null;
+    dmCallId?: string | null;
     muted?: boolean;
     deafened?: boolean;
     streaming?: boolean;
@@ -275,6 +284,8 @@ export interface AppState {
   /** Open/create a DM channel without changing the current view. Returns dm id. */
   ensureDmWithPeer: (peerId: string) => Promise<string | null>;
   openDmWithPeer: (peerId: string) => Promise<void>;
+  /** Open the DM with a peer and start a private 1:1 voice call. */
+  startDmCallWithPeer: (peerId: string) => Promise<void>;
   loadDmMessages: (dmId: string) => Promise<void>;
   sendDmMessage: (dmId: string, content: string) => Promise<void>;
   editDmMessage: (messageId: string, dmId: string, content: string) => Promise<void>;

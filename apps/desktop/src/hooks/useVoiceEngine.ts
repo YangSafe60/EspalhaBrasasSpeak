@@ -98,6 +98,7 @@ function unregisterMainScreenTrack(trackSid: string) {
  */
 export function useVoiceEngine() {
   const voiceChannelId = useAppStore((s) => s.voiceChannelId);
+  const dmCallId = useAppStore((s) => s.dmCallId);
   const muted = useAppStore((s) => s.muted);
   const deafened = useAppStore((s) => s.deafened);
   const setVoiceLocal = useAppStore((s) => s.setVoiceLocal);
@@ -106,6 +107,10 @@ export function useVoiceEngine() {
   /** Bumps when leaving or starting a new join — invalidates delayed join work. */
   const joinGenerationRef = useRef(0);
   const voiceChannelIdRef = useRef<string | null>(voiceChannelId);
+  const dmCallIdRef = useRef<string | null>(dmCallId);
+  const activeSessionRef = useRef<{ kind: "channel" | "dm"; id: string } | null>(
+    null,
+  );
   const mutedRef = useRef(muted);
   const deafenedRef = useRef(deafened);
   const switchingRef = useRef(false);
@@ -146,6 +151,26 @@ export function useVoiceEngine() {
   const joinPullTimersRef = useRef<number[]>([]);
   const leavingRef = useRef(false);
 
+  const syncSessionState = useCallback(
+    async (body: Record<string, unknown>) => {
+      const session = activeSessionRef.current;
+      if (!session) return;
+      try {
+        if (session.kind === "channel") {
+          await api("/api/voice/state", { method: "PUT", body });
+        } else {
+          await api(`/api/dms/${session.id}/call/state`, {
+            method: "PUT",
+            body,
+          });
+        }
+      } catch {
+        /* best effort */
+      }
+    },
+    [],
+  );
+
   const clearJoinPullTimers = useCallback(() => {
     for (const id of joinPullTimersRef.current) {
       window.clearTimeout(id);
@@ -154,6 +179,14 @@ export function useVoiceEngine() {
   }, []);
 
   voiceChannelIdRef.current = voiceChannelId;
+  dmCallIdRef.current = dmCallId;
+  if (voiceChannelId) {
+    activeSessionRef.current = { kind: "channel", id: voiceChannelId };
+  } else if (dmCallId) {
+    activeSessionRef.current = { kind: "dm", id: dmCallId };
+  } else if (!roomRef.current) {
+    activeSessionRef.current = null;
+  }
   mutedRef.current = muted;
   deafenedRef.current = deafened;
   activeShareIdsRef.current = activeShareIds;
@@ -547,16 +580,9 @@ export function useVoiceEngine() {
       }
       setLocalScreens([]);
       setVoiceLocal({ streaming: false });
-      try {
-        await api("/api/voice/state", {
-          method: "PUT",
-          body: { streaming: false },
-        });
-      } catch {
-        /* best effort */
-      }
+      void syncSessionState({ streaming: false });
     },
-    [setVoiceLocal],
+    [setVoiceLocal, syncSessionState],
   );
 
   const republishScreenTracks = useCallback(
@@ -591,17 +617,10 @@ export function useVoiceEngine() {
       syncLocalScreen(room);
       refreshScreens(room);
       if (tracks.length) {
-        try {
-          await api("/api/voice/state", {
-            method: "PUT",
-            body: { streaming: true },
-          });
-        } catch {
-          /* best effort */
-        }
+        void syncSessionState({ streaming: true });
       }
     },
-    [refreshScreens, syncLocalScreen],
+    [refreshScreens, syncLocalScreen, syncSessionState],
   );
 
   const teardownRoom = useCallback(
@@ -624,7 +643,9 @@ export function useVoiceEngine() {
 
       // Restore default process/window name immediately (before async teardown).
       void getElectronAPI()?.setWindowTitle?.("Espalha Brasas");
-      setVoiceLocal({ voiceChannelId: null, streaming: false });
+      const session = activeSessionRef.current;
+      activeSessionRef.current = null;
+      setVoiceLocal({ voiceChannelId: null, dmCallId: null, streaming: false });
 
       const room = roomRef.current;
       const wasInVoice = !!room;
@@ -657,15 +678,25 @@ export function useVoiceEngine() {
       releaseLivekitModule();
       window.setTimeout(() => requestRendererMemoryTrim(), 2500);
       try {
-        await api("/api/voice/state", {
-          method: "PUT",
-          body: { channel_id: null, streaming: false },
-        });
+        if (session?.kind === "dm") {
+          await api(`/api/dms/${session.id}/call/state`, {
+            method: "PUT",
+            body: { active: false, streaming: false },
+          });
+        } else {
+          await api("/api/voice/state", {
+            method: "PUT",
+            body: { channel_id: null, streaming: false },
+          });
+        }
       } catch {
         /* best effort */
       }
     } finally {
       leavingRef.current = false;
+      if (isVoiceHostWindow()) {
+        void getElectronAPI()?.publishVoiceEvent?.({ op: "host-idle" });
+      }
     }
   }, [
     clearJoinPullTimers,
@@ -676,8 +707,12 @@ export function useVoiceEngine() {
   ]);
 
   const join = useCallback(
-    async (channelId: string) => {
-      if (voiceChannelIdRef.current === channelId && roomRef.current) {
+    async (targetId: string, mode: "channel" | "dm" = "channel") => {
+      const sameSession =
+        activeSessionRef.current?.kind === mode &&
+        activeSessionRef.current?.id === targetId &&
+        roomRef.current;
+      if (sameSession) {
         return;
       }
 
@@ -685,9 +720,9 @@ export function useVoiceEngine() {
       setJoining(true);
       setError(null);
 
-      const previousChannel = voiceChannelIdRef.current;
+      const previousId = activeSessionRef.current?.id;
       const switching =
-        !!roomRef.current && !!previousChannel && previousChannel !== channelId;
+        !!roomRef.current && !!previousId && previousId !== targetId;
 
       let preservedScreen: { track: LocalTrack; name?: string }[] = [];
 
@@ -735,7 +770,9 @@ export function useVoiceEngine() {
         }
 
         const creds = await api<VoiceTokenResponse>(
-          `/api/channels/${channelId}/voice/token`,
+          mode === "channel"
+            ? `/api/channels/${targetId}/voice/token`
+            : `/api/dms/${targetId}/call/token`,
           { method: "POST" },
         );
         if (joinGenerationRef.current !== joinGen) {
@@ -941,6 +978,13 @@ export function useVoiceEngine() {
           }
         });
 
+        activeSessionRef.current = { kind: mode, id: targetId };
+        if (mode === "channel") {
+          setVoiceLocal({ voiceChannelId: targetId, dmCallId: null });
+        } else {
+          setVoiceLocal({ dmCallId: targetId, voiceChannelId: null });
+        }
+
         // autoSubscribe lives on connect options (not Room ctor) — keep screen off by default.
         await room.connect(livekitUrl, creds.token, {
           autoSubscribe: false,
@@ -995,10 +1039,19 @@ export function useVoiceEngine() {
 
         setConnected(true);
         void getElectronAPI()?.setBackgroundThrottling?.(false);
-        setVoiceLocal({
-          voiceChannelId: channelId,
-          streaming: preservedScreen.length > 0,
-        });
+        setVoiceLocal(
+          mode === "channel"
+            ? {
+                voiceChannelId: targetId,
+                dmCallId: null,
+                streaming: preservedScreen.length > 0,
+              }
+            : {
+                dmCallId: targetId,
+                voiceChannelId: null,
+                streaming: preservedScreen.length > 0,
+              },
+        );
         refreshScreens(room);
         if (!deafenedRef.current && !isVoiceHostWindow()) {
           playVoiceJoinSound();
@@ -1035,6 +1088,8 @@ export function useVoiceEngine() {
       teardownRoom,
     ],
   );
+
+  const joinDm = useCallback((dmId: string) => join(dmId, "dm"), [join]);
 
   useEffect(() => {
     const room = roomRef.current;
@@ -1076,11 +1131,8 @@ export function useVoiceEngine() {
         }
       });
     });
-    void api("/api/voice/state", {
-      method: "PUT",
-      body: { muted, deafened },
-    }).catch(() => undefined);
-  }, [muted, deafened, connected]);
+    void syncSessionState({ muted, deafened });
+  }, [muted, deafened, connected, syncSessionState]);
 
   const applyUserMic = useCallback((userId: string, pref: UserVoicePref) => {
     const room = roomRef.current;
@@ -1141,10 +1193,10 @@ export function useVoiceEngine() {
 
   // Server/WS can clear voice membership without going through the disconnect button.
   useEffect(() => {
-    if (voiceChannelId != null || joining) return;
+    if (voiceChannelId != null || dmCallId != null || joining) return;
     if (!roomRef.current) return;
     void leave();
-  }, [voiceChannelId, joining, leave]);
+  }, [voiceChannelId, dmCallId, joining, leave]);
 
   const toggleMute = useCallback(async () => {
     const state = useAppStore.getState();
@@ -1269,10 +1321,7 @@ export function useVoiceEngine() {
 
         syncLocalScreen(room);
         refreshScreens(room);
-        await api("/api/voice/state", {
-          method: "PUT",
-          body: { streaming: true },
-        });
+        await syncSessionState({ streaming: true });
         setPickerOpen(false);
         await focusMainWindow();
       } catch (e) {
@@ -1361,10 +1410,7 @@ export function useVoiceEngine() {
         }
         syncLocalScreen(room);
         refreshScreens(room);
-        await api("/api/voice/state", {
-          method: "PUT",
-          body: { streaming: true },
-        });
+        await syncSessionState({ streaming: true });
         setPickerOpen(false);
         await focusMainWindow();
       } catch (e) {
@@ -1500,10 +1546,7 @@ export function useVoiceEngine() {
             }
           }
         }
-        await api("/api/voice/state", {
-          method: "PUT",
-          body: { streaming: false },
-        }).catch(() => undefined);
+        await syncSessionState({ streaming: false }).catch(() => undefined);
         setVoiceLocal({ streaming: false });
       }
 
@@ -1515,17 +1558,26 @@ export function useVoiceEngine() {
 
   useEffect(() => {
     const clearPresenceKeepalive = () => {
-      if (!voiceChannelIdRef.current) return;
+      const session = activeSessionRef.current;
+      if (!session) return;
       const token = getAccessToken();
       if (!token) return;
       try {
-        void fetch(`${getApiBase()}/api/voice/state`, {
+        const url =
+          session.kind === "dm"
+            ? `${getApiBase()}/api/dms/${session.id}/call/state`
+            : `${getApiBase()}/api/voice/state`;
+        const body =
+          session.kind === "dm"
+            ? JSON.stringify({ active: false, streaming: false })
+            : JSON.stringify({ channel_id: null, streaming: false });
+        void fetch(url, {
           method: "PUT",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ channel_id: null, streaming: false }),
+          body,
           keepalive: true,
         });
       } catch {
@@ -1565,6 +1617,7 @@ export function useVoiceEngine() {
   return {
     roomRef,
     voiceChannelId,
+    dmCallId,
     connected,
     joining,
     error,
@@ -1581,6 +1634,7 @@ export function useVoiceEngine() {
     activeShareIds,
     isDesktop: isDesktopApp(),
     join,
+    joinDm,
     leave,
     toggleMute,
     toggleDeafen,

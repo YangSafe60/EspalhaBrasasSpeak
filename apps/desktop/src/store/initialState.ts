@@ -33,6 +33,8 @@ export function createInitialState() {
     activeServerId: null,
     activeChannelId: null,
     voiceChannelId: null,
+    dmCallId: null as string | null,
+    dmCallByChannel: {} as Record<string, import("../types").DmCallParticipant[]>,
     muted: false,
     deafened: false,
     streaming: false,
@@ -46,6 +48,7 @@ export function createInitialState() {
       text: string;
     } | null,
     pendingVoiceJoinChannelId: null as string | null,
+    pendingDmCallJoinId: null as string | null,
     pendingServerInvite: null,
     pendingChannelInvite: null,
     channelMutes: loadChannelMutes(),

@@ -133,9 +133,9 @@ pub async fn token(
         .unwrap_or(false);
 
     sqlx::query(
-        r#"INSERT INTO voice_states (user_id, channel_id, muted, deafened, streaming, server_muted, server_deafened, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(user_id) DO UPDATE SET channel_id = excluded.channel_id, updated_at = excluded.updated_at"#,
+        r#"INSERT INTO voice_states (user_id, channel_id, dm_channel_id, muted, deafened, streaming, server_muted, server_deafened, updated_at)
+           VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(user_id) DO UPDATE SET channel_id = excluded.channel_id, dm_channel_id = NULL, updated_at = excluded.updated_at"#,
     )
     .bind(user.id.to_string())
     .bind(id.to_string())
@@ -176,13 +176,15 @@ pub async fn clear_stale_presence(state: &AppState, user_id: Uuid) {
     #[derive(sqlx::FromRow)]
     struct Row {
         channel_id: Option<String>,
+        dm_channel_id: Option<String>,
         muted: i64,
         deafened: i64,
+        streaming: i64,
         server_muted: i64,
         server_deafened: i64,
     }
     let Ok(Some(existing)) = sqlx::query_as::<_, Row>(
-        "SELECT channel_id, muted, deafened, server_muted, server_deafened FROM voice_states WHERE user_id = ?",
+        "SELECT channel_id, dm_channel_id, muted, deafened, streaming, server_muted, server_deafened FROM voice_states WHERE user_id = ?",
     )
     .bind(user_id.to_string())
     .fetch_optional(&state.db)
@@ -191,18 +193,23 @@ pub async fn clear_stale_presence(state: &AppState, user_id: Uuid) {
         return;
     };
 
-    let Some(prev) = existing
+    let prev_channel = existing
         .channel_id
         .as_ref()
-        .and_then(|c| Uuid::parse_str(c).ok())
-    else {
+        .and_then(|c| Uuid::parse_str(c).ok());
+    let prev_dm = existing
+        .dm_channel_id
+        .as_ref()
+        .and_then(|c| Uuid::parse_str(c).ok());
+
+    if prev_channel.is_none() && prev_dm.is_none() {
         return;
-    };
+    }
 
     let now = Utc::now().to_rfc3339();
     let _ = sqlx::query(
         r#"UPDATE voice_states
-           SET channel_id = NULL, streaming = 0, updated_at = ?
+           SET channel_id = NULL, dm_channel_id = NULL, streaming = 0, updated_at = ?
            WHERE user_id = ?"#,
     )
     .bind(&now)
@@ -210,17 +217,43 @@ pub async fn clear_stale_presence(state: &AppState, user_id: Uuid) {
     .execute(&state.db)
     .await;
 
-    if let Ok(channel) = db::get_channel(&state.db, prev).await {
-        state.hub.broadcast_server(
-            channel.server_id,
-            &WsEvent::VoiceStateUpdate {
-                channel_id: None,
+    if let Some(prev) = prev_channel {
+        if let Ok(channel) = db::get_channel(&state.db, prev).await {
+            state.hub.broadcast_server(
+                channel.server_id,
+                &WsEvent::VoiceStateUpdate {
+                    channel_id: None,
+                    user_id,
+                    muted: existing.muted != 0,
+                    deafened: existing.deafened != 0,
+                    streaming: false,
+                    server_muted: existing.server_muted != 0,
+                    server_deafened: existing.server_deafened != 0,
+                },
+            );
+        }
+    }
+
+    if let Some(dm_id) = prev_dm {
+        let participants: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT user_id FROM dm_participants WHERE dm_channel_id = ?",
+        )
+        .bind(dm_id.to_string())
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|s: String| Uuid::parse_str(&s).ok())
+        .collect();
+        state.hub.broadcast_users(
+            &participants,
+            &WsEvent::DmCallUpdate {
+                dm_channel_id: dm_id,
                 user_id,
+                active: false,
                 muted: existing.muted != 0,
                 deafened: existing.deafened != 0,
                 streaming: false,
-                server_muted: existing.server_muted != 0,
-                server_deafened: existing.server_deafened != 0,
             },
         );
     }

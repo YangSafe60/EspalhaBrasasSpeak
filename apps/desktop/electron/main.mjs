@@ -63,6 +63,10 @@ function destroyVoiceHost() {
   voiceHostReady = false;
   pendingVoiceCommands.length = 0;
   if (voiceHostWindow && !voiceHostWindow.isDestroyed()) {
+    const wc = voiceHostWindow.webContents;
+    if (wc && !wc.isDestroyed()) {
+      wc.setBackgroundThrottling(true);
+    }
     voiceHostWindow.destroy();
   }
   voiceHostWindow = null;

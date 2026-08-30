@@ -7,13 +7,23 @@ const DEFAULT_TITLE = "Espalha Brasas";
 /** While connected to voice, rename the desktop process/window to "channel | server". */
 export function useVoiceWindowTitle(enabled: boolean) {
   const voiceChannelId = useAppStore((s) => s.voiceChannelId);
+  const dmCallId = useAppStore((s) => s.dmCallId);
   const channelsByServer = useAppStore((s) => s.channelsByServer);
+  const dmChannels = useAppStore((s) => s.dmChannels);
   const servers = useAppStore((s) => s.servers);
 
   useEffect(() => {
     if (!enabled) return;
     const desktop = getElectronAPI();
     if (!desktop?.setWindowTitle) return;
+
+    if (dmCallId) {
+      const dm = dmChannels.find((d) => d.id === dmCallId);
+      void desktop.setWindowTitle(
+        dm ? `${dm.peer.display_name} | Call` : "Private call",
+      );
+      return;
+    }
 
     if (!voiceChannelId) {
       void desktop.setWindowTitle(DEFAULT_TITLE);
@@ -33,5 +43,5 @@ export function useVoiceWindowTitle(enabled: boolean) {
         : channel?.name || DEFAULT_TITLE;
 
     void desktop.setWindowTitle(title);
-  }, [enabled, voiceChannelId, channelsByServer, servers]);
+  }, [enabled, voiceChannelId, dmCallId, channelsByServer, dmChannels, servers]);
 }

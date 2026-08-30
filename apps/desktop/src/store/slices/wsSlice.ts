@@ -644,6 +644,43 @@ export const createWsSlice: AppStoreSlice = (set, get) => ({
         });
         break;
       }
+      case "dm_call_update": {
+        set((s) => {
+          const list = s.dmCallByChannel[event.dm_channel_id] || [];
+          const others = list.filter((p) => !sameId(p.user_id, event.user_id));
+          const next = event.active
+            ? [
+                ...others,
+                {
+                  user_id: event.user_id,
+                  muted: event.muted,
+                  deafened: event.deafened,
+                  streaming: event.streaming,
+                },
+              ]
+            : others;
+          let local: Partial<typeof s> = {};
+          if (s.user?.id && sameId(s.user.id, event.user_id)) {
+            if (!event.active) {
+              local = { dmCallId: null, streaming: false };
+            } else if (s.dmCallId) {
+              local = {
+                muted: event.muted,
+                deafened: event.deafened,
+                streaming: event.streaming,
+              };
+            }
+          }
+          return {
+            dmCallByChannel: {
+              ...s.dmCallByChannel,
+              [event.dm_channel_id]: next,
+            },
+            ...local,
+          };
+        });
+        break;
+      }
       default:
         break;
     }

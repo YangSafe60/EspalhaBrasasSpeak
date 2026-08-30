@@ -37,6 +37,7 @@ export const createAuthSlice: AppStoreSlice = (set, get) => ({
       }
       set({
         voiceChannelId: null,
+        dmCallId: null,
         streaming: false,
         voiceStates: get().voiceStates.filter((v) => v.user_id !== account.id),
       });

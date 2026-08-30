@@ -252,6 +252,13 @@ export interface VoiceStateView {
   server_deafened?: boolean;
 }
 
+export interface DmCallParticipant {
+  user_id: string;
+  muted: boolean;
+  deafened: boolean;
+  streaming: boolean;
+}
+
 export interface UploadResponse {
   id: string;
   url: string;
@@ -328,6 +335,15 @@ export type WsEvent =
       dm_channel_id: string;
       user_id: string;
       username: string;
+    }
+  | {
+      type: "dm_call_update";
+      dm_channel_id: string;
+      user_id: string;
+      active: boolean;
+      muted: boolean;
+      deafened: boolean;
+      streaming: boolean;
     };
 
 export const Perm = {

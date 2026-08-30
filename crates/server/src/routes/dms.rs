@@ -1,14 +1,16 @@
 use crate::auth::AuthUser;
 use crate::db;
 use crate::error::{AppError, AppResult};
+use crate::livekit::{dm_call_room_name, mint_participant_token};
 use crate::routes::friends::{ensure_dm_with_peer, is_blocked, load_dm_for_user};
+use crate::routes::voice::VoiceTokenResponse;
 use crate::state::AppState;
 use axum::{
     extract::{Path, Query, State},
     Json,
 };
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use speakapp_shared::{DmChannel, DmMessage, WsEvent};
 use uuid::Uuid;
 
@@ -490,4 +492,209 @@ pub async fn typing(
         },
     );
     Ok(Json(()))
+}
+
+#[derive(Deserialize)]
+pub struct DmCallStateReq {
+    /// `false` leaves the call; omit to stay connected.
+    pub active: Option<bool>,
+    pub muted: Option<bool>,
+    pub deafened: Option<bool>,
+    pub streaming: Option<bool>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct DmCallStateView {
+    pub user_id: Uuid,
+    pub dm_channel_id: Option<Uuid>,
+    pub muted: bool,
+    pub deafened: bool,
+    pub streaming: bool,
+}
+
+async fn broadcast_dm_call(
+    state: &AppState,
+    dm_id: Uuid,
+    user_id: Uuid,
+    active: bool,
+    muted: bool,
+    deafened: bool,
+    streaming: bool,
+) -> AppResult<()> {
+    let participants = dm_participant_ids(&state.db, dm_id).await?;
+    state.hub.broadcast_users(
+        &participants,
+        &WsEvent::DmCallUpdate {
+            dm_channel_id: dm_id,
+            user_id,
+            active,
+            muted,
+            deafened,
+            streaming,
+        },
+    );
+    Ok(())
+}
+
+pub async fn call_token(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<VoiceTokenResponse>> {
+    require_participant(&state.db, id, user.id).await?;
+    let peer = peer_of_dm(&state.db, id, user.id).await?;
+    require_can_message_peer(&state.db, user.id, peer).await?;
+
+    let profile = db::user_public(&state.db, user.id).await?;
+    let room = dm_call_room_name(id);
+    let token = mint_participant_token(
+        &state.config.livekit_api_key,
+        &state.config.livekit_api_secret,
+        &room,
+        user.id,
+        &profile.display_name,
+        true,
+    )?;
+
+    let now = Utc::now().to_rfc3339();
+    #[derive(sqlx::FromRow)]
+    struct Prior {
+        muted: i64,
+        deafened: i64,
+        streaming: i64,
+    }
+    let prior = sqlx::query_as::<_, Prior>(
+        "SELECT muted, deafened, streaming FROM voice_states WHERE user_id = ?",
+    )
+    .bind(user.id.to_string())
+    .fetch_optional(&state.db)
+    .await?;
+
+    let muted = prior.as_ref().map(|p| p.muted != 0).unwrap_or(false);
+    let deafened = prior.as_ref().map(|p| p.deafened != 0).unwrap_or(false);
+    let streaming = prior.as_ref().map(|p| p.streaming != 0).unwrap_or(false);
+
+    sqlx::query(
+        r#"INSERT INTO voice_states (user_id, channel_id, dm_channel_id, muted, deafened, streaming, server_muted, server_deafened, updated_at)
+           VALUES (?, NULL, ?, ?, ?, ?, 0, 0, ?)
+           ON CONFLICT(user_id) DO UPDATE SET
+             channel_id = NULL,
+             dm_channel_id = excluded.dm_channel_id,
+             updated_at = excluded.updated_at"#,
+    )
+    .bind(user.id.to_string())
+    .bind(id.to_string())
+    .bind(muted as i64)
+    .bind(deafened as i64)
+    .bind(streaming as i64)
+    .bind(&now)
+    .execute(&state.db)
+    .await?;
+
+    broadcast_dm_call(&state, id, user.id, true, muted, deafened, streaming).await?;
+
+    Ok(Json(VoiceTokenResponse {
+        token,
+        url: state.config.client_livekit_url(),
+        room,
+    }))
+}
+
+pub async fn call_state(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<DmCallStateReq>,
+) -> AppResult<Json<DmCallStateView>> {
+    require_participant(&state.db, id, user.id).await?;
+    let peer = peer_of_dm(&state.db, id, user.id).await?;
+    require_can_message_peer(&state.db, user.id, peer).await?;
+
+    let now = Utc::now().to_rfc3339();
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        dm_channel_id: Option<String>,
+        muted: i64,
+        deafened: i64,
+        streaming: i64,
+    }
+    let existing = sqlx::query_as::<_, Row>(
+        "SELECT dm_channel_id, muted, deafened, streaming FROM voice_states WHERE user_id = ?",
+    )
+    .bind(user.id.to_string())
+    .fetch_optional(&state.db)
+    .await?;
+
+    let in_this_call = existing
+        .as_ref()
+        .and_then(|e| e.dm_channel_id.as_ref())
+        .and_then(|d| Uuid::parse_str(d).ok())
+        == Some(id);
+
+    if body.active == Some(false) {
+        let muted = existing.as_ref().map(|e| e.muted != 0).unwrap_or(false);
+        let deafened = existing.as_ref().map(|e| e.deafened != 0).unwrap_or(false);
+        sqlx::query(
+            r#"INSERT INTO voice_states (user_id, channel_id, dm_channel_id, muted, deafened, streaming, server_muted, server_deafened, updated_at)
+               VALUES (?, NULL, NULL, ?, ?, 0, 0, 0, ?)
+               ON CONFLICT(user_id) DO UPDATE SET
+                 dm_channel_id = NULL,
+                 streaming = 0,
+                 updated_at = excluded.updated_at"#,
+        )
+        .bind(user.id.to_string())
+        .bind(muted as i64)
+        .bind(deafened as i64)
+        .bind(&now)
+        .execute(&state.db)
+        .await?;
+
+        broadcast_dm_call(&state, id, user.id, false, muted, deafened, false).await?;
+
+        return Ok(Json(DmCallStateView {
+            user_id: user.id,
+            dm_channel_id: None,
+            muted,
+            deafened,
+            streaming: false,
+        }));
+    }
+
+    if !in_this_call {
+        return Err(AppError::BadRequest("not in this DM call".into()));
+    }
+
+    let muted = body
+        .muted
+        .unwrap_or(existing.as_ref().map(|e| e.muted != 0).unwrap_or(false));
+    let deafened = body
+        .deafened
+        .unwrap_or(existing.as_ref().map(|e| e.deafened != 0).unwrap_or(false));
+    let streaming = body
+        .streaming
+        .unwrap_or(existing.as_ref().map(|e| e.streaming != 0).unwrap_or(false));
+
+    sqlx::query(
+        r#"UPDATE voice_states
+           SET muted = ?, deafened = ?, streaming = ?, updated_at = ?
+           WHERE user_id = ? AND dm_channel_id = ?"#,
+    )
+    .bind(muted as i64)
+    .bind(deafened as i64)
+    .bind(streaming as i64)
+    .bind(&now)
+    .bind(user.id.to_string())
+    .bind(id.to_string())
+    .execute(&state.db)
+    .await?;
+
+    broadcast_dm_call(&state, id, user.id, true, muted, deafened, streaming).await?;
+
+    Ok(Json(DmCallStateView {
+        user_id: user.id,
+        dm_channel_id: Some(id),
+        muted,
+        deafened,
+        streaming,
+    }))
 }

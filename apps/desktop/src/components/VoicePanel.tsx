@@ -86,6 +86,7 @@ function IconSignal() {
 
 export function VoicePanel({ voice }: Props) {
   const channelsByServer = useAppStore((s) => s.channelsByServer);
+  const dmChannels = useAppStore((s) => s.dmChannels);
   const servers = useAppStore((s) => s.servers);
   const user = useAppStore((s) => s.user);
   const activeServerId = useAppStore((s) => s.activeServerId);
@@ -106,16 +107,27 @@ export function VoicePanel({ voice }: Props) {
   const channel = Object.values(channelsByServer)
     .flat()
     .find((c) => c.id === voice.voiceChannelId);
+  const dmCall = voice.dmCallId
+    ? dmChannels.find((d) => sameId(d.id, voice.dmCallId))
+    : undefined;
 
   const server = servers.find((s) => sameId(s.id, activeServerId));
   const inVoice = Boolean(
-    (voice.voiceChannelId || voice.joining) && channel,
+    (voice.voiceChannelId || voice.dmCallId || voice.joining) &&
+      (channel || dmCall || voice.joining),
   );
-  const connectionSubtitle = channel
-    ? server
-      ? `${server.name} / ${channel.name}`
-      : channel.name
-    : "";
+  const connectionSubtitle = dmCall
+    ? `${dmCall.peer.display_name} · Private call`
+    : channel
+      ? server
+        ? `${server.name} / ${channel.name}`
+        : channel.name
+      : "";
+  const connectionTitle = dmCall
+    ? "Private call"
+    : channel
+      ? "Open voice channel"
+      : "";
 
   useLayoutEffect(() => {
     if (!liveMenuOpen || !shareBtnRef.current) {
@@ -163,14 +175,16 @@ export function VoicePanel({ voice }: Props) {
 
   return (
     <div className="user-voice-dock">
-      {inVoice && channel && (
+      {inVoice && (channel || dmCall) && (
         <div className="voice-connection-dock">
           <div className="voice-connection-bar">
             <button
               type="button"
               className="voice-connection-info"
-              title="Open voice channel"
-              onClick={() => void selectChannel(channel.id)}
+              title={connectionTitle}
+              onClick={() => {
+                if (channel) void selectChannel(channel.id);
+              }}
             >
               <span
                 className={`voice-signal ${voice.connected ? "on" : ""}${signalHover ? " show-ping" : ""}`}

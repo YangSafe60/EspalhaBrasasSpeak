@@ -57,6 +57,8 @@ export const createUiSlice: AppStoreSlice = (set, get) => ({
   requestVoiceJoin: (channelId) =>
     set({ pendingVoiceJoinChannelId: channelId }),
   clearPendingVoiceJoin: () => set({ pendingVoiceJoinChannelId: null }),
+  requestDmCallJoin: (dmId) => set({ pendingDmCallJoinId: dmId }),
+  clearPendingDmCallJoin: () => set({ pendingDmCallJoinId: null }),
   clearPendingServerInvite: () => set({ pendingServerInvite: null }),
   clearPendingChannelInvite: () => set({ pendingChannelInvite: null }),
   muteChannel: (channelId, durationMs) => {

@@ -421,6 +421,15 @@ pub enum WsEvent {
         user_id: Uuid,
         username: String,
     },
+    /// Peer joined or left a private DM voice call.
+    DmCallUpdate {
+        dm_channel_id: Uuid,
+        user_id: Uuid,
+        active: bool,
+        muted: bool,
+        deafened: bool,
+        streaming: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -63,3 +63,7 @@ pub fn mint_participant_token(
 pub fn voice_room_name(channel_id: Uuid) -> String {
     format!("voice_{channel_id}")
 }
+
+pub fn dm_call_room_name(dm_channel_id: Uuid) -> String {
+    format!("dm_call_{dm_channel_id}")
+}

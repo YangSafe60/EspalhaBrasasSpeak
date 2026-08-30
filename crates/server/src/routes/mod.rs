@@ -146,6 +146,8 @@ pub fn router(state: AppState) -> Router {
             patch(dms::update_message).delete(dms::delete_message),
         )
         .route("/api/dms/{id}/typing", post(dms::typing))
+        .route("/api/dms/{id}/call/token", post(dms::call_token))
+        .route("/api/dms/{id}/call/state", put(dms::call_state))
         .route("/api/servers", get(servers::list).post(servers::create))
         .route(
             "/api/servers/{id}",

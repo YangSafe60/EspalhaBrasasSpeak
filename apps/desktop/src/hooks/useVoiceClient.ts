@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ScreenShareFps, ScreenShareResolution } from "../lib/screenShareQuality";
 import { loadScreenShareQuality } from "../lib/screenShareQuality";
 import { isDesktopApp } from "../lib/desktop";
+import { api } from "../api/client";
 import { ensureScreenBridgeHost, teardownScreenBridgeForVoiceLeave } from "../lib/screenBridge";
 import { closeAllScreenPopouts } from "../lib/popout";
+import { requestRendererMemoryTrim } from "../lib/voiceCleanup";
 import { playVoiceJoinSound, playVoiceLeaveSound } from "../lib/voiceSounds";
 import { useAppStore } from "../store/appStore";
 import type { VoiceHostCommand, VoiceHostEvent } from "../voice/voiceIpc";
@@ -31,6 +33,7 @@ export function useVoiceClient() {
   const deafened = useAppStore((s) => s.deafened);
 
   const [voiceChannelId, setVoiceChannelId] = useState<string | null>(null);
+  const [dmCallId, setDmCallId] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -52,6 +55,42 @@ export function useVoiceClient() {
   const wasConnectedRef = useRef(false);
   const joiningRef = useRef(false);
   joiningRef.current = joining;
+  const leaveFallbackTimerRef = useRef<number | null>(null);
+
+  const resetVoiceSession = useCallback(() => {
+    const userId = useAppStore.getState().user?.id;
+    setConnected(false);
+    setJoining(false);
+    setError(null);
+    setPingMs(null);
+    setCameraOn(false);
+    setVoiceChannelId(null);
+    setDmCallId(null);
+    setRemoteScreens([]);
+    setLocalScreens([]);
+    setSpeakingIds([]);
+    setShareAudioByTrack({});
+    setPickerOpen(false);
+    setPickerBusy(false);
+    setActiveShareIds([]);
+    setLobbyFrames({});
+    hostConnectedRef.current = false;
+    wasConnectedRef.current = false;
+    setVoiceLocal({ voiceChannelId: null, dmCallId: null, streaming: false });
+    if (userId) {
+      useAppStore.setState((s) => ({
+        voiceStates: s.voiceStates.map((v) =>
+          v.user_id === userId
+            ? { ...v, channel_id: null, streaming: false }
+            : v,
+        ),
+      }));
+    }
+    teardownScreenBridgeForVoiceLeave();
+    void closeAllScreenPopouts();
+    void window.electronAPI?.setWindowTitle?.(DEFAULT_TITLE);
+    requestRendererMemoryTrim();
+  }, [setVoiceLocal]);
 
   const syncLocalToHost = useCallback(() => {
     const s = useAppStore.getState();
@@ -70,6 +109,7 @@ export function useVoiceClient() {
         !evt.connected &&
         !evt.joining &&
         !evt.voiceChannelId &&
+        !evt.dmCallId &&
         !evt.error &&
         !hostConnectedRef.current &&
         !wasConnectedRef.current
@@ -84,6 +124,7 @@ export function useVoiceClient() {
       setPingMs(evt.pingMs);
       setCameraOn(evt.cameraOn);
       setVoiceChannelId(evt.voiceChannelId);
+      setDmCallId(evt.dmCallId);
       setSpeakingIds(evt.speakingIds);
       setShareAudioByTrack(evt.shareAudioByTrack);
       setPickerOpen(evt.pickerOpen);
@@ -91,6 +132,7 @@ export function useVoiceClient() {
       setActiveShareIds(evt.activeShareIds);
       setVoiceLocal({
         voiceChannelId: evt.voiceChannelId,
+        dmCallId: evt.dmCallId,
         streaming: evt.streaming,
         muted: evt.muted,
         deafened: evt.deafened,
@@ -103,7 +145,7 @@ export function useVoiceClient() {
         playVoiceLeaveSound();
       }
       wasConnectedRef.current = evt.connected;
-      if (!evt.voiceChannelId && !evt.joining) {
+      if (!evt.voiceChannelId && !evt.dmCallId && !evt.joining) {
         setLobbyFrames({});
         hostConnectedRef.current = false;
         teardownScreenBridgeForVoiceLeave();
@@ -120,8 +162,9 @@ export function useVoiceClient() {
     syncLocalToHost();
     return useAppStore.subscribe((state, prev) => {
       if (
-        prev.voiceChannelId &&
+        (prev.voiceChannelId || prev.dmCallId) &&
         !state.voiceChannelId &&
+        !state.dmCallId &&
         hostConnectedRef.current &&
         !joiningRef.current
       ) {
@@ -143,7 +186,13 @@ export function useVoiceClient() {
     const offEvt = api.onVoiceEvent((evt: VoiceHostEvent) => {
       if (evt.op === "state") applyHostState(evt);
       if (evt.op === "host-idle") {
+        if (leaveFallbackTimerRef.current != null) {
+          window.clearTimeout(leaveFallbackTimerRef.current);
+          leaveFallbackTimerRef.current = null;
+        }
+        resetVoiceSession();
         void api.destroyVoiceHost?.();
+        void api.trimMemory?.();
       }
     });
     const offFrame = api.onLobbyFrame?.(({ trackSid, frame }) => {
@@ -155,20 +204,31 @@ export function useVoiceClient() {
       offEvt();
       offFrame?.();
     };
-  }, [applyHostState]);
+  }, [applyHostState, resetVoiceSession]);
 
   useEffect(() => {
     const api = window.electronAPI;
     if (!api?.onVoiceEvent) return;
     return api.onVoiceEvent((evt: VoiceHostEvent) => {
-      if (evt.op !== "state" || !evt.voiceChannelId) return;
-      const channels = Object.values(useAppStore.getState().channelsByServer).flat();
-      const channel = channels.find((c) => c.id === evt.voiceChannelId);
-      const server = channel
-        ? useAppStore.getState().servers.find((s) => s.id === channel.server_id)
-        : undefined;
-      if (channel && server) {
-        void api.setWindowTitle?.(`${channel.name} | ${server.name}`);
+      if (evt.op !== "state") return;
+      if (evt.voiceChannelId) {
+        const channels = Object.values(useAppStore.getState().channelsByServer).flat();
+        const channel = channels.find((c) => c.id === evt.voiceChannelId);
+        const server = channel
+          ? useAppStore.getState().servers.find((s) => s.id === channel.server_id)
+          : undefined;
+        if (channel && server) {
+          void api.setWindowTitle?.(`${channel.name} | ${server.name}`);
+        }
+        return;
+      }
+      if (evt.dmCallId) {
+        const dm = useAppStore
+          .getState()
+          .dmChannels.find((d) => d.id === evt.dmCallId);
+        if (dm) {
+          void api.setWindowTitle?.(`${dm.peer.display_name} | Call`);
+        }
       }
     });
   }, []);
@@ -177,16 +237,56 @@ export function useVoiceClient() {
     setJoining(true);
     setError(null);
     setVoiceChannelId(channelId);
-    setVoiceLocal({ voiceChannelId: channelId });
+    setDmCallId(null);
+    setVoiceLocal({ voiceChannelId: channelId, dmCallId: null });
     await window.electronAPI?.ensureVoiceHost?.();
     syncLocalToHost();
     send({ op: "join", channelId });
   }, [setVoiceLocal, syncLocalToHost]);
 
+  const joinDm = useCallback(async (dmId: string) => {
+    setJoining(true);
+    setError(null);
+    setDmCallId(dmId);
+    setVoiceChannelId(null);
+    setVoiceLocal({ dmCallId: dmId, voiceChannelId: null });
+    await window.electronAPI?.ensureVoiceHost?.();
+    syncLocalToHost();
+    send({ op: "join-dm", dmId });
+  }, [setVoiceLocal, syncLocalToHost]);
+
   const leave = useCallback(async () => {
-    void window.electronAPI?.setWindowTitle?.(DEFAULT_TITLE);
+    const wasIn = wasConnectedRef.current;
+    const dmId = useAppStore.getState().dmCallId;
+    resetVoiceSession();
+    if (wasIn && !deafened) {
+      playVoiceLeaveSound();
+    }
     send({ op: "leave" });
-  }, []);
+    try {
+      if (dmId) {
+        await api(`/api/dms/${dmId}/call/state`, {
+          method: "PUT",
+          body: { active: false, streaming: false },
+        });
+      } else {
+        await api("/api/voice/state", {
+          method: "PUT",
+          body: { channel_id: null, streaming: false },
+        });
+      }
+    } catch {
+      /* voice host also clears server state */
+    }
+    if (leaveFallbackTimerRef.current != null) {
+      window.clearTimeout(leaveFallbackTimerRef.current);
+    }
+    leaveFallbackTimerRef.current = window.setTimeout(() => {
+      leaveFallbackTimerRef.current = null;
+      void window.electronAPI?.destroyVoiceHost?.();
+      void window.electronAPI?.trimMemory?.();
+    }, 5000);
+  }, [deafened, resetVoiceSession]);
 
   const toggleMute = useCallback(async () => {
     send({ op: "toggle-mute" });
@@ -293,6 +393,7 @@ export function useVoiceClient() {
   return {
     roomRef,
     voiceChannelId,
+    dmCallId,
     connected,
     joining,
     error,
@@ -310,6 +411,7 @@ export function useVoiceClient() {
     lobbyFrames,
     isDesktop: isDesktopApp(),
     join,
+    joinDm,
     leave,
     toggleMute,
     toggleDeafen,

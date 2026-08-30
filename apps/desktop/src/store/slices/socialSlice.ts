@@ -289,6 +289,22 @@ export const createSocialSlice: AppStoreSlice = (set, get) => ({
     }
   },
 
+  startDmCallWithPeer: async (peerId) => {
+    try {
+      const dmId = await get().ensureDmWithPeer(peerId);
+      if (!dmId) {
+        get().setError("Could not start a call with this user.");
+        return;
+      }
+      await get().selectDm(dmId);
+      get().requestDmCallJoin(dmId);
+    } catch (e) {
+      get().setError(
+        e instanceof Error ? e.message : "Could not start a call with this user.",
+      );
+    }
+  },
+
   ensureDmWithPeer: async (peerId) => {
     const existing = get().dmChannels.find((d) => sameId(d.peer.id, peerId));
     if (existing) {

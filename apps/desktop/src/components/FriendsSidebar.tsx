@@ -58,6 +58,8 @@ export function FriendsSidebar({ onOpenFriends, friendsViewActive }: Props) {
   const closeDm = useAppStore((s) => s.closeDm);
   const selectDm = useAppStore((s) => s.selectDm);
   const openDmWithPeer = useAppStore((s) => s.openDmWithPeer);
+  const startDmCallWithPeer = useAppStore((s) => s.startDmCallWithPeer);
+  const requestFriend = useAppStore((s) => s.requestFriend);
   const setModal = useAppStore((s) => s.setModal);
 
   const [search, setSearch] = useState("");
@@ -85,14 +87,34 @@ export function FriendsSidebar({ onOpenFriends, friendsViewActive }: Props) {
     );
   }, [friends, search]);
 
-  const menuItems: ContextMenuItem[] = menu
-    ? [
-        {
-          label: "Close DM",
-          onClick: () => void closeDm(menu.dm.id),
-        },
-      ]
-    : [];
+  const menuItems: ContextMenuItem[] = useMemo(() => {
+    if (!menu) return [];
+    const { dm } = menu;
+    const isFriend = friends.some((f) => f.peer.id === dm.peer.id);
+    const requestPending = pendingOutbound.some(
+      (f) => f.peer.id === dm.peer.id,
+    );
+    const items: ContextMenuItem[] = [];
+
+    if (!isFriend && !requestPending) {
+      items.push({
+        label: "Add friend",
+        onClick: () => void requestFriend(dm.peer.username),
+      });
+    }
+
+    items.push({
+      label: "Start call",
+      onClick: () => void startDmCallWithPeer(dm.peer.id),
+    });
+
+    items.push({
+      label: "Close DM",
+      onClick: () => void closeDm(dm.id),
+    });
+
+    return items;
+  }, [menu, friends, pendingOutbound, requestFriend, startDmCallWithPeer, closeDm]);
 
   return (
     <aside className="channel-sidebar friends-sidebar">
@@ -178,16 +200,19 @@ export function FriendsSidebar({ onOpenFriends, friendsViewActive }: Props) {
           ) : (
             <ul className="friends-list">
               {filteredDms.map((dm) => (
-                <li key={dm.id}>
+                <li
+                  key={dm.id}
+                  className="friends-dm-row"
+                  onContextMenu={(e: MouseEvent) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setMenu({ x: e.clientX, y: e.clientY, dm });
+                  }}
+                >
                   <button
                     type="button"
                     className={`friends-dm-btn ${activeDmId === dm.id ? "active" : ""}`}
                     onClick={() => void selectDm(dm.id)}
-                    onContextMenu={(e: MouseEvent) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setMenu({ x: e.clientX, y: e.clientY, dm });
-                    }}
                   >
                     <FriendAvatar
                       user={dm.peer}
@@ -197,6 +222,18 @@ export function FriendsSidebar({ onOpenFriends, friendsViewActive }: Props) {
                       {dm.peer.display_name}
                       <span className="muted">@{dm.peer.username}</span>
                     </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="friends-dm-close icon-btn"
+                    title="Close DM"
+                    aria-label={`Close DM with ${dm.peer.display_name}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void closeDm(dm.id);
+                    }}
+                  >
+                    ×
                   </button>
                 </li>
               ))}

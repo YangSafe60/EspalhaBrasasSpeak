@@ -145,10 +145,14 @@ function MainApp() {
   const pendingVoiceJoinChannelId = useAppStore(
     (s) => s.pendingVoiceJoinChannelId,
   );
+  const pendingDmCallJoinId = useAppStore((s) => s.pendingDmCallJoinId);
   const clearPendingVoiceJoin = useAppStore((s) => s.clearPendingVoiceJoin);
+  const clearPendingDmCallJoin = useAppStore((s) => s.clearPendingDmCallJoin);
+  const dmCallId = useAppStore((s) => s.dmCallId);
   const voice = useVoice();
   useVoiceWindowTitle(!!user);
   const [pendingVoiceId, setPendingVoiceId] = useState<string | null>(null);
+  const [pendingDmCallId, setPendingDmCallId] = useState<string | null>(null);
   const [micBusy, setMicBusy] = useState(false);
   const [friendsTab, setFriendsTab] = useState<FriendsTab>("online");
   const activeDmId = useAppStore((s) => s.activeDmId);
@@ -192,12 +196,39 @@ function MainApp() {
     void joinVoice(id);
   }
 
+  async function joinDmCall(id: string) {
+    setMicBusy(true);
+    try {
+      await voice.joinDm(id);
+      markMicIntroDone();
+    } finally {
+      setMicBusy(false);
+      setPendingDmCallId(null);
+    }
+  }
+
+  function onJoinDmCall(id: string) {
+    if (sameId(dmCallId, id)) return;
+    if (!micIntroDone()) {
+      setPendingDmCallId(id);
+      return;
+    }
+    void joinDmCall(id);
+  }
+
   useEffect(() => {
     if (!pendingVoiceJoinChannelId) return;
     const channelId = pendingVoiceJoinChannelId;
     clearPendingVoiceJoin();
     onJoinVoice(channelId);
   }, [pendingVoiceJoinChannelId, clearPendingVoiceJoin, voiceChannelId]);
+
+  useEffect(() => {
+    if (!pendingDmCallJoinId) return;
+    const dmId = pendingDmCallJoinId;
+    clearPendingDmCallJoin();
+    onJoinDmCall(dmId);
+  }, [pendingDmCallJoinId, clearPendingDmCallJoin, dmCallId]);
 
   function onOpenFriends(tab: FriendsTab = "online") {
     setFriendsTab(tab);
@@ -265,11 +296,15 @@ function MainApp() {
         </SoftSuspense>
         <MiniProfileCard />
         <MicConsentModal
-          open={pendingVoiceId != null}
+          open={pendingVoiceId != null || pendingDmCallId != null}
           busy={micBusy}
-          onCancel={() => setPendingVoiceId(null)}
+          onCancel={() => {
+            setPendingVoiceId(null);
+            setPendingDmCallId(null);
+          }}
           onContinue={() => {
             if (pendingVoiceId) void joinVoice(pendingVoiceId);
+            else if (pendingDmCallId) void joinDmCall(pendingDmCallId);
           }}
         />
       </div>

@@ -5414,6 +5414,44 @@ html.is-screen-popout #root {
   flex-shrink: 0;
 }
 
+.friends-dm-row {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.friends-dm-row .friends-dm-btn {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+.friends-dm-close {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 50%;
+  border: none;
+  font-size: 1.05rem;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+
+.friends-dm-row:hover .friends-dm-close,
+.friends-dm-row:focus-within .friends-dm-close {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.friends-dm-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+}
+
 .friends-dm-btn {
   width: 100%;
   display: flex;
@@ -5695,23 +5733,33 @@ html.is-screen-popout #root {
   gap: 1rem;
 }
 
-.dm-e2e-badge {
+.dm-header-actions {
   display: flex;
   align-items: center;
-  gap: 0.55rem;
-  padding: 0.45rem 0.65rem;
+  gap: 0.45rem;
+  flex-shrink: 0;
+}
+
+.dm-call-btn.active {
+  color: #2a9b8f;
+  border-color: rgba(42, 155, 143, 0.55);
+  background: rgba(42, 155, 143, 0.12);
+}
+
+.dm-call-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0 1rem 0.75rem;
+  padding: 0.65rem 0.85rem;
   border-radius: 10px;
   border: 1px solid rgba(42, 155, 143, 0.35);
-  background: rgba(42, 155, 143, 0.08);
-  max-width: 220px;
+  background: rgba(42, 155, 143, 0.1);
 }
 
-.dm-e2e-badge strong {
-  display: block;
-  font-size: 0.75rem;
-}
-
-.dm-e2e-lock {
+.dm-e2e-badge {
+  flex-shrink: 0;
   font-size: 0.65rem;
   font-weight: 800;
   letter-spacing: 0.04em;
@@ -5719,12 +5767,7 @@ html.is-screen-popout #root {
   border: 1px solid rgba(42, 155, 143, 0.5);
   border-radius: 6px;
   padding: 0.2rem 0.35rem;
-}
-
-.dm-fingerprint {
-  display: block;
-  font-size: 0.68rem;
-  font-variant-numeric: tabular-nums;
+  background: rgba(42, 155, 143, 0.08);
 }
 
 .composer-locked {
