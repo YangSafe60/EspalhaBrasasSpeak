@@ -2460,6 +2460,32 @@ html[data-compact="1"] .message {
   min-height: 200px;
 }
 
+.lobby-screen-tile.is-expanded {
+  position: fixed;
+  inset: 0;
+  z-index: 10050;
+  width: 100vw;
+  height: 100vh;
+  min-height: 0;
+  border-radius: 0;
+  border: none;
+  background: #000;
+}
+
+.lobby-screen-tile.is-expanded video {
+  width: 100%;
+  height: calc(100vh - 3.25rem);
+  max-height: none;
+  object-fit: contain;
+}
+
+.lobby-screen-tile.is-expanded .lobby-screen-meta {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
 .lobby-screen-tile video {
   display: block;
   width: 100%;

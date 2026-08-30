@@ -6,13 +6,11 @@ import {
   type CSSProperties,
 } from "react";
 import type { useVoice } from "../hooks/useVoice";
-import {
-  getFullscreenElement,
-  isElementFullscreen,
-  onFullscreenChange,
-  toggleElementFullscreen,
-} from "../lib/fullscreen";
 import { openScreenPopout } from "../lib/popout";
+import {
+  registerScreenCapture,
+  unregisterScreenCapture,
+} from "../lib/screenBridge";
 import { mediaCssUrl } from "../lib/mediaUrl";
 import { useAppStore } from "../store/appStore";
 import { useMemberContextMenu } from "./MemberUserMenu";
@@ -143,6 +141,7 @@ export function VoiceLobbyView({ voice }: Props) {
             {voice.localScreens.map((s, i) => (
               <LobbyScreenTile
                 key={s.trackSid}
+                trackSid={s.trackSid}
                 track={s.track}
                 name={
                   voice.localScreens.length > 1
@@ -172,6 +171,7 @@ export function VoiceLobbyView({ voice }: Props) {
               s.subscribed && s.track ? (
                 <LobbyScreenTile
                   key={s.trackSid}
+                  trackSid={s.trackSid}
                   track={s.track}
                   name={s.participantName}
                   busy={popoutBusy === s.trackSid}
@@ -290,6 +290,7 @@ function LobbyScreenInvite({
 }
 
 function LobbyScreenTile({
+  trackSid,
   track,
   name,
   badge,
@@ -299,6 +300,7 @@ function LobbyScreenTile({
   onHoverAction,
   audioControls,
 }: {
+  trackSid: string;
   track: {
     attach: (el: HTMLMediaElement) => void;
     detach: (el?: HTMLMediaElement) => void;
@@ -318,7 +320,7 @@ function LobbyScreenTile({
 }) {
   const tileRef = useRef<HTMLDivElement>(null);
   const ref = useRef<HTMLVideoElement>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     const el = ref.current;
@@ -330,44 +332,39 @@ function LobbyScreenTile({
   }, [track]);
 
   useEffect(() => {
-    const sync = () => {
-      const video = ref.current;
-      const tile = tileRef.current;
-      setIsFullscreen(
-        isElementFullscreen(video) || isElementFullscreen(tile),
-      );
+    registerScreenCapture(trackSid, () => ref.current);
+    return () => unregisterScreenCapture(trackSid);
+  }, [trackSid]);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExpanded(false);
     };
-    return onFullscreenChange(sync);
-  }, []);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [expanded]);
 
-  async function toggleFullscreen() {
-    const tile = tileRef.current;
-    const video = ref.current;
-    if (!tile && !video) return;
-
-    const active = getFullscreenElement();
-    if (active) {
-      await toggleElementFullscreen(active);
-      return;
-    }
-
-    // Prefer the tile container — keeps controls visible and works reliably in Electron.
-    const ok =
-      (tile && (await toggleElementFullscreen(tile))) ||
-      (video && (await toggleElementFullscreen(video)));
-    if (!ok) {
-      /* fullscreen may be blocked */
-    }
+  function toggleExpanded() {
+    setExpanded((v) => !v);
   }
 
   return (
-    <div className="lobby-screen-tile" ref={tileRef}>
+    <div
+      className={`lobby-screen-tile${expanded ? " is-expanded" : ""}`}
+      ref={tileRef}
+    >
       <video
         ref={ref}
         autoPlay
         playsInline
         muted
-        onDoubleClick={() => void toggleFullscreen()}
+        onDoubleClick={() => toggleExpanded()}
       />
       <div className="lobby-screen-hover">
         <button
@@ -441,11 +438,11 @@ function LobbyScreenTile({
           <button
             type="button"
             className="btn ghost sm lobby-screen-icon-btn"
-            title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
-            aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
-            onClick={() => void toggleFullscreen()}
+            title={expanded ? "Exit fullscreen" : "Fullscreen"}
+            aria-label={expanded ? "Exit fullscreen" : "Fullscreen"}
+            onClick={() => toggleExpanded()}
           >
-            {isFullscreen ? (
+            {expanded ? (
               <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden>
                 <path
                   fill="currentColor"

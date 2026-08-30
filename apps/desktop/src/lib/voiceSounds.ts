@@ -88,11 +88,24 @@ export function playVoiceLeaveSound() {
   });
 }
 
-/** Release the shared sound context when voice is fully idle. */
+/** Pause the shared sound context when voice is briefly idle. */
 export function suspendVoiceSoundContext() {
   if (sharedCtx?.state === "running") {
     void sharedCtx.suspend();
   }
+}
+
+/** Tear down the shared sound context when leaving voice entirely. */
+export function closeVoiceSoundContext() {
+  if (!sharedCtx) return;
+  try {
+    if (sharedCtx.state !== "closed") {
+      void sharedCtx.close();
+    }
+  } catch {
+    /* already closed */
+  }
+  sharedCtx = null;
 }
 
 /** Brighter rising sparkle — someone started screen sharing. */

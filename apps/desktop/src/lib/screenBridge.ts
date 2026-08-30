@@ -13,6 +13,8 @@ type Signal =
 type FramePayload = { trackSid: string; frame: string };
 
 const tracks = new Map<string, MediaStreamTrack>();
+/** Prefer capturing the lobby <video> — remote WebRTC tracks often won't decode in a clone. */
+const captureSources = new Map<string, () => HTMLVideoElement | null>();
 const relays = new Map<
   string,
   { stop: () => void; viewers: number }
@@ -131,7 +133,11 @@ function mountHiddenRelayVideo(video: HTMLVideoElement) {
   document.body.appendChild(video);
 }
 
-function startRelay(trackSid: string, track: MediaStreamTrack) {
+function resolveCaptureVideo(trackSid: string): HTMLVideoElement | null {
+  return captureSources.get(trackSid)?.() ?? null;
+}
+
+function startRelay(trackSid: string) {
   const existing = relays.get(trackSid);
   if (existing) {
     existing.viewers += 1;
@@ -140,24 +146,30 @@ function startRelay(trackSid: string, track: MediaStreamTrack) {
     return;
   }
 
-  const video = document.createElement("video");
-  mountHiddenRelayVideo(video);
-  const cloned = (() => {
-    try {
-      return track.clone();
-    } catch {
-      return track;
-    }
-  })();
-  video.srcObject = new MediaStream([cloned]);
+  const track = tracks.get(trackSid);
+  let fallbackVideo: HTMLVideoElement | null = null;
+  let cloned: MediaStreamTrack | null = null;
   const kickPlay = () => {
-    void video.play().catch(() => undefined);
+    void fallbackVideo?.play().catch(() => undefined);
   };
-  kickPlay();
-  video.addEventListener("loadeddata", kickPlay);
-  video.addEventListener("loadedmetadata", kickPlay);
-  video.addEventListener("resize", kickPlay);
-  video.addEventListener("canplay", kickPlay);
+
+  if (track && track.readyState !== "ended") {
+    fallbackVideo = document.createElement("video");
+    mountHiddenRelayVideo(fallbackVideo);
+    cloned = (() => {
+      try {
+        return track.clone();
+      } catch {
+        return track;
+      }
+    })();
+    fallbackVideo.srcObject = new MediaStream([cloned]);
+    kickPlay();
+    fallbackVideo.addEventListener("loadeddata", kickPlay);
+    fallbackVideo.addEventListener("loadedmetadata", kickPlay);
+    fallbackVideo.addEventListener("resize", kickPlay);
+    fallbackVideo.addEventListener("canplay", kickPlay);
+  }
 
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d", { alpha: false });
@@ -166,8 +178,10 @@ function startRelay(trackSid: string, track: MediaStreamTrack) {
 
   const publishSnapshot = () => {
     if (stopped || !ctx) return false;
-    const w = video.videoWidth;
-    const h = video.videoHeight;
+    const source = resolveCaptureVideo(trackSid) ?? fallbackVideo;
+    if (!source) return false;
+    const w = source.videoWidth;
+    const h = source.videoHeight;
     if (w <= 0 || h <= 0) return false;
     const scale = w > MAX_RELAY_WIDTH ? MAX_RELAY_WIDTH / w : 1;
     const tw = Math.max(1, Math.round(w * scale));
@@ -176,7 +190,7 @@ function startRelay(trackSid: string, track: MediaStreamTrack) {
       canvas.width = tw;
       canvas.height = th;
     }
-    ctx.drawImage(video, 0, 0, tw, th);
+    ctx.drawImage(source, 0, 0, tw, th);
     try {
       const frame = canvas.toDataURL("image/jpeg", JPEG_QUALITY);
       void publishFrame({ trackSid, frame });
@@ -195,7 +209,7 @@ function startRelay(trackSid: string, track: MediaStreamTrack) {
   const onEnded = () => {
     relays.get(trackSid)?.stop();
   };
-  cloned.addEventListener("ended", onEnded);
+  cloned?.addEventListener("ended", onEnded);
 
   timer = window.setTimeout(tick, 50);
   activeRelayViewers += 1;
@@ -206,18 +220,20 @@ function startRelay(trackSid: string, track: MediaStreamTrack) {
     stop: () => {
       stopped = true;
       if (timer != null) window.clearTimeout(timer);
-      cloned.removeEventListener("ended", onEnded);
-      video.removeEventListener("loadeddata", kickPlay);
-      video.removeEventListener("loadedmetadata", kickPlay);
-      video.removeEventListener("resize", kickPlay);
-      video.removeEventListener("canplay", kickPlay);
-      try {
-        if (cloned !== track) cloned.stop();
-      } catch {
-        /* ignore */
+      cloned?.removeEventListener("ended", onEnded);
+      if (fallbackVideo) {
+        fallbackVideo.removeEventListener("loadeddata", kickPlay);
+        fallbackVideo.removeEventListener("loadedmetadata", kickPlay);
+        fallbackVideo.removeEventListener("resize", kickPlay);
+        fallbackVideo.removeEventListener("canplay", kickPlay);
+        try {
+          if (cloned && cloned !== track) cloned.stop();
+        } catch {
+          /* ignore */
+        }
+        fallbackVideo.srcObject = null;
+        fallbackVideo.remove();
       }
-      video.srcObject = null;
-      video.remove();
       canvas.width = 0;
       canvas.height = 0;
       relays.delete(trackSid);
@@ -246,8 +262,14 @@ async function ensureHost() {
       if (!msg || typeof msg !== "object") return;
       if (msg.type === "request") {
         const media = tracks.get(msg.trackSid);
-        if (!media || media.readyState === "ended") return;
-        startRelay(msg.trackSid, media);
+        const hasCapture = captureSources.has(msg.trackSid);
+        if (
+          !hasCapture &&
+          (!media || media.readyState === "ended")
+        ) {
+          return;
+        }
+        startRelay(msg.trackSid);
         return;
       }
       if (msg.type === "stop") {
@@ -266,6 +288,19 @@ export async function ensureScreenBridgeHost(): Promise<void> {
 export function registerScreenTrack(trackSid: string, track: MediaStreamTrack) {
   tracks.set(trackSid, track);
   void ensureHost();
+}
+
+/** Register the on-screen lobby video used for pop-out relay capture. */
+export function registerScreenCapture(
+  trackSid: string,
+  getVideo: () => HTMLVideoElement | null,
+) {
+  captureSources.set(trackSid, getVideo);
+  void ensureHost();
+}
+
+export function unregisterScreenCapture(trackSid: string) {
+  captureSources.delete(trackSid);
 }
 
 export function unregisterScreenTrack(trackSid: string) {
@@ -288,6 +323,7 @@ export function clearAllScreenBridge() {
   }
   relays.clear();
   tracks.clear();
+  captureSources.clear();
   activeRelayViewers = 0;
   syncRelayBackgroundThrottling();
 }

@@ -36,7 +36,7 @@ import {
   playScreenShareStopSound,
   playVoiceJoinSound,
   playVoiceLeaveSound,
-  suspendVoiceSoundContext,
+  closeVoiceSoundContext,
 } from "../lib/voiceSounds";
 import { getUserVoicePref, type UserVoicePref } from "../lib/userVoicePrefs";
 import { useAppStore } from "../store/appStore";
@@ -166,6 +166,25 @@ function readSignalRtt(room: Room): number | null {
   return Math.round(rtt);
 }
 
+function stopLocalMediaExceptScreenShare(room: Room) {
+  const lk = getLivekit();
+  room.localParticipant.trackPublications.forEach((pub) => {
+    if (
+      pub.source === lk.Track.Source.ScreenShare ||
+      pub.source === lk.Track.Source.ScreenShareAudio
+    ) {
+      return;
+    }
+    const track = pub.track;
+    if (!track) return;
+    try {
+      track.stop();
+    } catch {
+      /* ignore */
+    }
+  });
+}
+
 export function useVoice() {
   const voiceChannelId = useAppStore((s) => s.voiceChannelId);
   const muted = useAppStore((s) => s.muted);
@@ -210,6 +229,15 @@ export function useVoice() {
   const [activeShareIds, setActiveShareIds] = useState<string[]>([]);
   /** Last chosen screen-share frame rate (for lobby hops / republish). */
   const shareFpsRef = useRef<30 | 60>(30);
+  const joinPullTimersRef = useRef<number[]>([]);
+  const leavingRef = useRef(false);
+
+  const clearJoinPullTimers = useCallback(() => {
+    for (const id of joinPullTimersRef.current) {
+      window.clearTimeout(id);
+    }
+    joinPullTimersRef.current = [];
+  }, []);
 
   voiceChannelIdRef.current = voiceChannelId;
   mutedRef.current = muted;
@@ -343,6 +371,25 @@ export function useVoice() {
     el.remove();
     remoteAudioElsRef.current.delete(trackSid);
   }, []);
+
+  const purgeRemoteAudio = useCallback(() => {
+    for (const sid of [...remoteAudioElsRef.current.keys()]) {
+      detachRemoteAudio(sid);
+    }
+    remoteAudioElsRef.current.clear();
+    remoteAudioTracksRef.current.clear();
+    document.querySelectorAll("[data-lk-remote-audio]").forEach((el) => {
+      try {
+        const media = el as HTMLMediaElement & { srcObject?: MediaStream | null };
+        media.srcObject = null;
+        media.removeAttribute("src");
+        media.load?.();
+        el.remove();
+      } catch {
+        /* ignore */
+      }
+    });
+  }, [detachRemoteAudio]);
 
   const attachRemoteAudio = useCallback(
     (
@@ -645,6 +692,12 @@ export function useVoice() {
 
   const teardownRoom = useCallback(
     async (room: Room, stopTracks: boolean) => {
+      try {
+        room.removeAllListeners();
+      } catch {
+        /* EventEmitter API */
+      }
+
       room.remoteParticipants.forEach((p) => {
         p.trackPublications.forEach((pub) => {
           const track = pub.track;
@@ -692,66 +745,94 @@ export function useVoice() {
         }
       }
 
+      if (stopTracks) {
+        stopLocalMediaExceptScreenShare(room);
+        room.localParticipant.trackPublications.forEach((pub) => {
+          const track = pub.track;
+          if (!track) return;
+          try {
+            track.stop();
+          } catch {
+            /* ignore */
+          }
+        });
+      }
+
+      try {
+        await (
+          room as Room & { stopAudio?: () => Promise<void> }
+        ).stopAudio?.();
+      } catch {
+        /* optional */
+      }
+
       try {
         await room.disconnect(stopTracks);
       } catch {
         /* already disconnected */
-      }
-      try {
-        room.removeAllListeners();
-      } catch {
-        /* EventEmitter API */
       }
     },
     [],
   );
 
   const leave = useCallback(async () => {
-    joinGenerationRef.current += 1;
-    const room = roomRef.current;
-    const wasInVoice = !!room;
-    roomRef.current = null;
-
-    setPickerOpen(false);
-    setPickerBusy(false);
-    void closeAllScreenPopouts();
-
-    // Leaving the lobby entirely always ends the stream + capture.
-    await endScreenShare(room, true);
-    clearAllScreenBridge();
-
-    setConnected(false);
-    setRemoteScreens([]);
-    setLocalScreens([]);
-    setSpeakingIds([]);
-    watchingScreensRef.current.clear();
-
-    for (const sid of [...remoteAudioElsRef.current.keys()]) {
-      detachRemoteAudio(sid);
-    }
-    remoteAudioTracksRef.current.clear();
-    shareAudioStateRef.current.clear();
-    setShareAudioByTrack({});
-
-    if (room) {
-      await teardownRoom(room, true);
-    }
-
-    void getElectronAPI()?.setBackgroundThrottling?.(true);
-    suspendVoiceSoundContext();
-    setVoiceLocal({ voiceChannelId: null, streaming: false });
+    if (leavingRef.current) return;
+    leavingRef.current = true;
     try {
-      await api("/api/voice/state", {
-        method: "PUT",
-        body: { channel_id: null, streaming: false },
-      });
-    } catch {
-      /* best effort */
+      joinGenerationRef.current += 1;
+      clearJoinPullTimers();
+      setJoining(false);
+      setPickerOpen(false);
+      setPickerBusy(false);
+
+      const room = roomRef.current;
+      const wasInVoice = !!room;
+      roomRef.current = null;
+
+      void closeAllScreenPopouts();
+
+      // Leaving the lobby entirely always ends the stream + capture.
+      await endScreenShare(room, true);
+      clearAllScreenBridge();
+
+      setConnected(false);
+      setRemoteScreens([]);
+      setLocalScreens([]);
+      setSpeakingIds([]);
+      watchingScreensRef.current.clear();
+
+      purgeRemoteAudio();
+      shareAudioStateRef.current.clear();
+      setShareAudioByTrack({});
+
+      if (room) {
+        await teardownRoom(room, true);
+      }
+
+      void getElectronAPI()?.setBackgroundThrottling?.(true);
+      closeVoiceSoundContext();
+      setVoiceLocal({ voiceChannelId: null, streaming: false });
+      try {
+        await api("/api/voice/state", {
+          method: "PUT",
+          body: { channel_id: null, streaming: false },
+        });
+      } catch {
+        /* best effort */
+      }
+      if (wasInVoice && !deafenedRef.current && !switchingRef.current) {
+        playVoiceLeaveSound();
+      }
+    } finally {
+      leavingRef.current = false;
     }
-    if (wasInVoice && !deafenedRef.current && !switchingRef.current) {
-      playVoiceLeaveSound();
-    }
-  }, [detachRemoteAudio, endScreenShare, setVoiceLocal, teardownRoom]);
+  }, [
+    clearJoinPullTimers,
+    endScreenShare,
+    purgeRemoteAudio,
+    setVoiceLocal,
+    teardownRoom,
+  ]);
 
   const join = useCallback(
     async (channelId: string) => {
@@ -759,6 +840,7 @@ export function useVoice() {
         return;
       }
 
+      const joinGen = joinGenerationRef.current;
       setJoining(true);
       setError(null);
 
@@ -781,21 +863,20 @@ export function useVoice() {
             roomRef.current = null;
             setRemoteScreens([]);
             watchingScreensRef.current.clear();
-            for (const sid of [...remoteAudioElsRef.current.keys()]) {
-              detachRemoteAudio(sid);
-            }
+            purgeRemoteAudio();
             shareAudioStateRef.current.clear();
             setShareAudioByTrack({});
             setSpeakingIds([]);
             void closeAllScreenPopouts();
-            // Drop JPEG relays / remote bridge entries; local capture tracks stay alive.
             clearAllScreenBridge();
-            await oldRoom.disconnect(false);
             try {
-              oldRoom.removeAllListeners();
+              await oldRoom.localParticipant.setMicrophoneEnabled(false);
+              await oldRoom.localParticipant.setCameraEnabled(false);
             } catch {
               /* ignore */
             }
+            stopLocalMediaExceptScreenShare(oldRoom);
+            await teardownRoom(oldRoom, false);
           } else {
             // Replacing a stuck session — drop share.
             await endScreenShare(oldRoom, true);
@@ -805,26 +886,32 @@ export function useVoice() {
             watchingScreensRef.current.clear();
             clearAllScreenBridge();
             void closeAllScreenPopouts();
-            for (const sid of [...remoteAudioElsRef.current.keys()]) {
-              detachRemoteAudio(sid);
-            }
-            await oldRoom.disconnect(true);
-            try {
-              oldRoom.removeAllListeners();
-            } catch {
-              /* ignore */
-            }
+            purgeRemoteAudio();
+            await teardownRoom(oldRoom, true);
           }
+        }
+
+        if (joinGenerationRef.current !== joinGen) {
+          return;
         }
 
         const creds = await api<VoiceTokenResponse>(
           `/api/channels/${channelId}/voice/token`,
           { method: "POST" },
         );
+        if (joinGenerationRef.current !== joinGen) {
+          return;
+        }
         const livekitUrl = normalizeLivekitUrl(creds.url);
         await ensureMicPermission();
+        if (joinGenerationRef.current !== joinGen) {
+          return;
+        }
         const settings = loadMediaSettings();
         const { Room } = await loadLivekit();
+        if (joinGenerationRef.current !== joinGen) {
+          return;
+        }
         const room = new Room({
           adaptiveStream: true,
           dynacast: true,
@@ -993,13 +1080,14 @@ export function useVoice() {
           setSpeakingIds(speakers.map((p) => p.identity));
         });
         room.on(getLivekit().RoomEvent.Disconnected, () => {
+          if (roomRef.current === room) {
+            roomRef.current = null;
+          }
           setConnected(false);
           setRemoteScreens([]);
           setSpeakingIds([]);
           watchingScreensRef.current.clear();
-          for (const sid of [...remoteAudioElsRef.current.keys()]) {
-            detachRemoteAudio(sid);
-          }
+          purgeRemoteAudio();
           shareAudioStateRef.current.clear();
           setShareAudioByTrack({});
           if (!switchingRef.current) {
@@ -1007,6 +1095,7 @@ export function useVoice() {
             clearAllScreenBridge();
             void closeAllScreenPopouts();
             void getElectronAPI()?.setBackgroundThrottling?.(true);
+            closeVoiceSoundContext();
           }
         });
 
@@ -1017,6 +1106,10 @@ export function useVoice() {
             iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
           },
         });
+        if (joinGenerationRef.current !== joinGen || roomRef.current !== room) {
+          await teardownRoom(room, true);
+          return;
+        }
         await room.localParticipant.setMicrophoneEnabled(
           !mutedRef.current && !deafenedRef.current,
           {
@@ -1033,7 +1126,6 @@ export function useVoice() {
           /* may still work once a remote track arrives */
         }
         await applyDevicesToRoom(room, settings);
-        const joinGen = joinGenerationRef.current;
         const pullIfCurrent = () => {
           if (joinGenerationRef.current !== joinGen || roomRef.current !== room) {
             return;
@@ -1042,14 +1134,21 @@ export function useVoice() {
         };
         pullIfCurrent();
         queueMicrotask(pullIfCurrent);
-        window.setTimeout(pullIfCurrent, 250);
-        window.setTimeout(pullIfCurrent, 1000);
+        clearJoinPullTimers();
+        joinPullTimersRef.current.push(
+          window.setTimeout(pullIfCurrent, 250),
+          window.setTimeout(pullIfCurrent, 1000),
+        );
 
         if (preservedScreen.length) {
           await republishScreenTracks(room, preservedScreen);
         } else {
           setLocalScreens([]);
           setVoiceLocal({ streaming: false });
+        }
+        if (joinGenerationRef.current !== joinGen || roomRef.current !== room) {
+          await teardownRoom(room, true);
+          return;
         }
 
         setConnected(true);
@@ -1071,13 +1170,28 @@ export function useVoice() {
           }
         }
         setError(e instanceof Error ? e.message : "Failed to join voice");
-        await leave();
+        if (joinGenerationRef.current === joinGen) {
+          await leave();
+        }
       } finally {
         switchingRef.current = false;
         setJoining(false);
       }
     },
-    [attachRemoteAudio, detachRemoteAudio, endScreenShare, leave, pullRemoteAudio, refreshScreens, republishScreenTracks, setVoiceLocal, subscribeRemoteAudio],
+    [
+      attachRemoteAudio,
+      clearJoinPullTimers,
+      detachRemoteAudio,
+      endScreenShare,
+      leave,
+      pullRemoteAudio,
+      purgeRemoteAudio,
+      refreshScreens,
+      republishScreenTracks,
+      setVoiceLocal,
+      subscribeRemoteAudio,
+      teardownRoom,
+    ],
   );
 
   useEffect(() => {
@@ -1574,6 +1688,7 @@ export function useVoice() {
       window.removeEventListener("beforeunload", clearPresenceKeepalive);
       window.removeEventListener("pagehide", clearPresenceKeepalive);
       joinGenerationRef.current += 1;
+      clearJoinPullTimers();
       const room = roomRef.current;
       roomRef.current = null;
       const stops = [...shareStopsRef.current.values()];
@@ -1581,22 +1696,18 @@ export function useVoice() {
       for (const stop of stops) void stop();
       clearAllScreenBridge();
       void closeAllScreenPopouts();
-      for (const sid of [...remoteAudioElsRef.current.keys()]) {
-        detachRemoteAudio(sid);
-      }
-      remoteAudioElsRef.current.clear();
-      remoteAudioTracksRef.current.clear();
+      purgeRemoteAudio();
       if (room) {
         void teardownRoom(room, true).finally(() => {
           void getElectronAPI()?.setBackgroundThrottling?.(true);
-          suspendVoiceSoundContext();
+          closeVoiceSoundContext();
         });
       } else {
         void getElectronAPI()?.setBackgroundThrottling?.(true);
-        suspendVoiceSoundContext();
+        closeVoiceSoundContext();
       }
     };
-  }, [detachRemoteAudio, teardownRoom]);
+  }, [clearJoinPullTimers, purgeRemoteAudio, teardownRoom]);
 
   return {
     roomRef,
