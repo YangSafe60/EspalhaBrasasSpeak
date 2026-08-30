@@ -1,8 +1,12 @@
 /** WebSocket event handler: real-time sync for messages, presence, voice, and social. */
-import { isAppFocused } from "../../lib/appFocus";
 import { channelIsMuted } from "../../lib/channelMutePrefs";
 import { messagePreview } from "../../lib/messagePreview";
-import { playMessageNotify } from "../../lib/messageNotify";
+import {
+  deliverFriendRequestAlert,
+  deliverMessageAlert,
+  isDmNotificationsMuted,
+  shouldAlertConversation,
+} from "../../lib/notifyHelpers";
 import { normalizePresenceStatus } from "../../lib/presence";
 import { permBits, sameId } from "../../lib/serverPerms";
 import { upsertChannelList } from "../helpers/channelHelpers";
@@ -62,28 +66,29 @@ export const createWsSlice: AppStoreSlice = (set, get) => ({
           }
           return next;
         });
-        if (!isSelf && !isActive && !muted) {
-          playMessageNotify();
-        }
         if (
           !isSelf &&
           !muted &&
-          (!isAppFocused() || !isActive || state.friendsHome)
+          shouldAlertConversation(state, isActive)
         ) {
           const channel = Object.values(state.channelsByServer)
             .flat()
             .find((c) => c.id === cid);
           if (channel?.channel_type === "text" && channel.server_id) {
-            get().pushMessageToast({
-              id: event.message.id,
-              kind: "channel",
-              channelId: cid,
-              serverId: channel.server_id,
-              channelName: channel.name,
-              authorName:
-                event.author.display_name || event.author.username,
-              authorAvatar: event.author.avatar_url,
-              preview: messagePreview(event.message.content || ""),
+            deliverMessageAlert({
+              toast: {
+                id: event.message.id,
+                kind: "channel",
+                channelId: cid,
+                serverId: channel.server_id,
+                channelName: channel.name,
+                authorName:
+                  event.author.display_name || event.author.username,
+                authorAvatar: event.author.avatar_url,
+                preview: messagePreview(event.message.content || ""),
+              },
+              pushToast: (t) => get().pushMessageToast(t),
+              onOpen: () => get().openMessageToast(event.message.id),
             });
           }
         }
@@ -479,6 +484,24 @@ export const createWsSlice: AppStoreSlice = (set, get) => ({
               ? upsertFriendship(s.pendingOutbound, f)
               : s.pendingOutbound,
         }));
+        if (
+          f.requested_by !== state.user?.id &&
+          shouldAlertConversation(state, false)
+        ) {
+          deliverFriendRequestAlert({
+            toast: {
+              id: `friend-${f.id}`,
+              kind: "friend",
+              channelId: f.id,
+              channelName: "Friend request",
+              authorName: f.peer.display_name || f.peer.username,
+              authorAvatar: f.peer.avatar_url,
+              preview: "Sent you a friend request",
+            },
+            pushToast: (t) => get().pushMessageToast(t),
+            onOpen: () => get().openMessageToast(`friend-${f.id}`),
+          });
+        }
         break;
       }
       case "friend_update": {
@@ -541,16 +564,27 @@ export const createWsSlice: AppStoreSlice = (set, get) => ({
           authors: { ...s.authors, [event.author.id]: event.author },
         }));
         void (async () => {
-          const dm = get().dmChannels.find(
-            (c) => c.id === event.message.dm_channel_id,
+          const user = get().user;
+          if (!user) return;
+
+          const dmId = event.message.dm_channel_id;
+          const existing = get().messagesByDm[dmId]?.find(
+            (m) => m.id === event.message.id,
           );
+          if (
+            existing &&
+            !existing.decrypt_failed &&
+            existing.content.length > 0
+          ) {
+            return;
+          }
+
+          const dm = get().dmChannels.find((c) => c.id === dmId);
           const peerId =
-            event.author.id === get().user?.id
-              ? dm?.peer.id
-              : event.author.id;
-          if (!peerId || !get().user) return;
+            event.author.id === user.id ? dm?.peer.id : event.author.id;
+          if (!peerId) return;
           try {
-            await ensureIdentity(get().user!.id);
+            await ensureIdentity(user.id);
             const message = await decryptWireResilient(
               event.message,
               peerId,
@@ -561,8 +595,17 @@ export const createWsSlice: AppStoreSlice = (set, get) => ({
                 })),
             );
             set((s) => {
-              const dmId = event.message.dm_channel_id;
               if (!(dmId in s.messagesByDm) && dmId !== s.activeDmId) {
+                return s;
+              }
+              const current = s.messagesByDm[dmId]?.find(
+                (m) => m.id === message.id,
+              );
+              if (
+                current &&
+                !current.decrypt_failed &&
+                current.content.length > 0
+              ) {
                 return s;
               }
               return {
@@ -572,6 +615,33 @@ export const createWsSlice: AppStoreSlice = (set, get) => ({
                 },
               };
             });
+
+            const latest = get();
+            const isSelf = event.author.id === user.id;
+            const isActive = latest.activeDmId === dmId;
+            const dmChannel = latest.dmChannels.find((c) => c.id === dmId);
+            if (
+              !isSelf &&
+              dmChannel &&
+              !isDmNotificationsMuted(latest, dmChannel) &&
+              shouldAlertConversation(latest, isActive)
+            ) {
+              deliverMessageAlert({
+                toast: {
+                  id: message.id,
+                  kind: "dm",
+                  channelId: dmId,
+                  authorName:
+                    event.author.display_name || event.author.username,
+                  authorAvatar: event.author.avatar_url,
+                  preview: message.decrypt_failed
+                    ? "New encrypted message"
+                    : messagePreview(message.content || ""),
+                },
+                pushToast: (t) => get().pushMessageToast(t),
+                onOpen: () => get().openMessageToast(message.id),
+              });
+            }
           } catch {
             /* ignore decrypt race */
           }

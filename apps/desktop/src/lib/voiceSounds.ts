@@ -97,6 +97,7 @@ export function suspendVoiceSoundContext() {
 
 /** Tear down the shared sound context when leaving voice entirely. */
 export function closeVoiceSoundContext() {
+  stopDmCallRing();
   if (!sharedCtx) return;
   try {
     if (sharedCtx.state !== "closed") {
@@ -123,4 +124,59 @@ export function playScreenShareStopSound() {
     tone(ctx, 987.77, t, 0.08, 0.055, "triangle"); // B5
     tone(ctx, 659.25, t + 0.09, 0.14, 0.06, "triangle"); // E5
   });
+}
+
+let dmCallRingTimer: number | null = null;
+let dmCallRingMode: "outgoing" | "incoming" | null = null;
+
+function playOutgoingRingPulse(ctx: AudioContext, t: number) {
+  tone(ctx, 440, t, 0.22, 0.09, "sine");
+  tone(ctx, 480, t + 0.28, 0.22, 0.09, "sine");
+  tone(ctx, 440, t + 0.58, 0.22, 0.085, "sine");
+  tone(ctx, 480, t + 0.86, 0.22, 0.085, "sine");
+}
+
+function playIncomingRingPulse(ctx: AudioContext, t: number) {
+  tone(ctx, 784, t, 0.14, 0.095, "triangle");
+  tone(ctx, 988, t + 0.18, 0.14, 0.095, "triangle");
+  tone(ctx, 784, t + 0.4, 0.14, 0.09, "triangle");
+  tone(ctx, 988, t + 0.54, 0.14, 0.09, "triangle");
+}
+
+function scheduleDmCallRing(mode: "outgoing" | "incoming") {
+  if (dmCallRingMode !== mode) return;
+  withCtx((ctx, t) => {
+    if (mode === "outgoing") playOutgoingRingPulse(ctx, t);
+    else playIncomingRingPulse(ctx, t);
+  });
+  dmCallRingTimer = window.setTimeout(
+    () => scheduleDmCallRing(mode),
+    mode === "outgoing" ? 2800 : 2400,
+  );
+}
+
+/** Looping ring while waiting for the other person to answer a DM call. */
+export function startDmCallOutgoingRing() {
+  if (dmCallRingMode === "outgoing") return;
+  stopDmCallRing();
+  if (!voiceSoundsEnabled()) return;
+  dmCallRingMode = "outgoing";
+  scheduleDmCallRing("outgoing");
+}
+
+/** Looping ring when someone is calling you in a private DM. */
+export function startDmCallIncomingRing() {
+  if (dmCallRingMode === "incoming") return;
+  stopDmCallRing();
+  if (!voiceSoundsEnabled()) return;
+  dmCallRingMode = "incoming";
+  scheduleDmCallRing("incoming");
+}
+
+export function stopDmCallRing() {
+  dmCallRingMode = null;
+  if (dmCallRingTimer !== null) {
+    window.clearTimeout(dmCallRingTimer);
+    dmCallRingTimer = null;
+  }
 }

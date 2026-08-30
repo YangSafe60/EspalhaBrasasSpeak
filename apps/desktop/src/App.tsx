@@ -18,10 +18,13 @@ import { ServerRail } from "./components/ServerRail";
 import { UpdateOverlay } from "./components/UpdateOverlay";
 import { VoiceLobbyView } from "./components/VoiceLobbyView";
 import { VoicePanel } from "./components/VoicePanel";
+import { useDmCallRing } from "./hooks/useDmCallRing";
 import { useVoice } from "./hooks/useVoice";
 import { useVoiceWindowTitle } from "./hooks/useVoiceWindowTitle";
 import { useAutoIdlePresence } from "./hooks/useAutoIdlePresence";
 import { useWebSocket } from "./hooks/useWebSocket";
+import { requestDesktopNotifyPermission } from "./lib/desktopNotify";
+import { primeNotifyAudio } from "./lib/messageNotify";
 import { applyTheme, loadTheme } from "./lib/theme";
 import { sameId } from "./lib/serverPerms";
 import { useAppStore } from "./store/appStore";
@@ -122,10 +125,13 @@ function MainColumn({
   if (friendsHome) {
     return (
       <div className="main-column">
-        {showDmCallLobby ? (
-          <DmCallLobbyView voice={voice} />
-        ) : activeDmId ? (
-          <DmMessageView />
+        {activeDmId ? (
+          <div
+            className={`dm-split-view${showDmCallLobby ? " in-call" : ""}`}
+          >
+            {showDmCallLobby ? <DmCallLobbyView voice={voice} compact /> : null}
+            <DmMessageView />
+          </div>
         ) : (
           <FriendsHomeView tab={friendsTab} onTabChange={onFriendsTabChange} />
         )}
@@ -162,6 +168,7 @@ function MainApp() {
   const dmCallId = useAppStore((s) => s.dmCallId);
   const voice = useVoice();
   useVoiceWindowTitle(!!user);
+  useDmCallRing(voice);
   const [pendingVoiceId, setPendingVoiceId] = useState<string | null>(null);
   const [pendingDmCallId, setPendingDmCallId] = useState<string | null>(null);
   const [micBusy, setMicBusy] = useState(false);
@@ -171,6 +178,18 @@ function MainApp() {
   useEffect(() => {
     void bootstrap();
   }, [bootstrap]);
+
+  useEffect(() => {
+    if (!user) return;
+    requestDesktopNotifyPermission();
+    const prime = () => primeNotifyAudio();
+    window.addEventListener("pointerdown", prime, { once: true });
+    window.addEventListener("keydown", prime, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", prime);
+      window.removeEventListener("keydown", prime);
+    };
+  }, [user]);
 
   useEffect(() => {
     const server = servers.find((s) => sameId(s.id, activeServerId));

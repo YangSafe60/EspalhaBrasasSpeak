@@ -4,7 +4,7 @@ export type Atmosphere = "focus" | "chill" | "gaming";
 
 export type MessageToast = {
   id: string;
-  kind: "channel" | "dm";
+  kind: "channel" | "dm" | "friend";
   channelId: string;
   serverId?: string;
   channelName?: string;

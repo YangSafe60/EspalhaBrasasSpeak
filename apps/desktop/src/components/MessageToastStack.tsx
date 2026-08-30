@@ -45,7 +45,11 @@ function ToastItem({
           <strong>{toast.authorName}</strong>
           {toast.channelName ? (
             <em>
-              {toast.kind === "dm" ? "DM" : `#${toast.channelName}`}
+              {toast.kind === "dm"
+                ? "DM"
+                : toast.kind === "friend"
+                  ? toast.channelName
+                  : `#${toast.channelName}`}
             </em>
           ) : null}
         </span>

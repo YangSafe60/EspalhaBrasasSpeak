@@ -11,6 +11,8 @@ type VoiceApi = ReturnType<typeof useVoice>;
 
 type Props = {
   voice: VoiceApi;
+  /** Shown above DM chat during a private call. */
+  compact?: boolean;
 };
 
 type LobbyUser = {
@@ -24,7 +26,7 @@ type LobbyUser = {
 };
 
 /** Private DM voice call lobby — same layout as server voice channels. */
-export function DmCallLobbyView({ voice }: Props) {
+export function DmCallLobbyView({ voice, compact = false }: Props) {
   const dmCallId = useAppStore((s) => s.dmCallId);
   const dmCallByChannel = useAppStore((s) => s.dmCallByChannel);
   const dmChannels = useAppStore((s) => s.dmChannels);
@@ -145,10 +147,14 @@ export function DmCallLobbyView({ voice }: Props) {
   }
 
   return (
-    <main className="voice-lobby dm-call-lobby">
+    <section
+      className={`voice-lobby dm-call-lobby${compact ? " compact" : ""}`}
+    >
       <header className="voice-lobby-header">
         <div>
-          <p className="voice-lobby-eyebrow">Private call</p>
+          {!compact ? (
+            <p className="voice-lobby-eyebrow">Private call</p>
+          ) : null}
           <h2>
             <span className="dm-call-lobby-icon" aria-hidden>
               <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
@@ -316,6 +322,6 @@ export function DmCallLobbyView({ voice }: Props) {
           )}
         </section>
       </div>
-    </main>
+    </section>
   );
 }

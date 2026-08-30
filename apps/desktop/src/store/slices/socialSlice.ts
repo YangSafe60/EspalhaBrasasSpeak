@@ -9,8 +9,8 @@ import {
   decryptWire,
   decryptWireResilient,
   ensureIdentity,
-  fetchPeerPublicKey,
   getCachedIdentity,
+  prefetchPeerPublicKey,
   upsertFriendship,
 } from "../helpers/dmHelpers";
 import { upsertDm } from "../helpers/messageHelpers";
@@ -343,6 +343,16 @@ export const createSocialSlice: AppStoreSlice = (set, get) => ({
     if (!dm) return;
 
     const peerId = dm.peer.id;
+    const cachePeerKey = (id: string, key: string) =>
+      set((s) => ({
+        peerPublicKeys: { ...s.peerPublicKeys, [id]: key },
+      }));
+    try {
+      await prefetchPeerPublicKey(peerId, dmId, cachePeerKey);
+    } catch {
+      /* peer may not have registered keys yet */
+    }
+
     const wires = await api<DmMessageWire[]>(`/api/dms/${dmId}/messages`);
     const messages = await Promise.all(
       wires.map((w) =>
@@ -350,10 +360,7 @@ export const createSocialSlice: AppStoreSlice = (set, get) => ({
           w,
           peerId,
           (id) => get().peerPublicKeys[id],
-          (id, key) =>
-            set((s) => ({
-              peerPublicKeys: { ...s.peerPublicKeys, [id]: key },
-            })),
+          cachePeerKey,
         ),
       ),
     );
@@ -380,15 +387,19 @@ export const createSocialSlice: AppStoreSlice = (set, get) => ({
 
     let peerKey: string;
     try {
-      peerKey = await fetchPeerPublicKey(dm.peer.id, true);
+      peerKey = await prefetchPeerPublicKey(
+        dm.peer.id,
+        dmId,
+        (id, key) =>
+          set((s) => ({
+            peerPublicKeys: { ...s.peerPublicKeys, [id]: key },
+          })),
+      );
     } catch {
       throw new Error(
         "This person has not set up encrypted messaging on their device yet.",
       );
     }
-    set((s) => ({
-      peerPublicKeys: { ...s.peerPublicKeys, [dm.peer.id]: peerKey },
-    }));
 
     const { ciphertext, nonce } = await encryptDm(
       content.trim(),
@@ -418,14 +429,18 @@ export const createSocialSlice: AppStoreSlice = (set, get) => ({
     if (!dm) return;
     let peerKey: string;
     try {
-      peerKey = await fetchPeerPublicKey(dm.peer.id, true);
+      peerKey = await prefetchPeerPublicKey(
+        dm.peer.id,
+        dmId,
+        (id, key) =>
+          set((s) => ({
+            peerPublicKeys: { ...s.peerPublicKeys, [id]: key },
+          })),
+      );
     } catch {
       get().setError("Could not load encryption keys for this conversation.");
       return;
     }
-    set((s) => ({
-      peerPublicKeys: { ...s.peerPublicKeys, [dm.peer.id]: peerKey },
-    }));
     const { ciphertext, nonce } = await encryptDm(
       content.trim(),
       id.privateKey,

@@ -50,13 +50,22 @@ export async function ensureIdentity(userId: string): Promise<IdentityKeyPair> {
   }
 }
 
-/** Fetch a peer's public encryption key (always from server when force=true). */
-export async function fetchPeerPublicKey(
-  peerId: string,
-  _force = false,
-): Promise<string> {
+/** Fetch a peer's public encryption key from the server. */
+export async function fetchPeerPublicKey(peerId: string): Promise<string> {
   const key = await api<UserIdentityKey>(`/api/crypto/identity/${peerId}`);
   return key.public_key;
+}
+
+/** Ensure the peer's public key is cached and any stale DM AES cache is cleared. */
+export async function prefetchPeerPublicKey(
+  peerId: string,
+  dmChannelId: string,
+  setCachedPeerKey: (id: string, key: string) => void,
+): Promise<string> {
+  clearDmKeyCache(dmChannelId);
+  const pub = await fetchPeerPublicKey(peerId);
+  setCachedPeerKey(peerId, pub);
+  return pub;
 }
 
 /** Decrypt a wire-format DM using the cached local identity key. */
@@ -99,10 +108,11 @@ export async function decryptWireResilient(
     return { ...wire, content: "", decrypt_failed: true };
   }
 
-  const attempt = async (force: boolean) => {
-    let pub = force ? undefined : getCachedPeerKey(peerId);
+  const attempt = async (forceFreshKey: boolean) => {
+    if (forceFreshKey) clearDmKeyCache(wire.dm_channel_id);
+    let pub = forceFreshKey ? undefined : getCachedPeerKey(peerId);
     if (!pub) {
-      pub = await fetchPeerPublicKey(peerId, force);
+      pub = await fetchPeerPublicKey(peerId);
       setCachedPeerKey(peerId, pub);
     }
     return decryptWire(wire, pub);
@@ -111,7 +121,6 @@ export async function decryptWireResilient(
   let message = await attempt(false);
   if (!message.decrypt_failed) return message;
 
-  clearDmKeyCache(wire.dm_channel_id);
   message = await attempt(true);
   return message;
 }

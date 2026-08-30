@@ -215,6 +215,8 @@ export const createServerSlice: AppStoreSlice = (set, get) => ({
       await get().navigateToChannel(toast.serverId, toast.channelId);
     } else if (toast.kind === "dm") {
       await get().selectDm(toast.channelId);
+    } else if (toast.kind === "friend") {
+      await get().openFriendsHome();
     }
     await focusMainWindow();
   },

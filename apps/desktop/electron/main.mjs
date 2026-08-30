@@ -20,6 +20,8 @@ app.commandLine.appendSwitch("js-flags", "--expose-gc");
 let mainWindow = null;
 let voiceHostWindow = null;
 let voiceHostReady = false;
+/** Block respawn while tearing down or shortly after destroy. */
+let voiceHostTeardownUntil = 0;
 /** Commands queued until the hidden voice renderer finishes booting. */
 const pendingVoiceCommands = [];
 const popouts = new Map();
@@ -61,18 +63,60 @@ function markVoiceHostReady() {
 
 function destroyVoiceHost() {
   voiceHostReady = false;
+  voiceHostTeardownUntil = Date.now() + 3000;
   pendingVoiceCommands.length = 0;
   if (voiceHostWindow && !voiceHostWindow.isDestroyed()) {
     const wc = voiceHostWindow.webContents;
     if (wc && !wc.isDestroyed()) {
       wc.setBackgroundThrottling(true);
+      try {
+        wc.clearCache();
+      } catch {
+        /* ignore */
+      }
+      try {
+        wc.close();
+      } catch {
+        /* ignore */
+      }
     }
-    voiceHostWindow.destroy();
+    try {
+      voiceHostWindow.destroy();
+    } catch {
+      /* ignore */
+    }
   }
   voiceHostWindow = null;
 }
 
+function voiceHostSessionOps(op) {
+  return [
+    "join",
+    "join-dm",
+    "leave",
+    "toggle-mute",
+    "toggle-deafen",
+    "toggle-camera",
+    "share-screen",
+    "open-screen-picker",
+    "close-screen-picker",
+    "publish-electron-share",
+    "publish-browser-share",
+    "stop-screen-share",
+    "stop-local-share",
+    "join-remote-screen",
+    "leave-remote-screen",
+    "set-screen-share-volume",
+    "set-screen-share-muted",
+    "apply-user-mic",
+    "apply-user-video-hide",
+  ].includes(op);
+}
+
 function ensureVoiceHostWindow() {
+  if (Date.now() < voiceHostTeardownUntil) {
+    return Promise.resolve(false);
+  }
   if (voiceHostWindow && !voiceHostWindow.isDestroyed() && voiceHostReady) {
     return Promise.resolve(true);
   }
@@ -188,6 +232,7 @@ function installSessionHandlers() {
       "videoCapture",
       "display-capture",
       "mediaKeySystem",
+      "notifications",
     ].includes(permission);
     callback(allow);
   });
@@ -199,6 +244,7 @@ function installSessionHandlers() {
       "videoCapture",
       "display-capture",
       "mediaKeySystem",
+      "notifications",
     ].includes(permission),
   );
 }
@@ -331,8 +377,16 @@ function registerIpc() {
   });
 
   ipcMain.on("voice:cmd", (_evt, cmd) => {
+    const op = cmd?.op;
     if (voiceHostReady) {
       sendToVoiceHostRenderer("voice:cmd", cmd);
+      return;
+    }
+    // Never respawn the LiveKit renderer for idle state sync.
+    if (op === "sync-local") {
+      return;
+    }
+    if (!voiceHostSessionOps(op)) {
       return;
     }
     pendingVoiceCommands.push(cmd);

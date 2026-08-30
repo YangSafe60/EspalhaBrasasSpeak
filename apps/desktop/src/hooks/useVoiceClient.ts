@@ -57,6 +57,28 @@ export function useVoiceClient() {
   joiningRef.current = joining;
   const leaveFallbackTimerRef = useRef<number | null>(null);
 
+  const teardownVoiceHostProcess = useCallback(() => {
+    if (leaveFallbackTimerRef.current != null) {
+      window.clearTimeout(leaveFallbackTimerRef.current);
+      leaveFallbackTimerRef.current = null;
+    }
+    void window.electronAPI?.destroyVoiceHost?.();
+    void window.electronAPI?.trimMemory?.();
+  }, []);
+
+  const scheduleVoiceHostTeardown = useCallback(
+    (delayMs = 600) => {
+      if (leaveFallbackTimerRef.current != null) {
+        window.clearTimeout(leaveFallbackTimerRef.current);
+      }
+      leaveFallbackTimerRef.current = window.setTimeout(() => {
+        leaveFallbackTimerRef.current = null;
+        teardownVoiceHostProcess();
+      }, delayMs);
+    },
+    [teardownVoiceHostProcess],
+  );
+
   const resetVoiceSession = useCallback(() => {
     const userId = useAppStore.getState().user?.id;
     setConnected(false);
@@ -94,6 +116,14 @@ export function useVoiceClient() {
 
   const syncLocalToHost = useCallback(() => {
     const s = useAppStore.getState();
+    if (
+      !s.voiceChannelId &&
+      !s.dmCallId &&
+      !hostConnectedRef.current &&
+      !joiningRef.current
+    ) {
+      return;
+    }
     send({
       op: "sync-local",
       muted: s.muted,
@@ -150,11 +180,14 @@ export function useVoiceClient() {
         hostConnectedRef.current = false;
         teardownScreenBridgeForVoiceLeave();
         void closeAllScreenPopouts();
+        if (!evt.connected) {
+          teardownVoiceHostProcess();
+        }
       } else if (evt.connected) {
         void ensureScreenBridgeHost();
       }
     },
-    [setVoiceLocal],
+    [teardownVoiceHostProcess, setVoiceLocal],
   );
 
   useEffect(() => {
@@ -175,7 +208,14 @@ export function useVoiceClient() {
         state.deafened !== prev.deafened ||
         state.voiceStates !== prev.voiceStates
       ) {
-        syncLocalToHost();
+        if (
+          state.voiceChannelId ||
+          state.dmCallId ||
+          hostConnectedRef.current ||
+          joiningRef.current
+        ) {
+          syncLocalToHost();
+        }
       }
     });
   }, [syncLocalToHost]);
@@ -186,13 +226,8 @@ export function useVoiceClient() {
     const offEvt = api.onVoiceEvent((evt: VoiceHostEvent) => {
       if (evt.op === "state") applyHostState(evt);
       if (evt.op === "host-idle") {
-        if (leaveFallbackTimerRef.current != null) {
-          window.clearTimeout(leaveFallbackTimerRef.current);
-          leaveFallbackTimerRef.current = null;
-        }
+        teardownVoiceHostProcess();
         resetVoiceSession();
-        void api.destroyVoiceHost?.();
-        void api.trimMemory?.();
       }
     });
     const offFrame = api.onLobbyFrame?.(({ trackSid, frame }) => {
@@ -204,7 +239,7 @@ export function useVoiceClient() {
       offEvt();
       offFrame?.();
     };
-  }, [applyHostState, resetVoiceSession]);
+  }, [applyHostState, resetVoiceSession, teardownVoiceHostProcess]);
 
   useEffect(() => {
     const api = window.electronAPI;
@@ -278,23 +313,41 @@ export function useVoiceClient() {
     } catch {
       /* voice host also clears server state */
     }
-    if (leaveFallbackTimerRef.current != null) {
-      window.clearTimeout(leaveFallbackTimerRef.current);
-    }
-    leaveFallbackTimerRef.current = window.setTimeout(() => {
-      leaveFallbackTimerRef.current = null;
-      void window.electronAPI?.destroyVoiceHost?.();
-      void window.electronAPI?.trimMemory?.();
-    }, 5000);
-  }, [deafened, resetVoiceSession]);
+    scheduleVoiceHostTeardown(800);
+  }, [deafened, resetVoiceSession, scheduleVoiceHostTeardown]);
+
+  const voiceSessionActive = useCallback(() => {
+    const s = useAppStore.getState();
+    return Boolean(
+      hostConnectedRef.current ||
+        joiningRef.current ||
+        s.voiceChannelId ||
+        s.dmCallId,
+    );
+  }, []);
 
   const toggleMute = useCallback(async () => {
-    send({ op: "toggle-mute" });
-  }, []);
+    if (voiceSessionActive()) {
+      send({ op: "toggle-mute" });
+      return;
+    }
+    const state = useAppStore.getState();
+    const me = state.voiceStates.find((v) => v.user_id === state.user?.id);
+    if (me?.server_muted && state.muted) return;
+    setVoiceLocal({ muted: !state.muted });
+  }, [setVoiceLocal, voiceSessionActive]);
 
   const toggleDeafen = useCallback(async () => {
-    send({ op: "toggle-deafen" });
-  }, []);
+    if (voiceSessionActive()) {
+      send({ op: "toggle-deafen" });
+      return;
+    }
+    const state = useAppStore.getState();
+    const me = state.voiceStates.find((v) => v.user_id === state.user?.id);
+    if (me?.server_deafened && state.deafened) return;
+    const next = !state.deafened;
+    setVoiceLocal({ deafened: next, muted: next });
+  }, [setVoiceLocal, voiceSessionActive]);
 
   const toggleCamera = useCallback(async () => {
     send({ op: "toggle-camera" });

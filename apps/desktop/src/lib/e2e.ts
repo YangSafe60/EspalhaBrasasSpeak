@@ -101,8 +101,17 @@ export function clearIdentityCache(): void {
 }
 
 export function clearDmKeyCache(dmChannelId?: string): void {
-  if (dmChannelId) dmKeyCache.delete(dmChannelId);
-  else dmKeyCache.clear();
+  if (!dmChannelId) {
+    dmKeyCache.clear();
+    return;
+  }
+  for (const key of dmKeyCache.keys()) {
+    if (key.startsWith(`${dmChannelId}:`)) dmKeyCache.delete(key);
+  }
+}
+
+function dmKeyCacheKey(dmChannelId: string, peerPublicB64: string): string {
+  return `${dmChannelId}:${peerPublicB64}`;
 }
 
 async function deriveDmKey(
@@ -110,7 +119,8 @@ async function deriveDmKey(
   peerPublicB64: string,
   dmChannelId: string,
 ): Promise<CryptoKey> {
-  const cached = dmKeyCache.get(dmChannelId);
+  const cacheKey = dmKeyCacheKey(dmChannelId, peerPublicB64);
+  const cached = dmKeyCache.get(cacheKey);
   if (cached) return cached;
 
   const peerPublic = await importPublicRaw(peerPublicB64);
@@ -136,7 +146,7 @@ async function deriveDmKey(
     false,
     ["encrypt", "decrypt"],
   );
-  dmKeyCache.set(dmChannelId, aesKey);
+  dmKeyCache.set(cacheKey, aesKey);
   return aesKey;
 }
 
