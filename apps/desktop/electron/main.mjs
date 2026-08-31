@@ -209,39 +209,29 @@ function destroyVoiceHost() {
   voiceHostSessionActive = false;
   voiceHostTeardownUntil = Date.now() + 5000;
   pendingVoiceCommands.length = 0;
-  if (voiceHostWindow && !voiceHostWindow.isDestroyed()) {
-    const win = voiceHostWindow;
-    voiceHostWindow = null;
-    const wc = win.webContents;
-    if (wc && !wc.isDestroyed()) {
-      wc.setBackgroundThrottling(true);
-      try {
-        void wc.loadURL("about:blank");
-      } catch {
-        /* ignore */
-      }
-      try {
-        wc.clearCache();
-      } catch {
-        /* ignore */
-      }
-      try {
-        wc.close();
-      } catch {
-        /* ignore */
-      }
+  const win = voiceHostWindow;
+  voiceHostWindow = null;
+  if (!win || win.isDestroyed()) {
+    return;
+  }
+  const wc = win.webContents;
+  if (wc && !wc.isDestroyed()) {
+    wc.setBackgroundThrottling(true);
+    try {
+      wc.clearCache();
+    } catch {
+      /* ignore */
     }
-    setTimeout(() => {
-      if (!win.isDestroyed()) {
-        try {
-          win.destroy();
-        } catch {
-          /* ignore */
-        }
-      }
-    }, 150);
-  } else {
-    voiceHostWindow = null;
+    try {
+      wc.close();
+    } catch {
+      /* ignore */
+    }
+  }
+  try {
+    win.destroy();
+  } catch {
+    /* ignore */
   }
 }
 
@@ -589,6 +579,8 @@ function registerIpc() {
       pendingVoiceCommands.length = 0;
       if (voiceHostReady) {
         sendToVoiceHostRenderer("voice:cmd", cmd);
+      } else if (voiceHostWindow && !voiceHostWindow.isDestroyed()) {
+        destroyVoiceHost();
       }
       return;
     }

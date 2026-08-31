@@ -191,7 +191,6 @@ export function useVoiceClient() {
         void closeAllScreenPopouts();
         if (!evt.connected) {
           voiceHostUsedRef.current = false;
-          teardownVoiceHostProcess();
         }
       } else if (evt.connected) {
         void ensureScreenBridgeHost();
@@ -333,7 +332,7 @@ export function useVoiceClient() {
       /* voice host also clears server state */
     }
     if (hadVoiceHost) {
-      scheduleVoiceHostTeardown(2500);
+      scheduleVoiceHostTeardown(8000);
     } else {
       teardownVoiceHostProcess();
     }

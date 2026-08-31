@@ -32,7 +32,7 @@ export function VoiceHostApp() {
   const engine = useVoiceEngine();
   const engineRef = useRef(engine);
   engineRef.current = engine;
-  /** Avoid broadcasting idle/host-idle on first mount before any voice session. */
+  /** Avoid broadcasting idle state on first mount before any voice session. */
   const wasActiveRef = useRef(false);
 
   useEffect(() => {
@@ -144,7 +144,7 @@ export function VoiceHostApp() {
     wasActiveRef.current = false;
     void window.electronAPI?.publishVoiceEvent?.(stripScreens(engine));
     stopVoiceHostLobbyRelay();
-    void window.electronAPI?.publishVoiceEvent?.({ op: "host-idle" });
+    // host-idle is emitted only after LiveKit teardown completes (useVoiceEngine.leave).
   }, [
     engine.connected,
     engine.joining,
