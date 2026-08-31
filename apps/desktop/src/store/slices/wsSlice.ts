@@ -75,20 +75,20 @@ export const createWsSlice: AppStoreSlice = (set, get) => ({
             .flat()
             .find((c) => c.id === cid);
           if (channel?.channel_type === "text" && channel.server_id) {
+            const toast = {
+              id: event.message.id,
+              kind: "channel" as const,
+              channelId: cid,
+              serverId: channel.server_id,
+              channelName: channel.name,
+              authorName:
+                event.author.display_name || event.author.username,
+              authorAvatar: event.author.avatar_url,
+              preview: messagePreview(event.message.content || ""),
+            };
             deliverMessageAlert({
-              toast: {
-                id: event.message.id,
-                kind: "channel",
-                channelId: cid,
-                serverId: channel.server_id,
-                channelName: channel.name,
-                authorName:
-                  event.author.display_name || event.author.username,
-                authorAvatar: event.author.avatar_url,
-                preview: messagePreview(event.message.content || ""),
-              },
-              pushToast: (t) => get().pushMessageToast(t),
-              onOpen: () => get().openMessageToast(event.message.id),
+              toast,
+              onOpen: () => get().openMessageAlert(toast),
             });
           }
         }
@@ -488,18 +488,18 @@ export const createWsSlice: AppStoreSlice = (set, get) => ({
           f.requested_by !== state.user?.id &&
           shouldAlertConversation(state, false)
         ) {
+          const toast = {
+            id: `friend-${f.id}`,
+            kind: "friend" as const,
+            channelId: f.id,
+            channelName: "Friend request",
+            authorName: f.peer.display_name || f.peer.username,
+            authorAvatar: f.peer.avatar_url,
+            preview: "Sent you a friend request",
+          };
           deliverFriendRequestAlert({
-            toast: {
-              id: `friend-${f.id}`,
-              kind: "friend",
-              channelId: f.id,
-              channelName: "Friend request",
-              authorName: f.peer.display_name || f.peer.username,
-              authorAvatar: f.peer.avatar_url,
-              preview: "Sent you a friend request",
-            },
-            pushToast: (t) => get().pushMessageToast(t),
-            onOpen: () => get().openMessageToast(`friend-${f.id}`),
+            toast,
+            onOpen: () => get().openMessageAlert(toast),
           });
         }
         break;
@@ -627,20 +627,20 @@ export const createWsSlice: AppStoreSlice = (set, get) => ({
               !isDmNotificationsMuted(latest, dmChannel) &&
               shouldAlertConversation(latest, isActive)
             ) {
+              const toast = {
+                id: message.id,
+                kind: "dm" as const,
+                channelId: dmId,
+                authorName:
+                  event.author.display_name || event.author.username,
+                authorAvatar: event.author.avatar_url,
+                preview: message.decrypt_failed
+                  ? "New encrypted message"
+                  : messagePreview(message.content || ""),
+              };
               deliverMessageAlert({
-                toast: {
-                  id: message.id,
-                  kind: "dm",
-                  channelId: dmId,
-                  authorName:
-                    event.author.display_name || event.author.username,
-                  authorAvatar: event.author.avatar_url,
-                  preview: message.decrypt_failed
-                    ? "New encrypted message"
-                    : messagePreview(message.content || ""),
-                },
-                pushToast: (t) => get().pushMessageToast(t),
-                onOpen: () => get().openMessageToast(message.id),
+                toast,
+                onOpen: () => get().openMessageAlert(toast),
               });
             }
           } catch {

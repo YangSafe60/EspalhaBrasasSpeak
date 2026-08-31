@@ -207,10 +207,7 @@ export const createServerSlice: AppStoreSlice = (set, get) => ({
     }));
   },
 
-  openMessageToast: async (id) => {
-    const toast = get().messageToasts.find((t) => t.id === id);
-    if (!toast) return;
-    get().dismissMessageToast(id);
+  openMessageAlert: async (toast) => {
     if (toast.kind === "channel" && toast.serverId) {
       await get().navigateToChannel(toast.serverId, toast.channelId);
     } else if (toast.kind === "dm") {

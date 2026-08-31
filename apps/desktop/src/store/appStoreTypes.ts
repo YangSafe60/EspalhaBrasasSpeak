@@ -177,7 +177,7 @@ export interface AppState {
   navigateToChannel: (serverId: string, channelId: string) => Promise<void>;
   pushMessageToast: (toast: MessageToast) => void;
   dismissMessageToast: (id: string) => void;
-  openMessageToast: (id: string) => Promise<void>;
+  openMessageAlert: (toast: MessageToast) => Promise<void>;
   createServer: (name: string) => Promise<Server>;
   joinInvite: (code: string) => Promise<Server>;
   updateServer: (id: string, body: Partial<Server>) => Promise<void>;

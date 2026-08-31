@@ -19,7 +19,7 @@ export function isDmNotificationsMuted(
   return Boolean(friendship?.muted);
 }
 
-/** Whether to play a sound / show the in-app toast for this conversation. */
+/** Whether to play a sound / show a desktop notification for this conversation. */
 export function shouldAlertConversation(
   state: AppState,
   conversationActive: boolean,
@@ -32,7 +32,6 @@ export function shouldAlertConversation(
 
 export function deliverMessageAlert(opts: {
   toast: MessageToast;
-  pushToast: (toast: MessageToast) => void;
   onOpen: () => void | Promise<void>;
   playSound?: boolean;
 }): void {
@@ -40,7 +39,6 @@ export function deliverMessageAlert(opts: {
     const kind = opts.toast.kind === "dm" ? "dm" : "channel";
     if (notifySoundEnabled(kind)) playMessageNotify(kind);
   }
-  opts.pushToast(opts.toast);
   showDesktopNotification({
     toast: opts.toast,
     tag: opts.toast.id,
@@ -50,11 +48,9 @@ export function deliverMessageAlert(opts: {
 
 export function deliverFriendRequestAlert(opts: {
   toast: MessageToast;
-  pushToast: (toast: MessageToast) => void;
   onOpen: () => void | Promise<void>;
 }): void {
   if (notifySoundEnabled("friend")) playFriendRequestNotify();
-  opts.pushToast(opts.toast);
   showDesktopNotification({
     toast: opts.toast,
     tag: opts.toast.id,

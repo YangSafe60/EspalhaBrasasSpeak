@@ -600,8 +600,8 @@ export function UserSettingsModal() {
               <div className="notify-sound-settings stack">
                 <h4 className="notify-sound-settings-title">Notification sounds</h4>
                 <p className="muted tiny notify-sound-settings-hint">
-                  Choose which alerts play a sound. Toasts and desktop
-                  notifications still appear when the app is in the background.
+                  Choose which alerts play a sound. Desktop notifications
+                  still appear when the app is in the background.
                 </p>
                 {NOTIFY_SOUND_ORDER.map((kind) => {
                   const meta = NOTIFY_SOUND_LABELS[kind];
