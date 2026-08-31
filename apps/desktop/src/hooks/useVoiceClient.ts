@@ -332,7 +332,7 @@ export function useVoiceClient() {
       /* voice host also clears server state */
     }
     if (hadVoiceHost) {
-      scheduleVoiceHostTeardown(8000);
+      scheduleVoiceHostTeardown(5000);
     } else {
       teardownVoiceHostProcess();
     }

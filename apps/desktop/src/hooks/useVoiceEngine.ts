@@ -966,6 +966,23 @@ export function useVoiceEngine() {
         });
         room.on(getLivekit().RoomEvent.Disconnected, () => {
           if (leavingRef.current) return;
+          if (switchingRef.current) {
+            if (roomRef.current === room) {
+              roomRef.current = null;
+            }
+            setConnected(false);
+            setRemoteScreens([]);
+            setSpeakingIds([]);
+            watchingScreensRef.current.clear();
+            purgeRemoteAudio();
+            shareAudioStateRef.current.clear();
+            setShareAudioByTrack({});
+            return;
+          }
+          if (isVoiceHostWindow()) {
+            void leave();
+            return;
+          }
           if (roomRef.current === room) {
             roomRef.current = null;
           }
@@ -976,15 +993,13 @@ export function useVoiceEngine() {
           purgeRemoteAudio();
           shareAudioStateRef.current.clear();
           setShareAudioByTrack({});
-          if (!switchingRef.current) {
-            setLocalScreens([]);
-            teardownMainScreenBridge();
-            void getElectronAPI()?.setBackgroundThrottling?.(true);
-            closeVoiceSoundContext();
-            releaseLivekitModule();
-            requestRendererMemoryTrim();
-            window.setTimeout(() => requestRendererMemoryTrim(), 2500);
-          }
+          setLocalScreens([]);
+          teardownMainScreenBridge();
+          void getElectronAPI()?.setBackgroundThrottling?.(true);
+          closeVoiceSoundContext();
+          releaseLivekitModule();
+          requestRendererMemoryTrim();
+          window.setTimeout(() => requestRendererMemoryTrim(), 2500);
         });
 
         activeSessionRef.current = { kind: mode, id: targetId };
@@ -1614,11 +1629,17 @@ export function useVoiceEngine() {
           void getElectronAPI()?.setBackgroundThrottling?.(true);
           closeVoiceSoundContext();
           releaseLivekitModule();
+          if (isVoiceHostWindow()) {
+            void getElectronAPI()?.publishVoiceEvent?.({ op: "host-idle" });
+          }
         });
       } else {
         void getElectronAPI()?.setBackgroundThrottling?.(true);
         closeVoiceSoundContext();
         releaseLivekitModule();
+        if (isVoiceHostWindow()) {
+          void getElectronAPI()?.publishVoiceEvent?.({ op: "host-idle" });
+        }
       }
     };
   }, [clearJoinPullTimers, purgeRemoteAudio, teardownRoom]);

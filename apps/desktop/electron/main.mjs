@@ -23,6 +23,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
 const DEV_URL = process.env.VITE_DEV_SERVER_URL || "http://127.0.0.1:1420";
 const DEFAULT_APP_TITLE = "Espalha Brasas";
+/** Isolated session so voice/WebRTC cache does not bloat the main UI profile. */
+const VOICE_HOST_PARTITION = "persist:speakapp-voice";
 
 /** Optional separate profile for multi-account testing. */
 if (process.env.ELECTRON_USER_DATA) {
@@ -41,6 +43,8 @@ let voiceHostTeardownUntil = 0;
 let voiceHostSessionActive = false;
 /** Commands queued until the hidden voice renderer finishes booting. */
 const pendingVoiceCommands = [];
+/** Main-process safety net if the voice renderer never emits host-idle. */
+let voiceHostDestroyTimer = null;
 const popouts = new Map();
 /** Last update payload so the renderer can catch up if it mounted late. */
 let lastUpdatePayload = null;
@@ -204,14 +208,58 @@ function markVoiceHostReady() {
   flushPendingVoiceCommands();
 }
 
+function closeAllScreenPopouts() {
+  for (const win of popouts.values()) {
+    if (!win.isDestroyed()) {
+      try {
+        win.close();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  popouts.clear();
+}
+
+function clearVoiceHostDestroyFallback() {
+  if (voiceHostDestroyTimer != null) {
+    clearTimeout(voiceHostDestroyTimer);
+    voiceHostDestroyTimer = null;
+  }
+}
+
+function scheduleVoiceHostDestroyFallback(delayMs = 5000) {
+  clearVoiceHostDestroyFallback();
+  voiceHostDestroyTimer = setTimeout(() => {
+    voiceHostDestroyTimer = null;
+    if (voiceHostWindow && !voiceHostWindow.isDestroyed()) {
+      destroyVoiceHost();
+    }
+  }, delayMs);
+}
+
+async function purgeVoiceHostSession() {
+  try {
+    const voiceSes = session.fromPartition(VOICE_HOST_PARTITION);
+    await voiceSes.clearCache();
+    await voiceSes.clearStorageData();
+    voiceSes.clearHostResolverCache();
+  } catch (err) {
+    console.warn("voice:purge-session", err);
+  }
+}
+
 function destroyVoiceHost() {
+  clearVoiceHostDestroyFallback();
   voiceHostReady = false;
   voiceHostSessionActive = false;
   voiceHostTeardownUntil = Date.now() + 5000;
   pendingVoiceCommands.length = 0;
+  closeAllScreenPopouts();
   const win = voiceHostWindow;
   voiceHostWindow = null;
   if (!win || win.isDestroyed()) {
+    void purgeVoiceHostSession();
     return;
   }
   const wc = win.webContents;
@@ -227,12 +275,18 @@ function destroyVoiceHost() {
     } catch {
       /* ignore */
     }
+    try {
+      wc.forcefullyCrashRenderer();
+    } catch {
+      /* ignore */
+    }
   }
   try {
     win.destroy();
   } catch {
     /* ignore */
   }
+  void purgeVoiceHostSession();
 }
 
 /** Commands that must never recreate the hidden LiveKit window. */
@@ -300,6 +354,7 @@ function ensureVoiceHostWindow() {
     autoHideMenuBar: true,
     webPreferences: {
       preload: preloadPath(),
+      partition: VOICE_HOST_PARTITION,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -308,6 +363,8 @@ function ensureVoiceHostWindow() {
       v8CacheOptions: "code",
     },
   });
+
+  voiceHostWindow.setTitle(`${DEFAULT_APP_TITLE} Voice Host`);
 
   voiceHostWindow.on("closed", () => {
     voiceHostWindow = null;
@@ -533,16 +590,17 @@ function registerIpc() {
   });
 
   ipcMain.handle("popout:close-all", () => {
-    for (const win of popouts.values()) {
-      if (!win.isDestroyed()) win.close();
-    }
-    popouts.clear();
+    closeAllScreenPopouts();
     return true;
   });
 
   ipcMain.handle("window:set-background-throttling", (_evt, enabled) => {
+    const on = Boolean(enabled);
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.setBackgroundThrottling(Boolean(enabled));
+      mainWindow.webContents.setBackgroundThrottling(on);
+    }
+    if (voiceHostWindow && !voiceHostWindow.isDestroyed()) {
+      voiceHostWindow.webContents.setBackgroundThrottling(on);
     }
     return true;
   });
@@ -579,6 +637,7 @@ function registerIpc() {
       pendingVoiceCommands.length = 0;
       if (voiceHostReady) {
         sendToVoiceHostRenderer("voice:cmd", cmd);
+        scheduleVoiceHostDestroyFallback(5000);
       } else if (voiceHostWindow && !voiceHostWindow.isDestroyed()) {
         destroyVoiceHost();
       }
