@@ -285,7 +285,15 @@ export function useVoiceClient() {
     setDmCallId(null);
     voiceHostUsedRef.current = true;
     setVoiceLocal({ voiceChannelId: channelId, dmCallId: null });
-    await window.electronAPI?.ensureVoiceHost?.();
+    const hostReady = await window.electronAPI?.ensureVoiceHost?.();
+    if (!hostReady) {
+      setJoining(false);
+      setError("Voice engine failed to start. Try again in a moment.");
+      setVoiceChannelId(null);
+      setVoiceLocal({ voiceChannelId: null, dmCallId: null });
+      voiceHostUsedRef.current = false;
+      return;
+    }
     syncLocalToHost();
     send({ op: "join", channelId });
   }, [setVoiceLocal, syncLocalToHost]);
@@ -297,7 +305,15 @@ export function useVoiceClient() {
     setVoiceChannelId(null);
     voiceHostUsedRef.current = true;
     setVoiceLocal({ dmCallId: dmId, voiceChannelId: null });
-    await window.electronAPI?.ensureVoiceHost?.();
+    const hostReady = await window.electronAPI?.ensureVoiceHost?.();
+    if (!hostReady) {
+      setJoining(false);
+      setError("Voice engine failed to start. Try again in a moment.");
+      setDmCallId(null);
+      setVoiceLocal({ dmCallId: null, voiceChannelId: null });
+      voiceHostUsedRef.current = false;
+      return;
+    }
     syncLocalToHost();
     send({ op: "join-dm", dmId });
   }, [setVoiceLocal, syncLocalToHost]);

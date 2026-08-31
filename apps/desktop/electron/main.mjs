@@ -23,8 +23,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
 const DEV_URL = process.env.VITE_DEV_SERVER_URL || "http://127.0.0.1:1420";
 const DEFAULT_APP_TITLE = "Espalha Brasas";
-/** Isolated session so voice/WebRTC cache does not bloat the main UI profile. */
-const VOICE_HOST_PARTITION = "persist:speakapp-voice";
 
 /** Optional separate profile for multi-account testing. */
 if (process.env.ELECTRON_USER_DATA) {
@@ -238,17 +236,6 @@ function scheduleVoiceHostDestroyFallback(delayMs = 5000) {
   }, delayMs);
 }
 
-async function purgeVoiceHostSession() {
-  try {
-    const voiceSes = session.fromPartition(VOICE_HOST_PARTITION);
-    await voiceSes.clearCache();
-    await voiceSes.clearStorageData();
-    voiceSes.clearHostResolverCache();
-  } catch (err) {
-    console.warn("voice:purge-session", err);
-  }
-}
-
 function destroyVoiceHost() {
   clearVoiceHostDestroyFallback();
   voiceHostReady = false;
@@ -259,7 +246,6 @@ function destroyVoiceHost() {
   const win = voiceHostWindow;
   voiceHostWindow = null;
   if (!win || win.isDestroyed()) {
-    void purgeVoiceHostSession();
     return;
   }
   const wc = win.webContents;
@@ -275,18 +261,12 @@ function destroyVoiceHost() {
     } catch {
       /* ignore */
     }
-    try {
-      wc.forcefullyCrashRenderer();
-    } catch {
-      /* ignore */
-    }
   }
   try {
     win.destroy();
   } catch {
     /* ignore */
   }
-  void purgeVoiceHostSession();
 }
 
 /** Commands that must never recreate the hidden LiveKit window. */
@@ -324,7 +304,20 @@ function voiceHostSessionOps(op) {
 
 function ensureVoiceHostWindow() {
   if (Date.now() < voiceHostTeardownUntil) {
-    return Promise.resolve(false);
+    return new Promise((resolve) => {
+      const wait = () => {
+        if (!voiceHostSessionActive) {
+          resolve(false);
+          return;
+        }
+        if (Date.now() >= voiceHostTeardownUntil) {
+          void ensureVoiceHostWindow().then(resolve);
+          return;
+        }
+        setTimeout(wait, 100);
+      };
+      wait();
+    });
   }
   if (!voiceHostSessionActive) {
     return Promise.resolve(false);
@@ -354,7 +347,6 @@ function ensureVoiceHostWindow() {
     autoHideMenuBar: true,
     webPreferences: {
       preload: preloadPath(),
-      partition: VOICE_HOST_PARTITION,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -619,6 +611,7 @@ function registerIpc() {
 
   ipcMain.handle("voice:ensure-host", () => {
     markVoiceHostSessionActive(true);
+    clearVoiceHostDestroyFallback();
     return ensureVoiceHostWindow();
   });
 
@@ -631,6 +624,7 @@ function registerIpc() {
     const op = cmd?.op;
     if (op === "join" || op === "join-dm") {
       markVoiceHostSessionActive(true);
+      clearVoiceHostDestroyFallback();
     }
     if (op === "leave") {
       markVoiceHostSessionActive(false);

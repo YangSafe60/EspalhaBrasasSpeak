@@ -150,6 +150,8 @@ export function useVoiceEngine() {
   );
   const joinPullTimersRef = useRef<number[]>([]);
   const leavingRef = useRef(false);
+  const joiningRef = useRef(false);
+  const connectedRef = useRef(false);
 
   const syncSessionState = useCallback(
     async (body: Record<string, unknown>) => {
@@ -189,6 +191,8 @@ export function useVoiceEngine() {
   }
   mutedRef.current = muted;
   deafenedRef.current = deafened;
+  joiningRef.current = joining;
+  connectedRef.current = connected;
   activeShareIdsRef.current = activeShareIds;
 
   const syncLocalScreen = useCallback(
@@ -980,6 +984,9 @@ export function useVoiceEngine() {
             return;
           }
           if (isVoiceHostWindow()) {
+            if (joiningRef.current && !connectedRef.current) {
+              return;
+            }
             void leave();
             return;
           }
@@ -1089,6 +1096,7 @@ export function useVoiceEngine() {
           }
         }
         setError(e instanceof Error ? e.message : "Failed to join voice");
+        setJoining(false);
         if (joinGenerationRef.current === joinGen) {
           await leave();
         }
