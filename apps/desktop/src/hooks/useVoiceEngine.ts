@@ -263,7 +263,7 @@ export function useVoiceEngine() {
       const screens: RemoteScreen[] = [];
       const seen = new Set<string>();
       room.remoteParticipants.forEach((p) => {
-        if (isOwnScreenPublisher(p.identity, useAppStore.getState().user?.id)) {
+        if (isOwnScreenPublisher(p.identity, room.localParticipant.identity)) {
           p.trackPublications.forEach((pub) => {
             if (pub.isSubscribed) pub.setSubscribed(false);
           });
@@ -882,7 +882,7 @@ export function useVoiceEngine() {
             participant &&
             isOwnScreenPublisher(
               participant.identity,
-              useAppStore.getState().user?.id,
+              room.localParticipant.identity,
             )
           ) {
             pub.setSubscribed(false);

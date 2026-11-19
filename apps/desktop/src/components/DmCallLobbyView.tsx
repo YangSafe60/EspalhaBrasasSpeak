@@ -4,6 +4,7 @@ import { useLobbyPreview } from "../hooks/useLobbyPreview";
 import { openScreenPopout } from "../lib/popout";
 import { mediaCssUrl } from "../lib/mediaUrl";
 import { sameId } from "../lib/serverPerms";
+import { livekitUserId } from "../lib/screenPublisher";
 import { useAppStore } from "../store/appStore";
 import { LobbyScreenTile } from "./voice/LobbyScreenTile";
 
@@ -125,11 +126,13 @@ export function DmCallLobbyView({ voice, compact = false }: Props) {
     voice.dmCallId &&
     sameId(voice.dmCallId, dmCallId) &&
     (voice.connected || voice.joining);
+  const otherScreens = voice.remoteScreens.filter(
+    (s) => !sameId(livekitUserId(s.participantIdentity), user?.id),
+  );
   const hasStreams =
     connectedHere &&
-    (voice.localScreens.length > 0 || voice.remoteScreens.length > 0);
-  const streamTileCount =
-    voice.localScreens.length + voice.remoteScreens.length;
+    (voice.localScreens.length > 0 || otherScreens.length > 0);
+  const streamTileCount = voice.localScreens.length + otherScreens.length;
   const participants = dmCallByChannel[dmCallId] || [];
   const peerJoined = participants.some(
     (p) => !sameId(p.user_id, user?.id),
@@ -137,7 +140,7 @@ export function DmCallLobbyView({ voice, compact = false }: Props) {
 
   useEffect(() => {
     if (!connectedHere || !voice.connected) return;
-    for (const screen of voice.remoteScreens) {
+    for (const screen of otherScreens) {
       if (!screen.subscribed) {
         voice.joinRemoteScreen(screen.trackSid);
       }
@@ -146,7 +149,7 @@ export function DmCallLobbyView({ voice, compact = false }: Props) {
     connectedHere,
     voice.connected,
     voice.joinRemoteScreen,
-    voice.remoteScreens,
+    otherScreens,
   ]);
 
   async function openPopout(trackSid: string, title: string) {
@@ -231,7 +234,7 @@ export function DmCallLobbyView({ voice, compact = false }: Props) {
                 }}
               />
             ))}
-            {voice.remoteScreens.map((s) =>
+            {otherScreens.map((s) =>
               s.subscribed ? (
                 <LobbyScreenTile
                   key={s.trackSid}

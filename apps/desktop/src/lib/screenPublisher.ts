@@ -1,3 +1,5 @@
+import { sameId } from "./serverPerms";
+
 /** LiveKit identities shaped like `{userId}~screen~{source}`. */
 const MARK = "~screen~";
 
@@ -14,5 +16,9 @@ export function isOwnScreenPublisher(
   identity: string,
   userId: string | null | undefined,
 ): boolean {
-  return !!userId && isScreenPublisher(identity) && livekitUserId(identity) === userId;
+  return (
+    !!userId &&
+    isScreenPublisher(identity) &&
+    sameId(livekitUserId(identity), userId)
+  );
 }

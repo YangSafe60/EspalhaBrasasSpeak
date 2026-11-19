@@ -3,6 +3,8 @@ import type { useVoice } from "../hooks/useVoice";
 import { useLobbyPreview } from "../hooks/useLobbyPreview";
 import { openScreenPopout } from "../lib/popout";
 import { mediaCssUrl } from "../lib/mediaUrl";
+import { livekitUserId } from "../lib/screenPublisher";
+import { sameId } from "../lib/serverPerms";
 import { useAppStore } from "../store/appStore";
 import { useMemberContextMenu } from "./MemberUserMenu";
 import { VoiceChannelIcon } from "./VoiceChannelIcon";
@@ -87,9 +89,12 @@ export function VoiceLobbyView({ voice }: Props) {
   const connectedHere =
     voice.voiceChannelId === channel.id &&
     (voice.connected || voice.joining);
+  const otherScreens = voice.remoteScreens.filter(
+    (s) => !sameId(livekitUserId(s.participantIdentity), user?.id),
+  );
   const hasStage =
     connectedHere &&
-    (voice.localScreens.length > 0 || voice.remoteScreens.length > 0);
+    (voice.localScreens.length > 0 || otherScreens.length > 0);
 
   async function openPopout(trackSid: string, title: string) {
     setPopoutBusy(trackSid);
@@ -165,7 +170,7 @@ export function VoiceLobbyView({ voice }: Props) {
                 }}
               />
             ))}
-            {voice.remoteScreens.map((s) =>
+            {otherScreens.map((s) =>
               s.subscribed ? (
                 <LobbyScreenTile
                   key={s.trackSid}
