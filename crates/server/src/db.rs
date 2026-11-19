@@ -138,6 +138,14 @@ pub async fn delete_user_account(db: &SqlitePool, user_id: Uuid) -> AppResult<()
         .bind(&uid)
         .execute(&mut *tx)
         .await?;
+    sqlx::query(
+        r#"DELETE FROM voice_channel_sessions
+           WHERE channel_id NOT IN (
+             SELECT channel_id FROM voice_states WHERE channel_id IS NOT NULL
+           )"#,
+    )
+    .execute(&mut *tx)
+    .await?;
     let res = sqlx::query("DELETE FROM users WHERE id = ?")
         .bind(&uid)
         .execute(&mut *tx)

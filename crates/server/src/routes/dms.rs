@@ -653,6 +653,8 @@ pub async fn call_token(
     .execute(&state.db)
     .await?;
 
+    crate::routes::voice::sync_voice_channel_sessions(&state.db).await;
+
     broadcast_dm_call(&state, id, user.id, true, muted, deafened, streaming).await?;
 
     Ok(Json(VoiceTokenResponse {

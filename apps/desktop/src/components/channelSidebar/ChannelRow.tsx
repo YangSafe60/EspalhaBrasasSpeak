@@ -1,4 +1,4 @@
-import type { DragEvent, MouseEvent } from "react";
+import { useEffect, useState, type DragEvent, type MouseEvent } from "react";
 import { mediaCssUrl } from "../../lib/mediaUrl";
 import {
   effectiveChannelPerms,
@@ -19,6 +19,33 @@ import type { DragPayload, DropHint } from "./types";
 
 export type VoiceUserRow = VoiceStateView & { name: string };
 
+function formatVoiceDuration(totalSeconds: number): string {
+  const s = Math.max(0, totalSeconds);
+  const hours = Math.floor(s / 3600);
+  const minutes = Math.floor((s % 3600) / 60);
+  const seconds = s % 60;
+  const ss = String(seconds).padStart(2, "0");
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${ss}`;
+  }
+  return `${minutes}:${ss}`;
+}
+
+function VoiceChannelTimer({ startedAt }: { startedAt: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const elapsed = Math.floor((now - startedAt) / 1000);
+  const label = formatVoiceDuration(elapsed);
+  return (
+    <span className="voice-channel-timer" title={`In voice for ${label}`}>
+      {label}
+    </span>
+  );
+}
+
 export type ChannelRowProps = {
   channel: Channel;
   active: boolean;
@@ -35,6 +62,7 @@ export type ChannelRowProps = {
   isDraggingSelf: boolean;
   voiceUsers: VoiceUserRow[];
   speakingIds: string[];
+  voiceStartedAt?: number;
   activeServerId: string | null;
   avatarForUser: (userId: string) => string | null;
   onJoinVoice: (channelId: string) => void;
@@ -73,6 +101,7 @@ export function ChannelRow({
   isDraggingSelf,
   voiceUsers,
   speakingIds,
+  voiceStartedAt,
   activeServerId,
   avatarForUser,
   onJoinVoice,
@@ -139,6 +168,9 @@ export function ChannelRow({
           {ch.name}
           {limitLabel}
         </span>
+        {ch.channel_type === "voice" && voiceUsers.length > 0 && voiceStartedAt != null && (
+          <VoiceChannelTimer startedAt={voiceStartedAt} />
+        )}
         {muted && (
           <span className="channel-mute-icon" title={muteLabel || "Muted"} aria-label="Muted">
             <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden>

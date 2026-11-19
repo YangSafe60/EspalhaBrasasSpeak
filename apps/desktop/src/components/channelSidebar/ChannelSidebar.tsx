@@ -18,7 +18,7 @@ import {
   sameId,
 } from "../../lib/serverPerms";
 import { useAppStore } from "../../store/appStore";
-import type { Channel } from "../../types";
+import type { Channel, VoiceStateView } from "../../types";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu";
 import { useMemberContextMenu } from "../MemberUserMenu";
 import {
@@ -37,6 +37,39 @@ import type {
 } from "./types";
 
 /** Server channel list: categories, DnD reorder, voice user tree, context menus. */
+/** Clock for each occupied voice channel. Server time wins; otherwise it starts when people appear. */
+function useVoiceChannelClocks(voiceStates: VoiceStateView[]) {
+  const [clocks, setClocks] = useState<Record<string, number>>({});
+  useEffect(() => {
+    setClocks((prev) => {
+      const occupied = new Map<string, string | null>();
+      for (const state of voiceStates) {
+        if (!state.channel_id) continue;
+        const started = state.channel_started_at ?? null;
+        const current = occupied.get(state.channel_id);
+        if (!occupied.has(state.channel_id)) {
+          occupied.set(state.channel_id, started);
+        } else if (started && (!current || started < current)) {
+          occupied.set(state.channel_id, started);
+        }
+      }
+      const next: Record<string, number> = {};
+      for (const [id, started] of occupied) {
+        if (started) {
+          const ms = Date.parse(started);
+          if (Number.isFinite(ms)) {
+            next[id] = ms;
+            continue;
+          }
+        }
+        next[id] = prev[id] ?? Date.now();
+      }
+      return next;
+    });
+  }, [voiceStates]);
+  return clocks;
+}
+
 export function ChannelSidebar({
   onJoinVoice,
   speakingIds = [],
@@ -175,6 +208,8 @@ export function ChannelSidebar({
         };
       });
   }
+
+  const voiceStartedAt = useVoiceChannelClocks(voiceStates);
 
   function avatarForUser(userId: string) {
     return (
@@ -356,6 +391,7 @@ export function ChannelSidebar({
         isDraggingSelf={isDraggingSelf}
         voiceUsers={voiceUsers(ch.id)}
         speakingIds={speakingIds}
+        voiceStartedAt={voiceStartedAt[ch.id]}
         activeServerId={activeServerId}
         avatarForUser={avatarForUser}
         onJoinVoice={onJoinVoice}

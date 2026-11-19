@@ -38,6 +38,28 @@ where
     Ok(Some(Option::<Uuid>::deserialize(deserializer)?))
 }
 
+/// Start a clock the first time a voice channel has someone in it, and drop it when the last person leaves.
+pub async fn sync_voice_channel_sessions(db: &sqlx::SqlitePool) {
+    let now = Utc::now().to_rfc3339();
+    let _ = sqlx::query(
+        r#"DELETE FROM voice_channel_sessions
+           WHERE channel_id NOT IN (
+             SELECT channel_id FROM voice_states WHERE channel_id IS NOT NULL
+           )"#,
+    )
+    .execute(db)
+    .await;
+    let _ = sqlx::query(
+        r#"INSERT INTO voice_channel_sessions (channel_id, started_at)
+           SELECT DISTINCT channel_id, ?1 FROM voice_states
+           WHERE channel_id IS NOT NULL
+           ON CONFLICT(channel_id) DO NOTHING"#,
+    )
+    .bind(&now)
+    .execute(db)
+    .await;
+}
+
 #[derive(Serialize, Clone)]
 pub struct VoiceStateView {
     pub user_id: Uuid,
@@ -47,6 +69,9 @@ pub struct VoiceStateView {
     pub streaming: bool,
     pub server_muted: bool,
     pub server_deafened: bool,
+    /// When the current stretch of people in this channel began. Shared by everyone in it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel_started_at: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -148,6 +173,8 @@ pub async fn token(
     .execute(&state.db)
     .await?;
 
+    sync_voice_channel_sessions(&state.db).await;
+
     state.hub.broadcast_server(
         channel.server_id,
         &WsEvent::VoiceStateUpdate {
@@ -216,6 +243,8 @@ pub async fn clear_stale_presence(state: &AppState, user_id: Uuid) {
     .bind(user_id.to_string())
     .execute(&state.db)
     .await;
+
+    sync_voice_channel_sessions(&state.db).await;
 
     if let Some(prev) = prev_channel {
         if let Ok(channel) = db::get_channel(&state.db, prev).await {
@@ -348,6 +377,8 @@ pub async fn update_state(
     .execute(&state.db)
     .await?;
 
+    sync_voice_channel_sessions(&state.db).await;
+
     let event = WsEvent::VoiceStateUpdate {
         channel_id,
         user_id: user.id,
@@ -378,6 +409,7 @@ pub async fn update_state(
         streaming,
         server_muted,
         server_deafened,
+        channel_started_at: None,
     }))
 }
 
@@ -462,6 +494,7 @@ pub async fn moderator_set_voice(
         streaming,
         server_muted: sm,
         server_deafened: sd,
+        channel_started_at: None,
     };
     state.hub.broadcast_server(
         server_id,
@@ -509,12 +542,14 @@ pub async fn list_states(
         streaming: i64,
         server_muted: i64,
         server_deafened: i64,
+        channel_started_at: Option<String>,
     }
     let rows = sqlx::query_as::<_, Row>(
         r#"SELECT vs.user_id, vs.channel_id, vs.muted, vs.deafened, vs.streaming,
-                  vs.server_muted, vs.server_deafened
+                  vs.server_muted, vs.server_deafened, s.started_at AS channel_started_at
            FROM voice_states vs
            INNER JOIN channels c ON c.id = vs.channel_id
+           LEFT JOIN voice_channel_sessions s ON s.channel_id = vs.channel_id
            WHERE c.server_id = ?"#,
     )
     .bind(q.server_id.to_string())
@@ -531,6 +566,7 @@ pub async fn list_states(
                 streaming: r.streaming != 0,
                 server_muted: r.server_muted != 0,
                 server_deafened: r.server_deafened != 0,
+                channel_started_at: r.channel_started_at,
             })
             .collect(),
     ))

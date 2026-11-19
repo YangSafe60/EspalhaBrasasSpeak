@@ -266,6 +266,8 @@ export interface VoiceStateView {
   streaming: boolean;
   server_muted?: boolean;
   server_deafened?: boolean;
+  /** ISO time when this channel's current occupied stretch started. */
+  channel_started_at?: string | null;
 }
 
 export interface DmCallParticipant {

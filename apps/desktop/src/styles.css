@@ -980,6 +980,16 @@ input[type="number"]::-webkit-inner-spin-button {
   min-width: 0;
 }
 
+.voice-channel-timer {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.72rem;
+  letter-spacing: 0.01em;
+  color: var(--text-dim);
+  opacity: 0.9;
+}
+
 .channel-row.muted-channel .channel-btn {
   color: rgba(148, 155, 164, 0.72);
 }

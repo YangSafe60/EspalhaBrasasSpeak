@@ -436,6 +436,7 @@ pub async fn kick_member(
     .bind(user_id.to_string())
     .execute(&state.db)
     .await;
+    crate::routes::voice::sync_voice_channel_sessions(&state.db).await;
     state.hub.remove_server_member(id, user_id);
     state.hub.broadcast_server(
         id,
@@ -487,6 +488,7 @@ pub async fn leave_server(
     .bind(user.id.to_string())
     .execute(&state.db)
     .await;
+    crate::routes::voice::sync_voice_channel_sessions(&state.db).await;
     state.hub.remove_server_member(id, user.id);
     state.hub.broadcast_server(
         id,
@@ -605,6 +607,7 @@ pub async fn timeout_member(
         .bind(user_id.to_string())
         .execute(&state.db)
         .await;
+        crate::routes::voice::sync_voice_channel_sessions(&state.db).await;
         state.hub.broadcast_server(
             id,
             &WsEvent::VoiceStateUpdate {
@@ -659,9 +662,10 @@ pub async fn ban_member(
     // Drop voice presence if they were in a lobby.
     let _ = sqlx::query("UPDATE voice_states SET channel_id = NULL, streaming = 0, updated_at = ? WHERE user_id = ?")
         .bind(&now)
-        .bind(body.user_id.to_string())
-        .execute(&state.db)
-        .await;
+    .bind(body.user_id.to_string())
+    .execute(&state.db)
+    .await;
+    crate::routes::voice::sync_voice_channel_sessions(&state.db).await;
     state.hub.broadcast_server(
         id,
         &WsEvent::MemberLeave {
