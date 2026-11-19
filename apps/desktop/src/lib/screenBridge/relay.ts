@@ -1,8 +1,7 @@
 import { getElectronAPI } from "../desktop";
+import { jpegPreviewMaxWidth, startLatestJpegRelay } from "../jpegRelay";
+import { loadScreenShareQuality } from "../screenShareQuality";
 import {
-  ABS_MAX_RELAY_WIDTH,
-  DEFAULT_JPEG_QUALITY,
-  FRAME_INTERVAL_MS,
   bridgeRuntime,
   captureSources,
   relays,
@@ -49,13 +48,6 @@ export function purgeOrphanRelayElements() {
   });
 }
 
-function captureDimensions(source: CaptureElement): { w: number; h: number } {
-  if (source instanceof HTMLImageElement) {
-    return { w: source.naturalWidth, h: source.naturalHeight };
-  }
-  return { w: source.videoWidth, h: source.videoHeight };
-}
-
 function resolveCaptureVideo(trackSid: string): CaptureElement | null {
   return captureSources.get(trackSid)?.() ?? null;
 }
@@ -69,6 +61,10 @@ export function startRelay(trackSid: string) {
   if (existing) {
     return;
   }
+
+  // Desktop pop-outs get the voice-host JPEG from the main process.
+  // Encoding it again from the lobby image was a second frame of delay.
+  if (getElectronAPI()) return;
 
   const track = tracks.get(trackSid);
   const hasCapture = captureSources.has(trackSid);
@@ -100,67 +96,29 @@ export function startRelay(trackSid: string) {
     fallbackVideo.addEventListener("canplay", kickPlay);
   }
 
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
-  if (ctx) ctx.imageSmoothingEnabled = false;
-  let timer: number | null = null;
-  let rVfcHandle: number | null = null;
+  const videoForEncode = (): HTMLVideoElement | null => {
+    const source = resolveCaptureVideo(trackSid) ?? fallbackVideo;
+    return source instanceof HTMLVideoElement ? source : null;
+  };
+
+  const bound = videoForEncode();
+  if (!bound) return;
+
   let stopped = false;
-  let lastPublishedAt = 0;
-
-  const publishSnapshot = () => {
-    if (stopped || !ctx) return false;
-    const source = resolveCaptureVideo(trackSid) ?? fallbackVideo;
-    if (!source) return false;
-    const { w, h } = captureDimensions(source);
-    if (w <= 0 || h <= 0) return false;
-    const now = performance.now();
-    if (now - lastPublishedAt < FRAME_INTERVAL_MS) return false;
-    const cap = Math.min(w, ABS_MAX_RELAY_WIDTH);
-    const scale = w > cap ? cap / w : 1;
-    const tw = Math.max(1, Math.round(w * scale));
-    const th = Math.max(1, Math.round(h * scale));
-    if (canvas.width !== tw || canvas.height !== th) {
-      canvas.width = tw;
-      canvas.height = th;
-    }
-    ctx.drawImage(source, 0, 0, tw, th);
-    try {
-      const frame = canvas.toDataURL("image/jpeg", DEFAULT_JPEG_QUALITY);
-      void publishFrame({ trackSid, frame });
-      lastPublishedAt = now;
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
-  const scheduleNext = () => {
-    if (stopped) return;
-    const source = resolveCaptureVideo(trackSid) ?? fallbackVideo;
-    if (
-      source instanceof HTMLVideoElement &&
-      "requestVideoFrameCallback" in source &&
-      typeof source.requestVideoFrameCallback === "function"
-    ) {
-      rVfcHandle = source.requestVideoFrameCallback(() => {
-        publishSnapshot();
-        scheduleNext();
-      });
-      return;
-    }
-    timer = window.setTimeout(() => {
-      publishSnapshot();
-      scheduleNext();
-    }, FRAME_INTERVAL_MS);
-  };
+  const relay = startLatestJpegRelay({
+    video: bound,
+    maxWidth: jpegPreviewMaxWidth(),
+    fps: () => loadScreenShareQuality().fps,
+    onFrame: (jpeg) => {
+      void publishFrame({ trackSid, jpeg });
+    },
+  });
 
   const onEnded = () => {
     relays.get(trackSid)?.stop();
   };
   cloned?.addEventListener("ended", onEnded);
 
-  scheduleNext();
   bridgeRuntime.activeRelayViewers += 1;
   syncRelayBackgroundThrottling();
 
@@ -169,16 +127,7 @@ export function startRelay(trackSid: string) {
     stop: () => {
       if (stopped) return;
       stopped = true;
-      if (timer != null) window.clearTimeout(timer);
-      if (rVfcHandle != null) {
-        const source = resolveCaptureVideo(trackSid) ?? fallbackVideo;
-        if (
-          source instanceof HTMLVideoElement &&
-          "cancelVideoFrameCallback" in source
-        ) {
-          source.cancelVideoFrameCallback(rVfcHandle);
-        }
-      }
+      relay.stop();
       cloned?.removeEventListener("ended", onEnded);
       if (fallbackVideo) {
         fallbackVideo.removeEventListener("loadeddata", kickPlay);
@@ -193,8 +142,6 @@ export function startRelay(trackSid: string) {
         fallbackVideo.srcObject = null;
         fallbackVideo.remove();
       }
-      canvas.width = 0;
-      canvas.height = 0;
       relays.delete(trackSid);
       bridgeRuntime.activeRelayViewers = Math.max(
         0,

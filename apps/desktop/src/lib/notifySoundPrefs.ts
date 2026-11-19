@@ -69,6 +69,48 @@ export function saveNotifySoundPrefs(prefs: NotifySoundPrefs): void {
   localStorage.setItem(LEGACY_STORAGE_KEY, anyOn ? "1" : "0");
 }
 
+/** One custom MP3 for every notification kind. URL is a random public file link. */
+export const NOTIFY_SOUND_MAX_BYTES = 1024 * 1024;
+
+export type NotifySoundFile = {
+  url: string;
+  filename: string;
+};
+
+const SOUND_FILE_KEY = "eb_notify_sound_file";
+
+export function loadNotifySoundFile(): NotifySoundFile | null {
+  try {
+    const raw = localStorage.getItem(SOUND_FILE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<NotifySoundFile>;
+    const url = typeof parsed.url === "string" ? parsed.url.trim() : "";
+    const filename =
+      typeof parsed.filename === "string" ? parsed.filename.trim() : "";
+    if (!/^https:\/\/files\.catbox\.moe\/[a-z0-9]+\.mp3$/i.test(url)) return null;
+    return { url, filename: filename || "notification.mp3" };
+  } catch {
+    return null;
+  }
+}
+
+export function saveNotifySoundFile(file: NotifySoundFile | null): void {
+  if (!file) {
+    localStorage.removeItem(SOUND_FILE_KEY);
+    return;
+  }
+  localStorage.setItem(SOUND_FILE_KEY, JSON.stringify(file));
+}
+
+export function notifyMp3Error(file: { name: string; size: number }): string | null {
+  if (!file.name.toLowerCase().endsWith(".mp3")) {
+    return "Only .mp3 files can be used.";
+  }
+  if (file.size <= 0) return "That file is empty.";
+  if (file.size > NOTIFY_SOUND_MAX_BYTES) return "MP3 must be 1 MB or smaller.";
+  return null;
+}
+
 export function notifySoundEnabled(kind: NotifySoundKind): boolean {
   return loadNotifySoundPrefs()[kind];
 }

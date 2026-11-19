@@ -8,6 +8,7 @@ import {
   Perm,
 } from "../lib/serverPerms";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { ColorField } from "./ColorField";
 import { useAppStore } from "../store/appStore";
 import { ROLE_PERM_GROUPS, type Invite, type ServerEmoji } from "../types";
 
@@ -460,10 +461,7 @@ export function ServerSettingsModal() {
               Name
               <input value={name} onChange={(e) => setName(e.target.value)} required />
             </label>
-            <label>
-              Accent color
-              <input type="color" value={accent} onChange={(e) => setAccent(e.target.value)} />
-            </label>
+            <ColorField label="Accent color" value={accent} onChange={setAccent} />
             <div className="settings-section">
               <h4>Server icon</h4>
               <div className="row gap-sm" style={{ alignItems: "center" }}>
@@ -568,13 +566,12 @@ export function ServerSettingsModal() {
                     }
                   }}
                 />
+                <ColorField
+                  label="Role color"
+                  value={roleColor}
+                  onChange={setRoleColor}
+                />
                 <div className="row">
-                  <input
-                    type="color"
-                    value={roleColor}
-                    onChange={(e) => setRoleColor(e.target.value)}
-                    title="Role color"
-                  />
                   <button
                     type="button"
                     className="btn primary sm"
@@ -592,13 +589,12 @@ export function ServerSettingsModal() {
                 <p className="muted">Select a role to edit its permissions, or create one.</p>
               ) : (
                 <>
+                  <ColorField
+                    label="Role color"
+                    value={draftRoleColor}
+                    onChange={setDraftRoleColor}
+                  />
                   <div className="role-identity row">
-                    <input
-                      type="color"
-                      value={draftRoleColor}
-                      onChange={(e) => setDraftRoleColor(e.target.value)}
-                      title="Role color"
-                    />
                     <input
                       value={draftRoleName}
                       disabled={selectedRole.is_everyone}

@@ -1,8 +1,6 @@
 import type { LocalScreen, RemoteScreen } from "../hooks/voice/types";
-
-const FRAME_INTERVAL_MS = 33;
-const JPEG_QUALITY = 0.82;
-const MAX_WIDTH = 1920;
+import { jpegPreviewMaxWidth, startLatestJpegRelay } from "../lib/jpegRelay";
+import { loadScreenShareQuality } from "../lib/screenShareQuality";
 
 type RelayEntry = {
   stop: () => void;
@@ -54,48 +52,23 @@ function startRelay(
   track.attach(video);
   void video.play().catch(() => undefined);
 
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
-  let stopped = false;
-  let timer: number | null = null;
-
-  const tick = () => {
-    if (stopped || !ctx) return;
-    const w = video.videoWidth;
-    const h = video.videoHeight;
-    if (w > 0 && h > 0) {
-      const cap = Math.min(w, MAX_WIDTH);
-      const scale = w > cap ? cap / w : 1;
-      const tw = Math.max(1, Math.round(w * scale));
-      const th = Math.max(1, Math.round(h * scale));
-      if (canvas.width !== tw || canvas.height !== th) {
-        canvas.width = tw;
-        canvas.height = th;
-      }
-      ctx.drawImage(video, 0, 0, tw, th);
-      try {
-        const frame = canvas.toDataURL("image/jpeg", JPEG_QUALITY);
-        void window.electronAPI?.publishLobbyFrame?.({ trackSid, frame });
-      } catch {
-        /* ignore */
-      }
-    }
-    timer = window.setTimeout(tick, FRAME_INTERVAL_MS);
-  };
-  tick();
+  const relay = startLatestJpegRelay({
+    video,
+    maxWidth: jpegPreviewMaxWidth(),
+    fps: () => loadScreenShareQuality().fps,
+    onFrame: (jpeg) => {
+      window.electronAPI?.publishLobbyFrame?.({ trackSid, jpeg });
+    },
+  });
 
   relays.set(trackSid, {
     stop: () => {
-      if (stopped) return;
-      stopped = true;
-      if (timer != null) window.clearTimeout(timer);
+      relay.stop();
       try {
         track.detach(video);
       } catch {
         /* ignore */
       }
-      canvas.width = 0;
-      canvas.height = 0;
     },
   });
 }

@@ -98,22 +98,90 @@ export function hasPerm(bits: number, flag: number): boolean {
   return (bits & flag) === flag;
 }
 
-/** Coerce API permission values (number, numeric string, or `{ bits }`) to a bitfield. */
+/** Names match the Rust `Permissions` bitflags (JSON serializes them as `"A | B"`). */
+const PERM_NAME_TO_BIT: Record<string, number> = {
+  VIEW_CHANNEL: Perm.VIEW_CHANNEL,
+  SEND_MESSAGES: Perm.SEND_MESSAGES,
+  MANAGE_MESSAGES: Perm.MANAGE_MESSAGES,
+  CONNECT: Perm.CONNECT,
+  SPEAK: Perm.SPEAK,
+  STREAM: Perm.STREAM,
+  MUTE_MEMBERS: Perm.MUTE_MEMBERS,
+  MOVE_MEMBERS: Perm.MOVE_MEMBERS,
+  MANAGE_CHANNELS: Perm.MANAGE_CHANNELS,
+  MANAGE_ROLES: Perm.MANAGE_ROLES,
+  MANAGE_SERVER: Perm.MANAGE_SERVER,
+  KICK_MEMBERS: Perm.KICK_MEMBERS,
+  BAN_MEMBERS: Perm.BAN_MEMBERS,
+  CREATE_INVITE: Perm.CREATE_INVITE,
+  ATTACH_FILES: Perm.ATTACH_FILES,
+  ADD_REACTIONS: Perm.ADD_REACTIONS,
+  MENTION_EVERYONE: Perm.MENTION_EVERYONE,
+  MANAGE_EXPRESSIONS: Perm.MANAGE_EXPRESSIONS,
+};
+
+function bitsFromBigInt(value: bigint): number {
+  if ((value & (1n << 63n)) !== 0n) return ~0 >>> 0;
+  return Number(value & 0xffffffffn) >>> 0;
+}
+
+/** Parse `bitflags` human-readable form (`"VIEW_CHANNEL | SEND_MESSAGES"`). */
+function permBitsFromFlagString(raw: string): number {
+  const trimmed = raw.trim();
+  if (!trimmed) return 0;
+  if (/^-?\d+$/.test(trimmed)) {
+    try {
+      return bitsFromBigInt(BigInt(trimmed));
+    } catch {
+      return 0;
+    }
+  }
+  if (/^0x[0-9a-f]+$/i.test(trimmed)) {
+    try {
+      return bitsFromBigInt(BigInt(trimmed));
+    } catch {
+      return 0;
+    }
+  }
+
+  let bits = 0;
+  let administrator = false;
+  for (const part of trimmed.split("|")) {
+    const name = part.trim();
+    if (!name) continue;
+    if (name === "ADMINISTRATOR") {
+      administrator = true;
+      continue;
+    }
+    if (/^0x[0-9a-f]+$/i.test(name)) {
+      try {
+        bits |= bitsFromBigInt(BigInt(name));
+      } catch {
+        /* ignore unknown residue */
+      }
+      continue;
+    }
+    const bit = PERM_NAME_TO_BIT[name];
+    if (bit) bits |= bit;
+  }
+  if (administrator) return ~0 >>> 0;
+  return bits >>> 0;
+}
+
+/** Coerce API permission values (number, numeric string, flag names, or `{ bits }`) to a bitfield. */
 export function permBits(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value >>> 0;
   }
   if (typeof value === "bigint") {
-    return Number(value & BigInt(0xffffffff)) >>> 0;
+    return bitsFromBigInt(value);
   }
-  if (typeof value === "string" && value.trim()) {
-    const n = Number(value);
-    return Number.isFinite(n) ? n >>> 0 : 0;
+  if (typeof value === "string") {
+    return permBitsFromFlagString(value);
   }
   if (value && typeof value === "object") {
-    const obj = value as { bits?: unknown; allow?: unknown; deny?: unknown };
+    const obj = value as { bits?: unknown };
     if ("bits" in obj) return permBits(obj.bits);
-    // Some proxies expose bitflags as a single-key numeric map.
     const vals = Object.values(obj);
     if (vals.length === 1) return permBits(vals[0]);
   }

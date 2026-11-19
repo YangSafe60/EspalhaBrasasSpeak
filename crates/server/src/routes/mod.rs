@@ -161,6 +161,7 @@ pub fn router(state: AppState) -> Router {
             "/api/servers/{id}/transfer-ownership",
             post(servers::transfer_ownership),
         )
+        .route("/api/servers/{id}/leave", post(servers::leave_server))
         .route("/api/servers/{id}/members", get(servers::list_members))
         .route("/api/servers/{id}/presence", get(servers::list_presence))
         .route(

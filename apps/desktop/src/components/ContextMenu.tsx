@@ -5,6 +5,9 @@ export type ContextMenuItem = {
   label: string;
   danger?: boolean;
   disabled?: boolean;
+  divider?: boolean;
+  /** Radio or checkbox mark. Omit to hide the mark column. */
+  checked?: boolean;
   /** Nested flyout (e.g. Mute Channel durations). */
   children?: ContextMenuItem[];
   onClick?: () => void;
@@ -63,12 +66,15 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
       style={{ left: x, top: y }}
       role="menu"
     >
-      {items.map((item) => {
+      {items.map((item, index) => {
+        if (item.divider) {
+          return <div key={`div-${index}`} className="ctx-menu-divider" />;
+        }
         const hasKids = Boolean(item.children?.length);
         const subOpen = openSub === item.label;
         return (
           <div
-            key={item.label}
+            key={`${item.label}-${index}`}
             className="ctx-menu-item-wrap"
             onMouseEnter={() => {
               if (hasKids) setOpenSub(item.label);
@@ -90,27 +96,40 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
                 onClose();
               }}
             >
+              {item.checked !== undefined && (
+                <span className={`ctx-menu-mark${item.checked ? " on" : ""}`} aria-hidden />
+              )}
               <span>{item.label}</span>
               {hasKids && <span className="ctx-menu-caret">▸</span>}
             </button>
             {hasKids && subOpen && item.children && (
               <div className="ctx-menu-sub" role="menu">
-                {item.children.map((child) => (
-                  <button
-                    key={child.label}
-                    type="button"
-                    role="menuitem"
-                    className={`ctx-menu-item${child.danger ? " danger" : ""}`}
-                    disabled={child.disabled}
-                    onClick={() => {
-                      if (child.disabled) return;
-                      child.onClick?.();
-                      onClose();
-                    }}
-                  >
-                    {child.label}
-                  </button>
-                ))}
+                {item.children.map((child, childIndex) =>
+                  child.divider ? (
+                    <div key={`sub-div-${childIndex}`} className="ctx-menu-divider" />
+                  ) : (
+                    <button
+                      key={`${child.label}-${childIndex}`}
+                      type="button"
+                      role="menuitem"
+                      className={`ctx-menu-item${child.danger ? " danger" : ""}`}
+                      disabled={child.disabled}
+                      onClick={() => {
+                        if (child.disabled) return;
+                        child.onClick?.();
+                        onClose();
+                      }}
+                    >
+                      {child.checked !== undefined && (
+                        <span
+                          className={`ctx-menu-mark${child.checked ? " on" : ""}`}
+                          aria-hidden
+                        />
+                      )}
+                      <span>{child.label}</span>
+                    </button>
+                  ),
+                )}
               </div>
             )}
           </div>

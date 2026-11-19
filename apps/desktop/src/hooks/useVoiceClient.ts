@@ -5,6 +5,7 @@ import { isDesktopApp } from "../lib/desktop";
 import { api } from "../api/client";
 import { ensureScreenBridgeHost, teardownScreenBridgeForVoiceLeave } from "../lib/screenBridge";
 import { closeAllScreenPopouts } from "../lib/popout";
+import { clearLobbyFrames, dropLobbyFrame, applyLobbyJpeg } from "../lib/lobbyFrames";
 import { requestRendererMemoryTrim } from "../lib/voiceCleanup";
 import { playVoiceJoinSound, playVoiceLeaveSound } from "../lib/voiceSounds";
 import { useAppStore } from "../store/appStore";
@@ -48,7 +49,6 @@ export function useVoiceClient() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerBusy, setPickerBusy] = useState(false);
   const [activeShareIds, setActiveShareIds] = useState<string[]>([]);
-  const [lobbyFrames, setLobbyFrames] = useState<Record<string, string>>({});
 
   const roomRef = useRef(null);
   const hostConnectedRef = useRef(false);
@@ -96,7 +96,7 @@ export function useVoiceClient() {
     setPickerOpen(false);
     setPickerBusy(false);
     setActiveShareIds([]);
-    setLobbyFrames({});
+    clearLobbyFrames();
     hostConnectedRef.current = false;
     wasConnectedRef.current = false;
     setVoiceLocal({ voiceChannelId: null, dmCallId: null, streaming: false });
@@ -185,7 +185,7 @@ export function useVoiceClient() {
       }
       wasConnectedRef.current = evt.connected;
       if (!evt.voiceChannelId && !evt.dmCallId && !evt.joining) {
-        setLobbyFrames({});
+        clearLobbyFrames();
         hostConnectedRef.current = false;
         teardownScreenBridgeForVoiceLeave();
         void closeAllScreenPopouts();
@@ -233,6 +233,10 @@ export function useVoiceClient() {
     const api = window.electronAPI;
     if (!api?.onVoiceEvent) return;
     const offEvt = api.onVoiceEvent((evt: VoiceHostEvent) => {
+      if (evt.op === "ping") {
+        setPingMs(evt.pingMs);
+        return;
+      }
       if (evt.op === "state") applyHostState(evt);
       if (evt.op === "host-idle") {
         voiceHostUsedRef.current = false;
@@ -240,10 +244,8 @@ export function useVoiceClient() {
         resetVoiceSession();
       }
     });
-    const offFrame = api.onLobbyFrame?.(({ trackSid, frame }) => {
-      setLobbyFrames((prev) =>
-        prev[trackSid] === frame ? prev : { ...prev, [trackSid]: frame },
-      );
+    const offFrame = api.onLobbyFrame?.(({ trackSid, jpeg }) => {
+      applyLobbyJpeg(trackSid, jpeg);
     });
     return () => {
       offEvt();
@@ -448,12 +450,7 @@ export function useVoiceClient() {
 
   const leaveRemoteScreen = useCallback((trackSid: string) => {
     send({ op: "leave-remote-screen", trackSid });
-    setLobbyFrames((prev) => {
-      if (!(trackSid in prev)) return prev;
-      const next = { ...prev };
-      delete next[trackSid];
-      return next;
-    });
+    dropLobbyFrame(trackSid);
   }, []);
 
   const setScreenShareVolume = useCallback(
@@ -499,7 +496,6 @@ export function useVoiceClient() {
     pickerOpen,
     pickerBusy,
     activeShareIds,
-    lobbyFrames,
     isDesktop: isDesktopApp(),
     join,
     joinDm,

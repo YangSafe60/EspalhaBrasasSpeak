@@ -24,6 +24,8 @@ import { MessageEmbeds } from "./MessageEmbeds";
 import { useAppStore } from "../store/appStore";
 import type { Atmosphere, Channel, Message } from "../types";
 
+const EMPTY_MESSAGES: Message[] = [];
+
 const QUICK_EMOJIS = ["👍", "🔥", "😂"];
 /** Discord-like: group consecutive messages from the same author within this window. */
 const GROUP_WINDOW_MS = 7 * 60 * 1000;
@@ -71,7 +73,11 @@ function formatTime(iso: string): string {
 export function MessageView() {
   const activeChannelId = useAppStore((s) => s.activeChannelId);
   const channelsByServer = useAppStore((s) => s.channelsByServer);
-  const messagesByChannel = useAppStore((s) => s.messagesByChannel);
+  const messages = useAppStore((s) => {
+    const id = s.activeChannelId;
+    if (!id) return EMPTY_MESSAGES;
+    return s.messagesByChannel[id] ?? EMPTY_MESSAGES;
+  });
   const authors = useAppStore((s) => s.authors);
   const typing = useAppStore((s) => s.typing);
   const user = useAppStore((s) => s.user);
@@ -120,10 +126,6 @@ export function MessageView() {
   const channel: Channel | undefined = Object.values(channelsByServer)
     .flat()
     .find((c) => c.id === activeChannelId);
-
-  const messages = activeChannelId
-    ? messagesByChannel[activeChannelId] || []
-    : [];
 
   const typers = (activeChannelId ? typing[activeChannelId] || [] : [])
     .filter((t) => t.expires > Date.now() && t.username !== user?.username)

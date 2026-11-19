@@ -29,7 +29,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   openPopout: (opts) => ipcRenderer.invoke("popout:open", opts),
   closeAllPopouts: () => ipcRenderer.invoke("popout:close-all"),
   relaySignal: (payload) => ipcRenderer.invoke("relay:signal", payload),
-  relayFrame: (payload) => ipcRenderer.invoke("relay:frame", payload),
+  relayFrame: (payload) => ipcRenderer.send("relay:frame", payload),
   onSignal: (handler) => {
     const listener = (_event, payload) => handler(payload);
     ipcRenderer.on("relay:signal", listener);
@@ -46,6 +46,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return () => ipcRenderer.removeListener("app:update", listener);
   },
   uploadTempMedia: (payload) => ipcRenderer.invoke("media:upload-temp", payload),
+  uploadNotifySound: (payload) =>
+    ipcRenderer.invoke("media:upload-notify-sound", payload),
   uploadImage: (payload) => ipcRenderer.invoke("media:upload-image", payload),
   ensureVoiceHost: () => ipcRenderer.invoke("voice:ensure-host"),
   destroyVoiceHost: () => ipcRenderer.invoke("voice:destroy-host"),

@@ -100,6 +100,7 @@ fn row_to_message(
         reply_to_id: reply_to_id.and_then(|s| Uuid::parse_str(&s).ok()),
         edited_at: edited_at.map(|s| parse_dt(&s)),
         created_at: parse_dt(&created_at),
+        attachments: Vec::new(),
     }
 }
 
@@ -124,7 +125,7 @@ async fn load_dm_message(db: &sqlx::SqlitePool, id: Uuid) -> AppResult<DmMessage
     .fetch_optional(db)
     .await?
     .ok_or(AppError::NotFound)?;
-    Ok(row_to_message(
+    let mut message = row_to_message(
         row.id,
         row.dm_channel_id,
         row.author_id,
@@ -135,7 +136,9 @@ async fn load_dm_message(db: &sqlx::SqlitePool, id: Uuid) -> AppResult<DmMessage
         row.reply_to_id,
         row.edited_at,
         row.created_at,
-    ))
+    );
+    message.attachments = db::message_attachments(db, id).await?;
+    Ok(message)
 }
 
 pub async fn list_dms(
@@ -221,23 +224,28 @@ pub async fn list_messages(
         .await?
     };
 
-    let mut msgs: Vec<DmMessage> = rows
-        .into_iter()
-        .map(|r| {
-            row_to_message(
-                r.id,
-                r.dm_channel_id,
-                r.author_id,
-                r.ciphertext,
-                r.nonce,
-                r.sender_public_key,
-                r.recipient_public_key,
-                r.reply_to_id,
-                r.edited_at,
-                r.created_at,
-            )
-        })
-        .collect();
+    let mut msgs = Vec::with_capacity(rows.len());
+    for r in rows {
+        msgs.push(row_to_message(
+            r.id,
+            r.dm_channel_id,
+            r.author_id,
+            r.ciphertext,
+            r.nonce,
+            r.sender_public_key,
+            r.recipient_public_key,
+            r.reply_to_id,
+            r.edited_at,
+            r.created_at,
+        ));
+    }
+    let ids: Vec<String> = msgs.iter().map(|m| m.id.to_string()).collect();
+    let grouped = db::attachments_for_messages(&state.db, &ids).await?;
+    for message in &mut msgs {
+        if let Some(items) = grouped.get(&message.id.to_string()) {
+            message.attachments = items.clone();
+        }
+    }
     msgs.reverse();
     Ok(Json(msgs))
 }
@@ -249,6 +257,8 @@ pub struct CreateDmMessageReq {
     pub sender_public_key: Option<String>,
     pub recipient_public_key: Option<String>,
     pub reply_to_id: Option<Uuid>,
+    #[serde(default)]
+    pub attachment_ids: Vec<Uuid>,
 }
 
 fn normalize_public_key(key: Option<String>) -> AppResult<Option<String>> {
@@ -305,6 +315,20 @@ pub async fn create_message(
     .bind(&now)
     .execute(&state.db)
     .await?;
+
+    for aid in &body.attachment_ids {
+        let res = sqlx::query(
+            "UPDATE attachments SET message_id = ? WHERE id = ? AND message_id IS NULL AND uploader_id = ?",
+        )
+        .bind(msg_id.to_string())
+        .bind(aid.to_string())
+        .bind(user.id.to_string())
+        .execute(&state.db)
+        .await?;
+        if res.rows_affected() == 0 {
+            return Err(AppError::Forbidden);
+        }
+    }
 
     // Re-open for both sides so a closed DM reappears when someone writes.
     sqlx::query("UPDATE dm_participants SET hidden = 0 WHERE dm_channel_id = ?")

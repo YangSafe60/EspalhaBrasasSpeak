@@ -3,6 +3,12 @@ import {
   pruneExpiredMutes,
   saveChannelMutes,
 } from "../../lib/channelMutePrefs";
+import { saveServerMutes } from "../../lib/serverMutePrefs";
+import {
+  DEFAULT_SERVER_NOTIFY,
+  saveServerNotify,
+  serverNotifyOf,
+} from "../../lib/serverNotifyPrefs";
 import type { AppStoreSlice } from "./sliceTypes";
 
 export const createUiSlice: AppStoreSlice = (set, get) => ({
@@ -93,6 +99,61 @@ export const createUiSlice: AppStoreSlice = (set, get) => ({
       }
       saveChannelMutes(channelMutes);
       return { channelMutes };
+    });
+  },
+  muteServer: (serverId, durationMs) => {
+    const until = durationMs === null ? null : Date.now() + durationMs;
+    set((s) => {
+      const serverMutes = pruneExpiredMutes({
+        ...s.serverMutes,
+        [serverId]: until,
+      });
+      saveServerMutes(serverMutes);
+      const unreadByChannel = { ...s.unreadByChannel };
+      for (const channel of s.channelsByServer[serverId] || []) {
+        delete unreadByChannel[channel.id];
+      }
+      return { serverMutes, unreadByChannel };
+    });
+  },
+  unmuteServer: (serverId) => {
+    set((s) => {
+      const { [serverId]: _drop, ...rest } = s.serverMutes;
+      void _drop;
+      const serverMutes = pruneExpiredMutes(rest);
+      saveServerMutes(serverMutes);
+      return { serverMutes };
+    });
+  },
+  pruneServerMutes: () => {
+    set((s) => {
+      const serverMutes = pruneExpiredMutes(s.serverMutes);
+      if (Object.keys(serverMutes).length === Object.keys(s.serverMutes).length) {
+        return s;
+      }
+      saveServerMutes(serverMutes);
+      return { serverMutes };
+    });
+  },
+  setServerNotifyLevel: (serverId, level) => {
+    set((s) => {
+      const serverNotify = {
+        ...s.serverNotify,
+        [serverId]: { ...serverNotifyOf(s.serverNotify, serverId), level },
+      };
+      saveServerNotify(serverNotify);
+      return { serverNotify };
+    });
+  },
+  patchServerNotify: (serverId, patch) => {
+    set((s) => {
+      const current = serverNotifyOf(s.serverNotify, serverId);
+      const serverNotify = {
+        ...s.serverNotify,
+        [serverId]: { ...DEFAULT_SERVER_NOTIFY, ...current, ...patch },
+      };
+      saveServerNotify(serverNotify);
+      return { serverNotify };
     });
   },
   setActiveServer: (id) => set({ activeServerId: id }),

@@ -3,12 +3,20 @@ import { mediaCssUrl, mediaUrl } from "../lib/mediaUrl";
 import { getElectronAPI } from "../lib/desktop";
 import { loadStoredIdentity } from "../lib/identityStorage";
 import {
+  loadNotifySoundFile,
   loadNotifySoundPrefs,
   NOTIFY_SOUND_LABELS,
+  notifyMp3Error,
+  saveNotifySoundFile,
   saveNotifySoundPrefs,
+  type NotifySoundFile,
   type NotifySoundKind,
   type NotifySoundPrefs,
 } from "../lib/notifySoundPrefs";
+import {
+  invalidateNotifySoundCache,
+  previewNotifySound,
+} from "../lib/messageNotify";
 import { restoreIdentityBackup } from "../store/helpers/dmHelpers";
 import { useAppStore } from "../store/appStore";
 import { AccessibilitySettings } from "./AccessibilitySettings";
@@ -46,6 +54,11 @@ export function UserSettingsModal() {
   const [notifySounds, setNotifySounds] = useState<NotifySoundPrefs>(() =>
     loadNotifySoundPrefs(),
   );
+  const [notifySoundFile, setNotifySoundFile] = useState<NotifySoundFile | null>(
+    () => loadNotifySoundFile(),
+  );
+  const [soundBusy, setSoundBusy] = useState(false);
+  const [soundErr, setSoundErr] = useState<string | null>(null);
   const [e2eBackupJson, setE2eBackupJson] = useState("");
   const [e2eBackupMsg, setE2eBackupMsg] = useState<string | null>(null);
   const e2eIdentityMissing = useAppStore((s) => s.e2eIdentityMissing);
@@ -55,6 +68,7 @@ export function UserSettingsModal() {
   const [appVersion, setAppVersion] = useState("dev");
   const avatarRef = useRef<HTMLInputElement>(null);
   const bannerRef = useRef<HTMLInputElement>(null);
+  const notifySoundRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     void getElectronAPI()
@@ -77,6 +91,8 @@ export function UserSettingsModal() {
     setDangerPassword("");
     setDangerAction(null);
     setTab("account");
+    setNotifySoundFile(loadNotifySoundFile());
+    setSoundErr(null);
     setMsg(null);
     setErr(null);
   }, [modal, user]);
@@ -95,6 +111,42 @@ export function UserSettingsModal() {
   }, [modal, dangerAction, setModal]);
 
   if (modal !== "user-settings" || !user) return null;
+
+  async function onPickNotifySound(file: File | null) {
+    if (!file) return;
+    const rejected = notifyMp3Error(file);
+    if (rejected) {
+      setSoundErr(rejected);
+      if (notifySoundRef.current) notifySoundRef.current.value = "";
+      return;
+    }
+    const desktop = getElectronAPI();
+    if (!desktop?.uploadNotifySound) {
+      setSoundErr("Custom notification sounds need the desktop app.");
+      return;
+    }
+    setSoundBusy(true);
+    setSoundErr(null);
+    try {
+      const uploaded = await desktop.uploadNotifySound({
+        filename: file.name,
+        data: await file.arrayBuffer(),
+      });
+      const saved = {
+        url: uploaded.url,
+        filename: file.name.replace(/[/\\]/g, "_"),
+      };
+      saveNotifySoundFile(saved);
+      invalidateNotifySoundCache();
+      setNotifySoundFile(saved);
+      previewNotifySound();
+    } catch (error) {
+      setSoundErr(error instanceof Error ? error.message : "Upload failed");
+    } finally {
+      setSoundBusy(false);
+      if (notifySoundRef.current) notifySoundRef.current.value = "";
+    }
+  }
 
   async function saveAccount(e: FormEvent) {
     e.preventDefault();
@@ -624,6 +676,63 @@ export function UserSettingsModal() {
                     </label>
                   );
                 })}
+                <div className="notify-sound-file">
+                  <span>
+                    <strong>Custom sound</strong>
+                    <em className="muted tiny">
+                      One .mp3 up to 1 MB, used for every alert on this device.
+                      The file is stored on a public host under a random link.
+                    </em>
+                  </span>
+                  <p className="muted tiny notify-sound-file-name">
+                    {notifySoundFile
+                      ? notifySoundFile.filename
+                      : "Default tone"}
+                  </p>
+                  <div className="notify-sound-file-actions">
+                    <button
+                      type="button"
+                      className="btn ghost sm"
+                      disabled={soundBusy}
+                      onClick={() => notifySoundRef.current?.click()}
+                    >
+                      {soundBusy ? "Uploading…" : "Choose MP3"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn ghost sm"
+                      disabled={soundBusy}
+                      onClick={() => previewNotifySound()}
+                    >
+                      Preview
+                    </button>
+                    {notifySoundFile && (
+                      <button
+                        type="button"
+                        className="btn ghost sm"
+                        disabled={soundBusy}
+                        onClick={() => {
+                          saveNotifySoundFile(null);
+                          invalidateNotifySoundCache();
+                          setNotifySoundFile(null);
+                          setSoundErr(null);
+                        }}
+                      >
+                        Use default
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    ref={notifySoundRef}
+                    type="file"
+                    accept=".mp3,audio/mpeg"
+                    hidden
+                    onChange={(e) =>
+                      void onPickNotifySound(e.target.files?.[0] || null)
+                    }
+                  />
+                  {soundErr && <p className="form-error">{soundErr}</p>}
+                </div>
               </div>
               <button
                 type="button"

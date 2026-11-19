@@ -59,6 +59,7 @@ export type VoiceHostCommand =
 export type VoiceHostScreenMeta = Omit<LocalScreen, "track"> | Omit<RemoteScreen, "track">;
 
 export type VoiceHostEvent =
+  | { op: "ping"; pingMs: number | null }
   | {
       op: "state";
       connected: boolean;
@@ -84,5 +85,5 @@ export type VoiceHostEvent =
 
 export type VoiceLobbyFrame = {
   trackSid: string;
-  frame: string;
+  jpeg: ArrayBuffer;
 };

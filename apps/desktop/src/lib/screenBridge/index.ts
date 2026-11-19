@@ -5,6 +5,7 @@
  */
 
 import { getElectronAPI } from "../desktop";
+import { jpegBytes } from "../jpegRelay";
 import {
   purgeOrphanRelayElements,
   releaseRelay,
@@ -108,9 +109,15 @@ export async function consumeScreenInPopout(
   trackSid: string,
   target: HTMLImageElement,
 ): Promise<() => void> {
+  let lastUrl: string | null = null;
   const unsub = await subscribeFrames((msg) => {
-    if (msg.trackSid !== trackSid || !msg.frame) return;
-    target.src = msg.frame;
+    if (msg.trackSid !== trackSid || !msg.jpeg) return;
+    const url = URL.createObjectURL(
+      new Blob([jpegBytes(msg.jpeg)], { type: "image/jpeg" }),
+    );
+    target.src = url;
+    if (lastUrl) URL.revokeObjectURL(lastUrl);
+    lastUrl = url;
   });
 
   void publishSignal({ type: "request", trackSid });
@@ -128,6 +135,7 @@ export async function consumeScreenInPopout(
     window.clearInterval(retry);
     unsub();
     void publishSignal({ type: "stop", trackSid });
+    if (lastUrl) URL.revokeObjectURL(lastUrl);
     target.removeAttribute("src");
   };
 }

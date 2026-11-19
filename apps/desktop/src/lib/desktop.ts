@@ -49,10 +49,15 @@ export type ElectronAPI = {
   }) => Promise<{ ok: boolean; reused?: boolean }>;
   closeAllPopouts: () => Promise<boolean>;
   relaySignal: (payload: unknown) => Promise<boolean>;
-  relayFrame: (payload: unknown) => Promise<boolean>;
+  relayFrame: (payload: unknown) => void;
   onSignal: (handler: (payload: unknown) => void) => () => void;
   onFrame: (handler: (payload: unknown) => void) => () => void;
   onAppUpdate: (handler: (payload: AppUpdateEvent) => void) => () => void;
+  /** Upload a small MP3 notification sound to Catbox (random public URL, not on the VPS). */
+  uploadNotifySound: (payload: {
+    filename: string;
+    data: ArrayBuffer;
+  }) => Promise<{ url: string; size: number; filename: string }>;
   /** Upload a non-image file to Litterbox from the desktop process (no VPS storage). */
   uploadTempMedia: (payload: {
     filename: string;

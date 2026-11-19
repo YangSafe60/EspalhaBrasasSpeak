@@ -8,6 +8,7 @@ import {
   registerScreenCapture,
   unregisterScreenCapture,
 } from "../../lib/screenBridge";
+import { subscribeLobbyFrame } from "../../lib/lobbyFrames";
 
 export type LobbyScreenTileProps = {
   trackSid: string;
@@ -15,8 +16,8 @@ export type LobbyScreenTileProps = {
     attach: (el: HTMLMediaElement) => void;
     detach: (el?: HTMLMediaElement) => void;
   } | null;
-  /** JPEG data URL relayed from the isolated voice host (desktop). */
-  relayFrame?: string | null;
+  /** Desktop lobby paints JPEGs from the voice host. Browser attaches the track. */
+  useRelay?: boolean;
   name: string;
   badge?: string;
   busy: boolean;
@@ -53,7 +54,7 @@ function StopStreamIcon() {
 export function LobbyScreenTile({
   trackSid,
   track,
-  relayFrame,
+  useRelay = false,
   name,
   badge,
   busy,
@@ -66,31 +67,32 @@ export function LobbyScreenTile({
   const videoRef = useRef<HTMLVideoElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const [expanded, setExpanded] = useState(false);
-  const useRelay = relayFrame !== undefined;
+  const useRelayPreview = useRelay;
 
   useEffect(() => {
-    if (useRelay || !track) return;
+    if (useRelayPreview || !track) return;
     const el = videoRef.current;
     if (!el) return;
     track.attach(el);
     return () => {
       track.detach(el);
     };
-  }, [track, useRelay]);
+  }, [track, useRelayPreview]);
 
   useEffect(() => {
-    if (!useRelay) return;
-    const img = imgRef.current;
-    if (!img || !relayFrame) return;
-    img.src = relayFrame;
-  }, [relayFrame, useRelay]);
+    if (!useRelayPreview) return;
+    return subscribeLobbyFrame(trackSid, (url) => {
+      const img = imgRef.current;
+      if (img) img.src = url;
+    });
+  }, [trackSid, useRelayPreview]);
 
   useEffect(() => {
     registerScreenCapture(trackSid, () =>
-      useRelay ? imgRef.current : videoRef.current,
+      useRelayPreview ? imgRef.current : videoRef.current,
     );
     return () => unregisterScreenCapture(trackSid);
-  }, [trackSid, useRelay]);
+  }, [trackSid, useRelayPreview]);
 
   useEffect(() => {
     if (!expanded) return;
@@ -115,7 +117,7 @@ export function LobbyScreenTile({
       className={`lobby-screen-tile${expanded ? " is-expanded" : ""}`}
       ref={tileRef}
     >
-      {useRelay ? (
+      {useRelayPreview ? (
         <img
           ref={imgRef}
           className="lobby-screen-relay-img"

@@ -459,6 +459,45 @@ pub async fn kick_member(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+/// Member leaves a server they do not own.
+pub async fn leave_server(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<serde_json::Value>> {
+    let server = db::get_server(&state.db, id).await?;
+    if server.owner_id == user.id {
+        return Err(AppError::BadRequest(
+            "Transfer ownership before leaving this server.".into(),
+        ));
+    }
+    if !db::is_member(&state.db, id, user.id).await? {
+        return Err(AppError::Forbidden);
+    }
+    sqlx::query("DELETE FROM members WHERE server_id = ? AND user_id = ?")
+        .bind(id.to_string())
+        .bind(user.id.to_string())
+        .execute(&state.db)
+        .await?;
+    let now = Utc::now().to_rfc3339();
+    let _ = sqlx::query(
+        "UPDATE voice_states SET channel_id = NULL, streaming = 0, updated_at = ? WHERE user_id = ?",
+    )
+    .bind(&now)
+    .bind(user.id.to_string())
+    .execute(&state.db)
+    .await;
+    state.hub.remove_server_member(id, user.id);
+    state.hub.broadcast_server(
+        id,
+        &WsEvent::MemberLeave {
+            server_id: id,
+            user_id: user.id,
+        },
+    );
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 #[derive(Deserialize)]
 pub struct ModVoiceReq {
     pub server_muted: Option<bool>,

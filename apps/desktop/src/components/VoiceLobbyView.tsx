@@ -138,11 +138,7 @@ export function VoiceLobbyView({ voice }: Props) {
                 key={s.trackSid}
                 trackSid={s.trackSid}
                 track={"track" in s ? s.track : null}
-                relayFrame={
-                  "lobbyFrames" in voice
-                    ? voice.lobbyFrames[s.trackSid]
-                    : undefined
-                }
+                useRelay={voice.isDesktop}
                 name={
                   voice.localScreens.length > 1
                     ? `Screen share ${i + 1}`
@@ -173,11 +169,7 @@ export function VoiceLobbyView({ voice }: Props) {
                   key={s.trackSid}
                   trackSid={s.trackSid}
                   track={s.track}
-                  relayFrame={
-                    "lobbyFrames" in voice
-                      ? voice.lobbyFrames[s.trackSid]
-                      : undefined
-                  }
+                  useRelay={voice.isDesktop}
                   name={s.participantName}
                   busy={popoutBusy === s.trackSid}
                   onPopout={() =>

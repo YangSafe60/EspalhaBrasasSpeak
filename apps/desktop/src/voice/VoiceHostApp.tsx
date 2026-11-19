@@ -149,7 +149,6 @@ export function VoiceHostApp() {
     engine.connected,
     engine.joining,
     engine.error,
-    engine.pingMs,
     engine.cameraOn,
     engine.voiceChannelId,
     engine.dmCallId,
@@ -163,6 +162,14 @@ export function VoiceHostApp() {
     engine.pickerBusy,
     engine.activeShareIds,
   ]);
+
+  useEffect(() => {
+    if (!engine.connected) return;
+    void window.electronAPI?.publishVoiceEvent?.({
+      op: "ping",
+      pingMs: engine.pingMs,
+    });
+  }, [engine.connected, engine.pingMs]);
 
   useEffect(() => {
     if (!engine.connected && !engine.joining) {

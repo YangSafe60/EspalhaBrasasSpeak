@@ -221,6 +221,7 @@ export interface DmMessageWire {
   reply_to_id: string | null;
   edited_at: string | null;
   created_at: string;
+  attachments?: Attachment[];
 }
 
 /** Client-side DM after decrypt. */
@@ -234,6 +235,7 @@ export interface DmMessage {
   reply_to_id: string | null;
   edited_at: string | null;
   created_at: string;
+  attachments?: Attachment[];
   decrypt_failed?: boolean;
 }
 

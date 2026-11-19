@@ -18,6 +18,7 @@ import {
   type Role,
 } from "../types";
 import { ChannelIntegrationsPanel } from "./ChannelIntegrationsPanel";
+import { ColorField } from "./ColorField";
 
 type Tab = "overview" | "permissions" | "integrations" | "danger";
 
@@ -77,6 +78,27 @@ function findEveryoneRole(roles: Role[]): Role | undefined {
 
 function isRoleOverwrite(o: PermissionOverwrite): boolean {
   return String(o.target_type).toLowerCase() === "role";
+}
+
+/** Discord-style staff: admin, or a role that can moderate the server. */
+const STAFF_PERM_BITS = [
+  Perm.MANAGE_CHANNELS,
+  Perm.MANAGE_ROLES,
+  Perm.MANAGE_SERVER,
+  Perm.KICK_MEMBERS,
+  Perm.BAN_MEMBERS,
+  Perm.MUTE_MEMBERS,
+];
+
+function isStaffRole(role: Role): boolean {
+  if (isEveryoneRole(role)) return false;
+  const bits = permBits(role.permissions);
+  return STAFF_PERM_BITS.some((bit) => hasPerm(bits, bit));
+}
+
+/** Roles that keep access when a channel is first locked. */
+function defaultLockAccessRoleIds(roles: Role[]): string[] {
+  return roles.filter(isStaffRole).map((role) => role.id);
 }
 
 function rolesForServer(
@@ -669,17 +691,14 @@ export function ChannelSettingsModal() {
                     <p className="muted tiny">
                       Pick a preset look for this channel, or set a custom text color.
                     </p>
-                    <label>
-                      Text color
-                      <input
-                        type="color"
-                        value={textColor}
-                        onChange={(e) => {
-                          setTextColor(e.target.value);
-                          setAtmosphere("");
-                        }}
-                      />
-                    </label>
+                    <ColorField
+                      label="Text color"
+                      value={textColor}
+                      onChange={(hex) => {
+                        setTextColor(hex);
+                        setAtmosphere("");
+                      }}
+                    />
                     <div className="preset-row">
                       {(Object.keys(ATMOSPHERE_PRESETS) as Atmosphere[]).map((key) => (
                         <button
@@ -804,8 +823,10 @@ export function ChannelSettingsModal() {
                   <div className="settings-section private-lock-card">
                     <h4>Private channel</h4>
                     <p className="muted tiny">
-                      Lock this channel so only chosen roles can see and open it.
-                      Server owners always retain access.
+                      Lock this channel so @everyone can no longer see or join it.
+                      Roles with admin or moderator permissions keep access.
+                      You can add or remove other roles below. Server owners and
+                      administrators always retain access.
                     </p>
                     <label className="check-row">
                       <input
@@ -818,22 +839,16 @@ export function ChannelSettingsModal() {
                             setAccessRoleIds([]);
                             return;
                           }
-                          setAccessRoleIds((ids) => {
-                            if (ids.length > 0) return ids;
-                            const myRole = roles.find(
-                              (r) =>
-                                !isEveryoneRole(r) &&
-                                me?.role_ids.some((id) => sameId(id, r.id)),
-                            );
-                            return myRole ? [myRole.id] : ids;
-                          });
+                          setAccessRoleIds(defaultLockAccessRoleIds(roles));
                         }}
                       />
                       <span>Make private / locked</span>
                     </label>
                     {privateLocked && (
                       <div className="private-role-list">
-                        <p className="muted tiny">Who can access:</p>
+                        <p className="muted tiny">
+                          Who can access (admin and moderator roles start selected):
+                        </p>
                         {roles
                           .filter((r) => !isEveryoneRole(r))
                           .map((role) => (
@@ -870,7 +885,7 @@ export function ChannelSettingsModal() {
                     <button
                       type="button"
                       className="btn primary sm"
-                      disabled={busy || (privateLocked && accessRoleIds.length === 0)}
+                      disabled={busy}
                       onClick={() => void onSavePrivateLock()}
                     >
                       {busy ? "Saving…" : "Save lock settings"}

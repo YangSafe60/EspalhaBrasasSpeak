@@ -55,6 +55,17 @@ const NOTIFY_MARGIN = 16;
 const NOTIFY_GAP = 10;
 const NOTIFY_TTL_MS = 7000;
 
+function isMp3Buffer(buf) {
+  if (buf.length < 3) return false;
+  if (buf[0] === 0x49 && buf[1] === 0x44 && buf[2] === 0x33) return true;
+  if (buf[0] !== 0xff || buf.length < 2) return false;
+  const next = buf[1];
+  const synced = (next & 0xe0) === 0xe0;
+  const versionOk = (next & 0x18) !== 0x08;
+  const layerOk = (next & 0x06) !== 0x00;
+  return synced && versionOk && layerOk;
+}
+
 function notifyAppIconUrl() {
   const candidates = [
     path.join(__dirname, "..", "dist", "icon-192.png"),
@@ -675,6 +686,12 @@ function registerIpc() {
 
   ipcMain.on("voice:lobby-frame", (_evt, payload) => {
     sendToMainRenderer("voice:lobby-frame", payload);
+    const sid = payload?.trackSid;
+    if (!sid) return;
+    const win = popouts.get(`screen-${sid}`);
+    if (win && !win.isDestroyed()) {
+      win.webContents.send("relay:frame", payload);
+    }
   });
 
   ipcMain.on("voice:host-ready", () => {
@@ -689,15 +706,14 @@ function registerIpc() {
     return true;
   });
 
-  ipcMain.handle("relay:frame", (_evt, payload) => {
-    // Don't fan JPEG frames into every window — only the matching popout.
+  ipcMain.on("relay:frame", (_evt, payload) => {
+    // Browser fallback only. Desktop pop-outs are fed from voice:lobby-frame.
     const sid = payload?.trackSid;
-    if (!sid) return true;
+    if (!sid) return;
     const win = popouts.get(`screen-${sid}`);
     if (win && !win.isDestroyed()) {
       win.webContents.send("relay:frame", payload);
     }
-    return true;
   });
 
   /** Upload non-image files from the user's machine (bypasses VPS + CORS). */
@@ -745,6 +761,58 @@ function registerIpc() {
       );
     }
     return { url: text, size: buf.length, filename, contentType };
+  });
+
+  /**
+   * Notification sounds: same off-server upload as other files, but permanent
+   * Catbox (random files.catbox.moe link) instead of a 72h Litterbox file.
+   * Only small MP3s — this is not a general upload endpoint.
+   */
+  ipcMain.handle("media:upload-notify-sound", async (_evt, payload = {}) => {
+    const filename = String(payload.filename || "notify.mp3").replace(/[/\\]/g, "_");
+    if (!filename.toLowerCase().endsWith(".mp3")) {
+      throw new Error("Only .mp3 files can be used as a notification sound");
+    }
+    const raw = payload.data;
+    if (!raw) {
+      throw new Error("file data required");
+    }
+    const buf = Buffer.isBuffer(raw)
+      ? raw
+      : Buffer.from(raw instanceof ArrayBuffer ? raw : new Uint8Array(raw));
+    const maxBytes = 1024 * 1024;
+    if (buf.length === 0) {
+      throw new Error("empty file");
+    }
+    if (buf.length > maxBytes) {
+      throw new Error("MP3 must be 1 MB or smaller");
+    }
+    if (!isMp3Buffer(buf)) {
+      throw new Error("That file is not a valid MP3");
+    }
+
+    const form = new FormData();
+    form.append("reqtype", "fileupload");
+    form.append(
+      "fileToUpload",
+      new Blob([new Uint8Array(buf)], { type: "audio/mpeg" }),
+      filename,
+    );
+
+    const res = await fetch("https://catbox.moe/user/api.php", {
+      method: "POST",
+      headers: { "User-Agent": "EspalhaBrasas/0.1" },
+      body: form,
+    });
+    const text = (await res.text()).trim();
+    if (!res.ok || !/^https:\/\/files\.catbox\.moe\/[a-z0-9]+\.mp3$/i.test(text)) {
+      throw new Error(
+        text && text.length < 200
+          ? `Upload failed: ${text}`
+          : `Upload failed (${res.status})`,
+      );
+    }
+    return { url: text, size: buf.length, filename };
   });
 
   /** Upload images to ImgBB from the desktop process (bypasses VPS for file bytes). */

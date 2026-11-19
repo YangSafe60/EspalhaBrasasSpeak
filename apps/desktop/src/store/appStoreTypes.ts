@@ -20,6 +20,12 @@ import type {
   WsEvent,
 } from "../types";
 import type { ChannelMuteMap } from "../lib/channelMutePrefs";
+import type { ServerMuteMap } from "../lib/serverMutePrefs";
+import type {
+  ServerNotifyLevel,
+  ServerNotifyMap,
+  ServerNotifyPref,
+} from "../lib/serverNotifyPrefs";
 
 export type ModalKind =
   | null
@@ -112,6 +118,8 @@ export interface AppState {
   } | null;
   /** channelId → mutedUntil ms, or null = until unmuted */
   channelMutes: ChannelMuteMap;
+  serverMutes: ServerMuteMap;
+  serverNotify: ServerNotifyMap;
   /** Unread text-message counts (suppressed while muted). */
   unreadByChannel: Record<string, number>;
   messageToasts: MessageToast[];
@@ -140,6 +148,15 @@ export interface AppState {
   muteChannel: (channelId: string, durationMs: number | null) => void;
   unmuteChannel: (channelId: string) => void;
   pruneChannelMutes: () => void;
+  muteServer: (serverId: string, durationMs: number | null) => void;
+  unmuteServer: (serverId: string) => void;
+  pruneServerMutes: () => void;
+  setServerNotifyLevel: (serverId: string, level: ServerNotifyLevel) => void;
+  patchServerNotify: (
+    serverId: string,
+    patch: Partial<Omit<ServerNotifyPref, "level">>,
+  ) => void;
+  leaveServer: (id: string) => Promise<void>;
   setActiveServer: (id: string | null) => void;
   setActiveChannel: (id: string | null) => void;
   setVoiceLocal: (partial: {
@@ -288,7 +305,11 @@ export interface AppState {
   /** Open the DM with a peer and start a private 1:1 voice call. */
   startDmCallWithPeer: (peerId: string) => Promise<void>;
   loadDmMessages: (dmId: string) => Promise<void>;
-  sendDmMessage: (dmId: string, content: string) => Promise<void>;
+  sendDmMessage: (
+    dmId: string,
+    content: string,
+    attachmentIds?: string[],
+  ) => Promise<void>;
   editDmMessage: (messageId: string, dmId: string, content: string) => Promise<void>;
   deleteDmMessage: (messageId: string, dmId: string) => Promise<void>;
   sendDmTyping: (dmId: string) => Promise<void>;

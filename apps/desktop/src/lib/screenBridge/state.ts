@@ -3,18 +3,15 @@ export type ScreenBridgeSignal =
   | { type: "request"; trackSid: string }
   | { type: "stop"; trackSid: string };
 
-/** JPEG snapshot relayed to the pop-out window. */
-export type ScreenBridgeFrame = { trackSid: string; frame: string };
+/** JPEG snapshot relayed to the pop-out window (raw bytes, not a data URL). */
+export type ScreenBridgeFrame = { trackSid: string; jpeg: ArrayBuffer };
 
 export type Unlisten = () => void;
 
 export type RelayEntry = { stop: () => void; viewers: number };
 
-/** Preserve stream detail up to 4K in pop-out relay. */
-export const ABS_MAX_RELAY_WIDTH = 3840;
-export const DEFAULT_JPEG_QUALITY = 0.9;
-/** Fallback timer when requestVideoFrameCallback is unavailable. */
-export const FRAME_INTERVAL_MS = 16;
+/** Local JPEG preview cap. The LiveKit stream still uses the chosen preset. */
+export const ABS_MAX_RELAY_WIDTH = 1920;
 
 /** Registered MediaStreamTrack by LiveKit trackSid (fallback capture path). */
 export const tracks = new Map<string, MediaStreamTrack>();

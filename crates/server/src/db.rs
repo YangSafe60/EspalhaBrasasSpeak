@@ -4,7 +4,8 @@ use speakapp_shared::{
     Attachment, Channel, ChannelType, Member, Message, OverwriteTarget, PermissionOverwrite,
     Permissions, PresenceStatus, ReactionSummary, Role, Server, ServerRule, UserPublic,
 };
-use sqlx::SqlitePool;
+use sqlx::{Sqlite, SqlitePool};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -802,7 +803,7 @@ pub async fn load_message(db: &SqlitePool, id: Uuid, viewer_id: Uuid) -> AppResu
     })
 }
 
-async fn message_attachments(db: &SqlitePool, message_id: Uuid) -> AppResult<Vec<Attachment>> {
+pub async fn message_attachments(db: &SqlitePool, message_id: Uuid) -> AppResult<Vec<Attachment>> {
     #[derive(sqlx::FromRow)]
     struct ARow {
         id: String,
@@ -861,6 +862,90 @@ async fn message_reactions(
         .collect())
 }
 
+pub async fn attachments_for_messages(
+    db: &SqlitePool,
+    message_ids: &[String],
+) -> AppResult<HashMap<String, Vec<Attachment>>> {
+    let mut grouped: HashMap<String, Vec<Attachment>> = HashMap::new();
+    if message_ids.is_empty() {
+        return Ok(grouped);
+    }
+    #[derive(sqlx::FromRow)]
+    struct ARow {
+        id: String,
+        message_id: String,
+        filename: String,
+        content_type: String,
+        size: i64,
+        url: String,
+    }
+    let placeholders = vec!["?"; message_ids.len()].join(",");
+    let sql = format!(
+        "SELECT id, message_id, filename, content_type, size, url FROM attachments WHERE message_id IN ({placeholders}) ORDER BY rowid"
+    );
+    let mut query = sqlx::query_as::<Sqlite, ARow>(&sql);
+    for id in message_ids {
+        query = query.bind(id);
+    }
+    let rows = query.fetch_all(db).await?;
+    for r in rows {
+        grouped
+            .entry(r.message_id.clone())
+            .or_default()
+            .push(Attachment {
+                id: Uuid::parse_str(&r.id).unwrap(),
+                message_id: Uuid::parse_str(&r.message_id).unwrap(),
+                filename: r.filename,
+                content_type: r.content_type,
+                size: r.size as u64,
+                url: r.url,
+            });
+    }
+    Ok(grouped)
+}
+
+pub async fn reactions_for_messages(
+    db: &SqlitePool,
+    message_ids: &[String],
+    viewer_id: Uuid,
+) -> AppResult<HashMap<String, Vec<ReactionSummary>>> {
+    let mut grouped: HashMap<String, Vec<ReactionSummary>> = HashMap::new();
+    if message_ids.is_empty() {
+        return Ok(grouped);
+    }
+    #[derive(sqlx::FromRow)]
+    struct RRow {
+        message_id: String,
+        emoji: String,
+        count: i64,
+        me: i64,
+    }
+    let placeholders = vec!["?"; message_ids.len()].join(",");
+    let sql = format!(
+        r#"SELECT message_id, emoji, COUNT(*) as count,
+           SUM(CASE WHEN user_id = ? THEN 1 ELSE 0 END) as me
+           FROM reactions WHERE message_id IN ({placeholders})
+           GROUP BY message_id, emoji"#
+    );
+    let mut query = sqlx::query_as::<Sqlite, RRow>(&sql);
+    query = query.bind(viewer_id.to_string());
+    for id in message_ids {
+        query = query.bind(id);
+    }
+    let rows = query.fetch_all(db).await?;
+    for r in rows {
+        grouped
+            .entry(r.message_id)
+            .or_default()
+            .push(ReactionSummary {
+                emoji: r.emoji,
+                count: r.count as u32,
+                me: r.me > 0,
+            });
+    }
+    Ok(grouped)
+}
+
 pub async fn list_messages(
     db: &SqlitePool,
     channel_id: Uuid,
@@ -868,14 +953,25 @@ pub async fn list_messages(
     limit: i64,
     viewer_id: Uuid,
 ) -> AppResult<Vec<Message>> {
+    let limit = limit.clamp(1, 100);
     #[derive(sqlx::FromRow)]
     struct MRow {
         id: String,
+        channel_id: String,
+        author_id: String,
+        content: String,
+        reply_to_id: Option<String>,
+        edited_at: Option<String>,
+        created_at: String,
+        webhook_id: Option<String>,
+        webhook_name: Option<String>,
+        bot_id: Option<String>,
+        bot_name: Option<String>,
     }
-    let limit = limit.clamp(1, 100);
-    let ids: Vec<MRow> = if let Some(before_id) = before {
+    let rows: Vec<MRow> = if let Some(before_id) = before {
         sqlx::query_as(
-            r#"SELECT id FROM messages
+            r#"SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, webhook_id, webhook_name, bot_id, bot_name
+               FROM messages
                WHERE channel_id = ? AND created_at < (SELECT created_at FROM messages WHERE id = ?)
                ORDER BY created_at DESC LIMIT ?"#,
         )
@@ -886,7 +982,8 @@ pub async fn list_messages(
         .await?
     } else {
         sqlx::query_as(
-            "SELECT id FROM messages WHERE channel_id = ? ORDER BY created_at DESC LIMIT ?",
+            r#"SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, webhook_id, webhook_name, bot_id, bot_name
+               FROM messages WHERE channel_id = ? ORDER BY created_at DESC LIMIT ?"#,
         )
         .bind(channel_id.to_string())
         .bind(limit)
@@ -894,10 +991,33 @@ pub async fn list_messages(
         .await?
     };
 
-    let mut out = Vec::with_capacity(ids.len());
-    for row in ids {
-        let id = Uuid::parse_str(&row.id).unwrap();
-        out.push(load_message(db, id, viewer_id).await?);
+    let ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+    let attachments = attachments_for_messages(db, &ids).await?;
+    let reactions = reactions_for_messages(db, &ids, viewer_id).await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let id_key = row.id.clone();
+        out.push(Message {
+            id: Uuid::parse_str(&row.id).unwrap(),
+            channel_id: Uuid::parse_str(&row.channel_id).unwrap(),
+            author_id: Uuid::parse_str(&row.author_id).unwrap(),
+            content: row.content,
+            reply_to_id: row.reply_to_id.and_then(|x| Uuid::parse_str(&x).ok()),
+            edited_at: row.edited_at.and_then(|s| {
+                DateTime::parse_from_rfc3339(&s)
+                    .ok()
+                    .map(|d| d.with_timezone(&Utc))
+            }),
+            created_at: DateTime::parse_from_rfc3339(&row.created_at)
+                .map(|d| d.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now()),
+            attachments: attachments.get(&id_key).cloned().unwrap_or_default(),
+            reactions: reactions.get(&id_key).cloned().unwrap_or_default(),
+            webhook_id: row.webhook_id.and_then(|x| Uuid::parse_str(&x).ok()),
+            webhook_name: row.webhook_name,
+            bot_id: row.bot_id.and_then(|x| Uuid::parse_str(&x).ok()),
+            bot_name: row.bot_name,
+        });
     }
     out.reverse();
     Ok(out)

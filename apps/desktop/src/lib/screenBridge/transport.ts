@@ -73,7 +73,7 @@ export async function subscribeFrames(
     cleanups.push(
       electron.onFrame((payload) => {
         const msg = payload as ScreenBridgeFrame;
-        if (msg?.trackSid && msg.frame) handler(msg);
+        if (msg?.trackSid && msg.jpeg) handler(msg);
       }),
     );
   }
@@ -82,8 +82,8 @@ export async function subscribeFrames(
     const bc = new BroadcastChannel(CHANNEL);
     bc.onmessage = (ev: MessageEvent) => {
       const data = ev.data;
-      if (data?.type === "frame" && data.trackSid && data.frame) {
-        handler({ trackSid: data.trackSid, frame: data.frame });
+      if (data?.type === "frame" && data.trackSid && data.jpeg) {
+        handler({ trackSid: data.trackSid, jpeg: data.jpeg });
       }
     };
     cleanups.push(() => bc.close());

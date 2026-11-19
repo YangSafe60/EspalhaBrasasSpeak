@@ -1,5 +1,10 @@
 /** WebSocket event handler: real-time sync for messages, presence, voice, and social. */
 import { channelIsMuted } from "../../lib/channelMutePrefs";
+import { serverIsMuted } from "../../lib/serverMutePrefs";
+import {
+  serverMessageShouldAlert,
+  serverNotifyOf,
+} from "../../lib/serverNotifyPrefs";
 import { messagePreview } from "../../lib/messagePreview";
 import {
   deliverFriendRequestAlert,
@@ -38,12 +43,46 @@ export const createWsSlice: AppStoreSlice = (set, get) => ({
         const isSelf = state.user?.id === event.author.id;
         const isActive = state.activeChannelId === cid;
         const muted = channelIsMuted(state.channelMutes, cid);
+        const channel = Object.values(state.channelsByServer)
+          .flat()
+          .find((c) => c.id === cid);
+        const serverMuted = channel
+          ? serverIsMuted(state.serverMutes, channel.server_id)
+          : false;
+        const notifyPref = channel
+          ? serverNotifyOf(state.serverNotify, channel.server_id)
+          : null;
+        const hideUnread = muted || serverMuted || notifyPref?.level === "nothing";
+        const memberKey = channel
+          ? Object.keys(state.membersByServer).find((id) =>
+              id === channel.server_id,
+            )
+          : undefined;
+        const me = memberKey
+          ? (state.membersByServer[memberKey] || []).find(
+              (m) => m.user.id === state.user?.id,
+            )
+          : undefined;
+        const roleKey = channel
+          ? Object.keys(state.rolesByServer).find((id) => id === channel.server_id)
+          : undefined;
+        const roles = roleKey ? state.rolesByServer[roleKey] || [] : [];
+        const allowAlert =
+          !serverMuted &&
+          (notifyPref == null ||
+            serverMessageShouldAlert(
+              notifyPref,
+              event.message.content || "",
+              state.user,
+              roles,
+              me?.role_ids || [],
+            ));
         set((s) => {
           const authors = { ...s.authors, [event.author.id]: event.author };
           // Don't grow caches for channels we've never opened.
           if (!(cid in s.messagesByChannel) && cid !== s.activeChannelId) {
             const next: Partial<AppState> = { authors };
-            if (!isSelf && !isActive && !muted) {
+            if (!isSelf && !isActive && !hideUnread) {
               next.unreadByChannel = {
                 ...s.unreadByChannel,
                 [cid]: (s.unreadByChannel[cid] || 0) + 1,
@@ -58,7 +97,7 @@ export const createWsSlice: AppStoreSlice = (set, get) => ({
               [cid]: upsertMessage(s.messagesByChannel[cid] || [], event.message),
             },
           };
-          if (!isSelf && !isActive && !muted) {
+          if (!isSelf && !isActive && !hideUnread) {
             next.unreadByChannel = {
               ...s.unreadByChannel,
               [cid]: (s.unreadByChannel[cid] || 0) + 1,
@@ -69,11 +108,9 @@ export const createWsSlice: AppStoreSlice = (set, get) => ({
         if (
           !isSelf &&
           !muted &&
+          allowAlert &&
           shouldAlertConversation(state, isActive)
         ) {
-          const channel = Object.values(state.channelsByServer)
-            .flat()
-            .find((c) => c.id === cid);
           if (channel?.channel_type === "text" && channel.server_id) {
             const toast = {
               id: event.message.id,
@@ -636,7 +673,11 @@ export const createWsSlice: AppStoreSlice = (set, get) => ({
                 authorAvatar: event.author.avatar_url,
                 preview: message.decrypt_failed
                   ? "New encrypted message"
-                  : messagePreview(message.content || ""),
+                  : message.content.trim()
+                    ? messagePreview(message.content)
+                    : message.attachments?.length
+                      ? "Sent an attachment"
+                      : messagePreview(""),
               };
               deliverMessageAlert({
                 toast,

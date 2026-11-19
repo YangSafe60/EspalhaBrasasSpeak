@@ -5,10 +5,14 @@ import { mediaUrl } from "../lib/mediaUrl";
 import { sameId } from "../lib/serverPerms";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { EmojiPickerButton } from "./EmojiPickerButton";
+import { GifPickerButton, type GifHit } from "./GifPickerButton";
+import { MessageAttachment } from "./MessageAttachment";
 import { MessageContent } from "./MessageContent";
 import { MessageEmbeds } from "./MessageEmbeds";
 import { useAppStore } from "../store/appStore";
 import type { DmMessage } from "../types";
+
+const EMPTY_DM_MESSAGES: DmMessage[] = [];
 
 const GROUP_WINDOW_MS = 7 * 60 * 1000;
 
@@ -41,12 +45,18 @@ function formatTime(iso: string): string {
 export function DmMessageView() {
   const activeDmId = useAppStore((s) => s.activeDmId);
   const dmChannels = useAppStore((s) => s.dmChannels);
-  const messagesByDm = useAppStore((s) => s.messagesByDm);
+  const messages = useAppStore((s) => {
+    const id = s.activeDmId;
+    if (!id) return EMPTY_DM_MESSAGES;
+    return s.messagesByDm[id] ?? EMPTY_DM_MESSAGES;
+  });
   const authors = useAppStore((s) => s.authors);
   const typing = useAppStore((s) => s.typing);
   const user = useAppStore((s) => s.user);
   const openMiniProfile = useAppStore((s) => s.openMiniProfile);
   const sendDmMessage = useAppStore((s) => s.sendDmMessage);
+  const uploadFile = useAppStore((s) => s.uploadFile);
+  const attachRemoteMedia = useAppStore((s) => s.attachRemoteMedia);
   const editDmMessage = useAppStore((s) => s.editDmMessage);
   const deleteDmMessage = useAppStore((s) => s.deleteDmMessage);
   const sendDmTyping = useAppStore((s) => s.sendDmTyping);
@@ -57,6 +67,11 @@ export function DmMessageView() {
   const setModal = useAppStore((s) => s.setModal);
 
   const [draft, setDraft] = useState("");
+  const [pendingFiles, setPendingFiles] = useState<
+    { id: string; url: string; name: string; preview: boolean }[]
+  >([]);
+  const [fileUploading, setFileUploading] = useState(false);
+  const [composerErr, setComposerErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
@@ -67,6 +82,7 @@ export function DmMessageView() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const typingTimer = useRef<number | null>(null);
   const draftRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const refocusComposerRef = useRef(false);
 
   function focusComposer() {
@@ -82,7 +98,6 @@ export function DmMessageView() {
   }
 
   const channel = dmChannels.find((c) => c.id === activeDmId);
-  const messages = activeDmId ? messagesByDm[activeDmId] || [] : [];
   const canSend = Boolean(channel);
   const dmCallParticipants = activeDmId ? dmCallByChannel[activeDmId] || [] : [];
   const selfInCall = Boolean(
@@ -109,6 +124,8 @@ export function DmMessageView() {
     setEditingId(null);
     setEditDraft("");
     setDraft("");
+    setPendingFiles([]);
+    setComposerErr(null);
     setSelectedIds(new Set());
     setPendingBulkDelete(false);
     setPendingDelete(null);
@@ -152,18 +169,77 @@ export function DmMessageView() {
     );
   }
 
+  const canSubmit =
+    canSend &&
+    !busy &&
+    !fileUploading &&
+    (draft.trim().length > 0 || pendingFiles.length > 0);
+
   async function onSubmit(e?: FormEvent) {
     e?.preventDefault();
-    if (!activeDmId || !draft.trim() || !canSend) return;
+    if (!activeDmId || !canSubmit) return;
+    const ids = pendingFiles.map((f) => f.id);
     setBusy(true);
+    setComposerErr(null);
     refocusComposerRef.current = true;
     try {
-      await sendDmMessage(activeDmId, draft.trim());
+      await sendDmMessage(activeDmId, draft.trim(), ids);
       setDraft("");
+      setPendingFiles([]);
+    } catch (error) {
+      setComposerErr(error instanceof Error ? error.message : "Could not send");
     } finally {
       setBusy(false);
       focusComposer();
     }
+  }
+
+  async function onPickGif(gif: GifHit) {
+    if (!activeDmId || !canSend || busy) return;
+    setBusy(true);
+    setComposerErr(null);
+    try {
+      const att = await attachRemoteMedia({
+        url: gif.url,
+        filename: `${gif.title || "gif"}.gif`,
+        content_type: "image/gif",
+      });
+      await sendDmMessage(activeDmId, "", [att.id]);
+    } catch (error) {
+      setComposerErr(error instanceof Error ? error.message : "Could not send GIF");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onPickFile(file: File | null) {
+    if (!file || !activeDmId || !canSend) return;
+    setFileUploading(true);
+    setComposerErr(null);
+    try {
+      const uploaded = await uploadFile(file);
+      const preview =
+        file.type.startsWith("image/") ||
+        /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(file.name || "");
+      setPendingFiles((prev) => [
+        ...prev,
+        {
+          id: uploaded.id,
+          url: uploaded.url,
+          name: file.name,
+          preview,
+        },
+      ]);
+    } catch (error) {
+      setComposerErr(error instanceof Error ? error.message : "Upload failed");
+    } finally {
+      setFileUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  function removePendingFile(id: string) {
+    setPendingFiles((prev) => prev.filter((f) => f.id !== id));
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -445,13 +521,27 @@ export function DmMessageView() {
                     Unable to decrypt this message on this device.
                     {m.edited_at && <span className="edited"> (edited)</span>}
                   </p>
-                ) : (
+                ) : m.content ? (
                   <>
                     <MessageContent content={m.content}>
                       {m.edited_at && <span className="edited"> (edited)</span>}
                     </MessageContent>
                     <MessageEmbeds content={m.content} />
                   </>
+                ) : (
+                  m.edited_at && <span className="edited">(edited)</span>
+                )}
+
+                {!!m.attachments?.length && (
+                  <div className="attachments">
+                    {m.attachments.map((a) => (
+                      <MessageAttachment
+                        key={a.id}
+                        attachment={a}
+                        allowDownload={!mine}
+                      />
+                    ))}
+                  </div>
                 )}
 
                 {mine && canSend && !editing && (
@@ -516,7 +606,52 @@ export function DmMessageView() {
             {typers.join(", ")} {typers.length === 1 ? "is" : "are"} typing…
           </p>
         )}
+        {pendingFiles.length > 0 && (
+          <div className="pending-files">
+            {pendingFiles.map((f) => (
+              <div key={f.id} className="pending-file-chip">
+                {f.preview ? (
+                  <img
+                    className="pending-file-thumb"
+                    src={mediaUrl(f.url)}
+                    alt={f.name}
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <span className="pending-file-name">{f.name}</span>
+                )}
+                <button
+                  type="button"
+                  className="pending-file-remove"
+                  aria-label={`Remove ${f.name}`}
+                  onClick={() => removePendingFile(f.id)}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {fileUploading && (
+          <p className="muted tiny pending-upload-status">Uploading…</p>
+        )}
+        {composerErr && <p className="form-error composer-error">{composerErr}</p>}
         <form className="composer composer-dm" onSubmit={(e) => void onSubmit(e)}>
+          <button
+            type="button"
+            className="icon-btn"
+            title="Attach file"
+            disabled={!canSend || fileUploading}
+            onClick={() => fileRef.current?.click()}
+          >
+            +
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            hidden
+            onChange={(e) => void onPickFile(e.target.files?.[0] || null)}
+          />
           <textarea
             ref={draftRef}
             value={draft}
@@ -526,10 +661,11 @@ export function DmMessageView() {
             rows={1}
           />
           <EmojiPickerButton onPick={insertEmoji} />
+          <GifPickerButton onPick={(g) => void onPickGif(g)} />
           <button
             type="submit"
             className="btn primary sm"
-            disabled={busy || !draft.trim()}
+            disabled={!canSubmit}
             onMouseDown={(e) => e.preventDefault()}
           >
             Send

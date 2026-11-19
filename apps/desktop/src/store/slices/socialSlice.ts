@@ -387,9 +387,11 @@ export const createSocialSlice: AppStoreSlice = (set, get) => ({
     }));
   },
 
-  sendDmMessage: async (dmId, content) => {
+  sendDmMessage: async (dmId, content, attachmentIds) => {
     const user = get().user;
-    if (!user || !content.trim()) return;
+    const ids = (attachmentIds ?? []).filter(Boolean);
+    const plain = content.trim();
+    if (!user || (!plain && ids.length === 0)) return;
     const id = await ensureIdentity(user.id);
     const dm = get().dmChannels.find((c) => c.id === dmId);
     if (!dm) throw new Error("DM not found");
@@ -411,7 +413,7 @@ export const createSocialSlice: AppStoreSlice = (set, get) => ({
     }
 
     const { ciphertext, nonce } = await encryptDm(
-      content.trim(),
+      plain,
       id.privateKey,
       peerKey,
       dmId,
@@ -423,6 +425,7 @@ export const createSocialSlice: AppStoreSlice = (set, get) => ({
         nonce,
         sender_public_key: id.publicKeyB64,
         recipient_public_key: peerKey,
+        attachment_ids: ids,
       },
     });
     const message = await decryptWire(wire, peerKey);

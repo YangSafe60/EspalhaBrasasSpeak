@@ -313,6 +313,8 @@ pub struct DmMessage {
     pub reply_to_id: Option<Uuid>,
     pub edited_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

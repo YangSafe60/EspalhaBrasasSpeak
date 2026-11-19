@@ -302,6 +302,41 @@ export const createServerSlice: AppStoreSlice = (set, get) => ({
     }
   },
 
+  leaveServer: async (id) => {
+    await api(`/api/servers/${id}/leave`, { method: "POST" });
+    const state = get();
+    const servers = state.servers.filter((s) => s.id !== id);
+    const voiceInDeleted = (state.channelsByServer[id] || []).some(
+      (c) => c.id === state.voiceChannelId,
+    );
+    const { [id]: _channels, ...channelsByServer } = state.channelsByServer;
+    const { [id]: _members, ...membersByServer } = state.membersByServer;
+    const { [id]: _roles, ...rolesByServer } = state.rolesByServer;
+    const { [id]: _rules, ...rulesByServer } = state.rulesByServer;
+    void _channels;
+    void _members;
+    void _roles;
+    void _rules;
+    const switchingAway = state.activeServerId === id;
+    const nextServerId = switchingAway ? servers[0]?.id ?? null : state.activeServerId;
+    set({
+      servers,
+      channelsByServer,
+      membersByServer,
+      rolesByServer,
+      rulesByServer,
+      activeServerId: nextServerId,
+      activeChannelId: switchingAway ? null : state.activeChannelId,
+      voiceChannelId: voiceInDeleted ? null : state.voiceChannelId,
+      modal: null,
+      settingsChannelId: null,
+      friendsHome: switchingAway && !nextServerId ? true : state.friendsHome,
+    });
+    if (nextServerId && switchingAway) {
+      await get().selectServer(nextServerId);
+    }
+  },
+
   loadRoles: async (serverId) => {
     const roles = await api<Role[]>(`/api/servers/${serverId}/roles`);
     set((s) => ({
