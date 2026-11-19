@@ -1,6 +1,5 @@
 import type { LocalScreen, RemoteScreen } from "../hooks/voice/types";
 import { jpegPreviewMaxWidth, startLatestJpegRelay } from "../lib/jpegRelay";
-import { loadScreenShareQuality } from "../lib/screenShareQuality";
 
 type RelayEntry = {
   stop: () => void;
@@ -28,15 +27,25 @@ function stopRelay(trackSid: string) {
   relays.get(trackSid)?.stop();
   relays.delete(trackSid);
   const video = videos.get(trackSid);
-  if (video) {
-    try {
-      video.srcObject = null;
-      video.remove();
-    } catch {
-      /* ignore */
-    }
-    videos.delete(trackSid);
+  if (!video) return;
+  try {
+    video.pause();
+  } catch {
+    /* ignore */
   }
+  try {
+    video.srcObject = null;
+    video.removeAttribute("src");
+    video.load();
+  } catch {
+    /* ignore */
+  }
+  try {
+    video.remove();
+  } catch {
+    /* ignore */
+  }
+  videos.delete(trackSid);
 }
 
 function startRelay(
@@ -55,7 +64,7 @@ function startRelay(
   const relay = startLatestJpegRelay({
     video,
     maxWidth: jpegPreviewMaxWidth(),
-    fps: () => loadScreenShareQuality().fps,
+    fps: () => 30,
     onFrame: (jpeg) => {
       window.electronAPI?.publishLobbyFrame?.({ trackSid, jpeg });
     },

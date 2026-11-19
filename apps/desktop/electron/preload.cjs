@@ -49,6 +49,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
   uploadNotifySound: (payload) =>
     ipcRenderer.invoke("media:upload-notify-sound", payload),
   uploadImage: (payload) => ipcRenderer.invoke("media:upload-image", payload),
+  setScreenPreviewActive: (active) => ipcRenderer.send("voice:set-preview", active),
+  onScreenPreview: (handler) => {
+    const listener = (_event, active) => handler(Boolean(active));
+    ipcRenderer.on("voice:preview", listener);
+    return () => ipcRenderer.removeListener("voice:preview", listener);
+  },
   ensureVoiceHost: () => ipcRenderer.invoke("voice:ensure-host"),
   destroyVoiceHost: () => ipcRenderer.invoke("voice:destroy-host"),
   sendVoiceCommand: (cmd) => ipcRenderer.send("voice:cmd", cmd),

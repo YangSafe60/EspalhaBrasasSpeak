@@ -24,6 +24,25 @@ export function mediaUrl(url: string | null | undefined): string {
   return url;
 }
 
+/**
+ * ImgBB album/viewer links (ibb.co, imgbb.com) are HTML pages. When that
+ * service is down they paint the blue "service unavailable" screen. Direct
+ * pictures live on i.ibb.co and stay usable.
+ */
+export function imageSrc(url: string | null | undefined): string {
+  const resolved = mediaUrl(url);
+  if (!resolved) return "";
+  try {
+    const host = new URL(resolved).hostname.toLowerCase();
+    if (host === "ibb.co" || host === "imgbb.com" || host.endsWith(".imgbb.com")) {
+      return "";
+    }
+  } catch {
+    return resolved;
+  }
+  return resolved;
+}
+
 export function mediaCssUrl(url: string | null | undefined): string | undefined {
   const resolved = mediaUrl(url);
   return resolved ? `url(${resolved})` : undefined;

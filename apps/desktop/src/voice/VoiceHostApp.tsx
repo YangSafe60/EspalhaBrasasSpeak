@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useVoiceEngine } from "../hooks/useVoiceEngine";
 import { useAppStore } from "../store/appStore";
 import type { VoiceHostCommand, VoiceHostEvent } from "./voiceIpc";
@@ -34,9 +34,13 @@ export function VoiceHostApp() {
   engineRef.current = engine;
   /** Avoid broadcasting idle state on first mount before any voice session. */
   const wasActiveRef = useRef(false);
+  const [previewWanted, setPreviewWanted] = useState(false);
 
   useEffect(() => {
     window.electronAPI?.notifyVoiceHostReady?.();
+    return window.electronAPI?.onScreenPreview?.((active) => {
+      setPreviewWanted(active);
+    });
   }, []);
 
   useEffect(() => {
@@ -172,13 +176,19 @@ export function VoiceHostApp() {
   }, [engine.connected, engine.pingMs]);
 
   useEffect(() => {
-    if (!engine.connected && !engine.joining) {
+    if (!previewWanted || (!engine.connected && !engine.joining)) {
       stopVoiceHostLobbyRelay();
       return;
     }
     startVoiceHostLobbyRelay(engine.localScreens, engine.remoteScreens);
     return () => stopVoiceHostLobbyRelay();
-  }, [engine.connected, engine.joining, engine.localScreens, engine.remoteScreens]);
+  }, [
+    previewWanted,
+    engine.connected,
+    engine.joining,
+    engine.localScreens,
+    engine.remoteScreens,
+  ]);
 
   return null;
 }

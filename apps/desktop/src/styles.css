@@ -576,13 +576,13 @@ input[type="number"]::-webkit-inner-spin-button {
 .app-shell {
   height: 100%;
   display: grid;
-  grid-template-columns: 72px 260px 1fr auto;
+  grid-template-columns: 72px var(--channel-sidebar-width, 260px) 1fr auto;
   min-width: 0;
   min-height: 0;
 }
 
 .app-shell.friends-layout {
-  grid-template-columns: 72px 260px 1fr;
+  grid-template-columns: 72px var(--channel-sidebar-width, 260px) 1fr;
 }
 
 .app-overlays {
@@ -736,9 +736,27 @@ input[type="number"]::-webkit-inner-spin-button {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  position: relative;
   background: rgba(12, 24, 30, 0.88);
   border-right: 1px solid var(--border);
   backdrop-filter: blur(10px);
+}
+
+.sidebar-resize {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  z-index: 6;
+  cursor: col-resize;
+  background: transparent;
+  touch-action: none;
+}
+
+.sidebar-resize:hover,
+.sidebar-resize.is-dragging {
+  background: var(--accent);
 }
 
 .channel-sidebar {
@@ -1847,6 +1865,17 @@ html[data-underline-links="1"] .message-content a {
   max-height: 220px;
   border-radius: 10px;
   border: 1px solid var(--border);
+}
+
+.image-unavailable {
+  display: inline-flex;
+  align-items: center;
+  min-height: 72px;
+  padding: 0.6rem 0.8rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 0.85rem;
 }
 
 .reactions {
@@ -4391,6 +4420,110 @@ html[data-compact="1"] .message {
   margin-bottom: 0.75rem;
 }
 
+.role-multi {
+  position: relative;
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.35rem 0 0.75rem;
+}
+
+.role-multi-trigger {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 42px;
+  text-align: left;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(8, 16, 20, 0.7);
+  color: var(--text);
+  padding: 0.45rem 2rem 0.45rem 0.7rem;
+  cursor: pointer;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-dim) 50%),
+    linear-gradient(135deg, var(--text-dim) 50%, transparent 50%);
+  background-position:
+    calc(100% - 16px) calc(50% - 2px),
+    calc(100% - 11px) calc(50% - 2px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.role-multi-trigger:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.role-multi-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.role-multi-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 100%;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 0.82rem;
+}
+
+.role-multi-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% - 0.15rem);
+  left: 0;
+  right: 0;
+  display: grid;
+  gap: 0.15rem;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 0.35rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #12181c;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+}
+
+.role-multi-option {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  padding: 0.4rem 0.45rem;
+  cursor: pointer;
+}
+
+.role-multi-option:hover,
+.role-multi-option.is-on {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.role-multi-mark {
+  width: 1rem;
+  flex: none;
+  text-align: center;
+  color: var(--accent, #ff8a1a);
+  font-size: 0.85rem;
+}
+
+.role-multi .role-dot,
+.role-multi-option .role-dot,
+.role-multi-chip .role-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+}
+
 .check-row {
   display: flex;
   align-items: center;
@@ -4408,23 +4541,6 @@ html[data-compact="1"] .message {
 
 .check-row input[type="checkbox"] {
   flex: 0 0 auto;
-}
-
-.private-role-list {
-  margin: 0.5rem 0 0.75rem;
-  padding: 0.5rem 0.65rem;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.02);
-  max-height: 180px;
-  overflow-y: auto;
-}
-
-.private-role-list .role-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  flex-shrink: 0;
 }
 
 .permissions-layout {
@@ -4447,20 +4563,6 @@ html[data-compact="1"] .message {
 .roles-layout .perm-editor {
   overflow: auto;
   padding-right: 0.25rem;
-}
-
-.role-create {
-  flex-shrink: 0;
-  margin-top: 0.5rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--border);
-  display: grid;
-  gap: 0.45rem;
-}
-
-.role-create input[type="text"],
-.role-create input:not([type="color"]) {
-  width: 100%;
 }
 
 .role-identity {
@@ -4642,6 +4744,13 @@ html[data-compact="1"] .message {
 .perm-roles button:hover {
   background: rgba(255, 255, 255, 0.06);
   color: #fff;
+}
+
+.role-add {
+  flex-shrink: 0;
+  margin-top: 0.35rem;
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 8px 8px;
 }
 
 .role-dot {
@@ -7789,11 +7898,11 @@ html[data-image-descriptions="1"] .attachments a:not(:has(img)) {
 }
 
 html[data-ui-density="compact"] .app-shell {
-  grid-template-columns: 58px 200px 1fr auto;
+  grid-template-columns: 58px var(--channel-sidebar-width, 200px) 1fr auto;
 }
 
 html[data-ui-density="compact"] .app-shell.friends-layout {
-  grid-template-columns: 58px 200px 1fr;
+  grid-template-columns: 58px var(--channel-sidebar-width, 200px) 1fr;
 }
 
 html[data-ui-density="compact"] .channel-btn,
@@ -7804,11 +7913,11 @@ html[data-ui-density="compact"] .category-header {
 }
 
 html[data-ui-density="spacious"] .app-shell {
-  grid-template-columns: 80px 280px 1fr auto;
+  grid-template-columns: 80px var(--channel-sidebar-width, 280px) 1fr auto;
 }
 
 html[data-ui-density="spacious"] .app-shell.friends-layout {
-  grid-template-columns: 80px 280px 1fr;
+  grid-template-columns: 80px var(--channel-sidebar-width, 280px) 1fr;
 }
 
 html[data-ui-density="spacious"] .channel-btn,

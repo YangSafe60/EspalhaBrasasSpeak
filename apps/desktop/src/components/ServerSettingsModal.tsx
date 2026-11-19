@@ -85,9 +85,8 @@ export function ServerSettingsModal() {
   const [accent, setAccent] = useState("#d4a017");
   const [iconUrl, setIconUrl] = useState("");
   const [bannerUrl, setBannerUrl] = useState("");
-  const [roleName, setRoleName] = useState("");
-  const [roleColor, setRoleColor] = useState("#e8c547");
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
+  const [creatingNew, setCreatingNew] = useState(false);
   const [draftPerms, setDraftPerms] = useState(0);
   const [draftRoleName, setDraftRoleName] = useState("");
   const [draftRoleColor, setDraftRoleColor] = useState("#99a1b3");
@@ -164,7 +163,7 @@ export function ServerSettingsModal() {
     setErr(null);
     setBusy(false);
     setSelectedRoleId(null);
-    setRoleName("");
+    setCreatingNew(false);
     setConfirmServerName("");
     setDeletingServer(false);
     setTab(allowedTabs[0]);
@@ -260,18 +259,28 @@ export function ServerSettingsModal() {
     }
   }
 
+  function beginCreateRole() {
+    setCreatingNew(true);
+    setSelectedRoleId(null);
+    setDraftRoleName("");
+    setDraftRoleColor("#e8c547");
+    setDraftPerms(DEFAULT_NEW_ROLE_PERMS);
+    setMsg(null);
+    setErr(null);
+  }
+
   async function onCreateRole() {
-    if (!activeServerId || !roleName.trim() || creatingRole) return;
+    if (!activeServerId || !draftRoleName.trim() || creatingRole) return;
     setCreatingRole(true);
     setMsg(null);
     setErr(null);
     try {
       const created = await createRole(activeServerId, {
-        name: roleName.trim(),
-        color: roleColor,
-        permissions: DEFAULT_NEW_ROLE_PERMS,
+        name: draftRoleName.trim(),
+        color: draftRoleColor,
+        permissions: draftPerms,
       });
-      setRoleName("");
+      setCreatingNew(false);
       setSelectedRoleId(created.id);
       setMsg(`Created role “${created.name}”.`);
       setTab("roles");
@@ -545,48 +554,32 @@ export function ServerSettingsModal() {
                   <button
                     key={role.id}
                     type="button"
-                    className={selectedRoleId === role.id ? "active" : ""}
-                    onClick={() => setSelectedRoleId(role.id)}
+                    className={
+                      !creatingNew && selectedRoleId === role.id ? "active" : ""
+                    }
+                    onClick={() => {
+                      setCreatingNew(false);
+                      setSelectedRoleId(role.id);
+                    }}
                   >
                     <span className="role-dot" style={{ background: role.color }} />
                     {role.name}
                   </button>
                 ))}
               </div>
-              <div className="role-create">
-                <p className="settings-nav-label">Create role</p>
-                <input
-                  placeholder="Role name"
-                  value={roleName}
-                  onChange={(e) => setRoleName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void onCreateRole();
-                    }
-                  }}
-                />
-                <ColorField
-                  label="Role color"
-                  value={roleColor}
-                  onChange={setRoleColor}
-                />
-                <div className="row">
-                  <button
-                    type="button"
-                    className="btn primary sm"
-                    disabled={creatingRole || !roleName.trim()}
-                    onClick={() => void onCreateRole()}
-                  >
-                    {creatingRole ? "Creating…" : "Create Role"}
-                  </button>
-                </div>
-              </div>
+              <button
+                type="button"
+                className={`role-add${creatingNew ? " active" : ""}`}
+                onClick={beginCreateRole}
+              >
+                <span aria-hidden>+</span>
+                Add role
+              </button>
             </aside>
 
             <div className="perm-editor stack">
-              {!selectedRole ? (
-                <p className="muted">Select a role to edit its permissions, or create one.</p>
+              {!creatingNew && !selectedRole ? (
+                <p className="muted">Select a role, or add one.</p>
               ) : (
                 <>
                   <ColorField
@@ -597,11 +590,11 @@ export function ServerSettingsModal() {
                   <div className="role-identity row">
                     <input
                       value={draftRoleName}
-                      disabled={selectedRole.is_everyone}
+                      disabled={!creatingNew && !!selectedRole?.is_everyone}
                       onChange={(e) => setDraftRoleName(e.target.value)}
                       placeholder="Role name"
                     />
-                    {!selectedRole.is_everyone && (
+                    {!creatingNew && selectedRole && !selectedRole.is_everyone && (
                       <button
                         type="button"
                         className="btn danger sm"
@@ -617,9 +610,11 @@ export function ServerSettingsModal() {
                     )}
                   </div>
                   <p className="muted tiny">
-                    {selectedRole.is_everyone
-                      ? "Permissions for @everyone apply to every member unless a higher role grants more."
-                      : "Members with this role get these abilities server-wide. Channel settings can still override per channel."}
+                    {creatingNew
+                      ? "Set the name, color, and permissions. You can change them again after the role exists."
+                      : selectedRole?.is_everyone
+                        ? "Permissions for @everyone apply to every member unless a higher role grants more."
+                        : "Members with this role get these abilities server-wide. Channel settings can still override per channel."}
                   </p>
 
                   {ROLE_PERM_GROUPS.map((group) => (
@@ -659,10 +654,18 @@ export function ServerSettingsModal() {
                     <button
                       type="button"
                       className="btn primary"
-                      disabled={busy}
-                      onClick={() => void saveRole()}
+                      disabled={busy || creatingRole || (creatingNew && !draftRoleName.trim())}
+                      onClick={() =>
+                        void (creatingNew ? onCreateRole() : saveRole())
+                      }
                     >
-                      {busy ? "Saving…" : "Save Changes"}
+                      {creatingNew
+                        ? creatingRole
+                          ? "Creating…"
+                          : "Create role"
+                        : busy
+                          ? "Saving…"
+                          : "Save changes"}
                     </button>
                   </div>
                 </>

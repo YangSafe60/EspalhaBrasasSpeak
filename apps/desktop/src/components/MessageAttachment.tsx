@@ -1,6 +1,6 @@
 import { useState, type MouseEvent } from "react";
 import { downloadRemoteFile } from "../lib/downloadMedia";
-import { mediaUrl } from "../lib/mediaUrl";
+import { imageSrc, mediaUrl } from "../lib/mediaUrl";
 import { isImageAttachment } from "../store/helpers/messageHelpers";
 import type { Attachment } from "../types";
 import { ContextMenu } from "./ContextMenu";
@@ -16,7 +16,9 @@ export function MessageAttachment({
   allowDownload = true,
 }: Props) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [broken, setBroken] = useState(false);
   const url = mediaUrl(attachment.url);
+  const src = imageSrc(attachment.url);
   const image = isImageAttachment(attachment);
 
   function onAttachmentContextMenu(e: MouseEvent) {
@@ -29,19 +31,27 @@ export function MessageAttachment({
   return (
     <>
       {image ? (
-        <a
-          href={url}
-          target="_blank"
-          rel="noreferrer"
-          onContextMenu={onAttachmentContextMenu}
-        >
-          <img
-            src={url}
-            alt={attachment.filename}
-            referrerPolicy="no-referrer"
+        src && !broken ? (
+          <a
+            href={src}
+            target="_blank"
+            rel="noreferrer"
             onContextMenu={onAttachmentContextMenu}
-          />
-        </a>
+          >
+            <img
+              src={src}
+              alt={attachment.filename}
+              loading="lazy"
+              decoding="async"
+              onError={() => setBroken(true)}
+              onContextMenu={onAttachmentContextMenu}
+            />
+          </a>
+        ) : (
+          <span className="image-unavailable" onContextMenu={onAttachmentContextMenu}>
+            Image unavailable
+          </span>
+        )
       ) : (
         <a
           href={url}

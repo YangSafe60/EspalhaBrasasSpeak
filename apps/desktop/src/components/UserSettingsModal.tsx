@@ -681,7 +681,6 @@ export function UserSettingsModal() {
                     <strong>Custom sound</strong>
                     <em className="muted tiny">
                       One .mp3 up to 1 MB, used for every alert on this device.
-                      The file is stored on a public host under a random link.
                     </em>
                   </span>
                   <p className="muted tiny notify-sound-file-name">

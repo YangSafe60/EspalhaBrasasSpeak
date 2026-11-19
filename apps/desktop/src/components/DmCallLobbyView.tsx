@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { useVoice } from "../hooks/useVoice";
+import { useLobbyPreview } from "../hooks/useLobbyPreview";
 import { openScreenPopout } from "../lib/popout";
 import { mediaCssUrl } from "../lib/mediaUrl";
 import { sameId } from "../lib/serverPerms";
@@ -26,6 +27,7 @@ type LobbyUser = {
 
 /** Private DM voice call lobby — same layout as server voice channels. */
 export function DmCallLobbyView({ voice, compact = false }: Props) {
+  useLobbyPreview();
   const dmCallId = useAppStore((s) => s.dmCallId);
   const dmCallByChannel = useAppStore((s) => s.dmCallByChannel);
   const dmChannels = useAppStore((s) => s.dmChannels);

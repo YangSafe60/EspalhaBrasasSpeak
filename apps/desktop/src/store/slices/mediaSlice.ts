@@ -10,21 +10,31 @@ export const createMediaSlice: AppStoreSlice = () => ({
       file.type || guessContentType(file.name) || "application/octet-stream";
     const isImage = contentType.toLowerCase().startsWith("image/");
 
-    // Images in the desktop app: upload to ImgBB locally, register URL only on the VPS.
+    // Images: direct file on Catbox. ImgBB is only used if that upload fails.
     if (isImage) {
       const desktop = getElectronAPI();
       if (desktop?.uploadImage) {
-        const { key } = await api<{ key: string }>("/api/media/imgbb-key");
         const payload =
           file.type === contentType
             ? file
             : new File([file], file.name || "image.bin", { type: contentType });
-        const temp = await desktop.uploadImage({
-          filename: payload.name || "image.png",
-          contentType,
-          data: await payload.arrayBuffer(),
-          apiKey: key,
-        });
+        let temp;
+        try {
+          temp = await desktop.uploadImage({
+            filename: payload.name || "image.png",
+            contentType,
+            data: await payload.arrayBuffer(),
+          });
+        } catch {
+          const { key } = await api<{ key: string }>("/api/media/imgbb-key");
+          temp = await desktop.uploadImage({
+            filename: payload.name || "image.png",
+            contentType,
+            data: await payload.arrayBuffer(),
+            apiKey: key,
+            forceImgbb: true,
+          });
+        }
         return api<{ id: string; url: string }>("/api/media/remote", {
           method: "POST",
           body: {

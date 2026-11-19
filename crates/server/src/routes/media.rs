@@ -352,9 +352,14 @@ async fn upload_imgbb(
     if !status.is_success() || body["success"].as_bool() != Some(true) {
         return Err(format!("rejected ({status}): {body}"));
     }
-    body["data"]["url"]
+    body["data"]["image"]["url"]
         .as_str()
-        .or_else(|| body["data"]["display_url"].as_str())
+        .filter(|url| url.starts_with("https://i.ibb.co/"))
+        .or_else(|| {
+            body["data"]["url"]
+                .as_str()
+                .filter(|url| url.starts_with("https://i.ibb.co/"))
+        })
         .map(|s| s.to_string())
-        .ok_or_else(|| "ImgBB response missing url".into())
+        .ok_or_else(|| "ImgBB response missing a direct image url".into())
 }

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { useVoice } from "../hooks/useVoice";
+import { useLobbyPreview } from "../hooks/useLobbyPreview";
 import { openScreenPopout } from "../lib/popout";
 import { mediaCssUrl } from "../lib/mediaUrl";
 import { useAppStore } from "../store/appStore";
@@ -26,6 +27,7 @@ type LobbyUser = {
 
 /** Voice channel lobby: stage (screen shares) + connected member grid. */
 export function VoiceLobbyView({ voice }: Props) {
+  useLobbyPreview();
   const activeChannelId = useAppStore((s) => s.activeChannelId);
   const channelsByServer = useAppStore((s) => s.channelsByServer);
   const voiceStates = useAppStore((s) => s.voiceStates);

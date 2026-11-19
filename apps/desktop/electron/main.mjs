@@ -66,6 +66,91 @@ function isMp3Buffer(buf) {
   return synced && versionOk && layerOk;
 }
 
+function imageFileExt(filename, contentType) {
+  const fromName = String(filename || "").match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase();
+  if (fromName === "jpg") return "jpeg";
+  if (fromName && ["png", "jpeg", "gif", "webp"].includes(fromName)) return fromName;
+  const type = String(contentType || "").toLowerCase();
+  if (type.includes("jpeg") || type.includes("jpg")) return "jpeg";
+  if (type.includes("gif")) return "gif";
+  if (type.includes("webp")) return "webp";
+  return "png";
+}
+
+function isDirectImgbbUrl(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === "i.ibb.co";
+  } catch {
+    return false;
+  }
+}
+
+function pickImgbbDirectUrl(body) {
+  const candidates = [body?.data?.image?.url, body?.data?.url, body?.data?.display_url];
+  for (const raw of candidates) {
+    if (typeof raw === "string" && isDirectImgbbUrl(raw)) return raw;
+  }
+  return "";
+}
+
+async function uploadImageToCatbox(buf, filename, contentType) {
+  const ext = imageFileExt(filename, contentType);
+  const safe = `image.${ext === "jpeg" ? "jpg" : ext}`;
+  const form = new FormData();
+  form.append("reqtype", "fileupload");
+  form.append(
+    "fileToUpload",
+    new Blob([new Uint8Array(buf)], { type: contentType || "image/png" }),
+    safe,
+  );
+  const res = await fetch("https://catbox.moe/user/api.php", {
+    method: "POST",
+    headers: { "User-Agent": "EspalhaBrasas/0.1" },
+    body: form,
+  });
+  const text = (await res.text()).trim();
+  const ok = new RegExp(
+    `^https://files\\.catbox\\.moe/[a-z0-9]+\\.${ext === "jpeg" ? "jpe?g" : ext}$`,
+    "i",
+  ).test(text);
+  if (!res.ok || !ok) {
+    throw new Error(
+      text && text.length < 200 ? `Upload failed: ${text}` : `Upload failed (${res.status})`,
+    );
+  }
+  return text;
+}
+
+async function uploadImageToImgbb(buf, filename, contentType, apiKey) {
+  const form = new FormData();
+  form.append(
+    "image",
+    new Blob([new Uint8Array(buf)], { type: contentType || "image/png" }),
+    filename,
+  );
+  const res = await fetch(
+    `https://api.imgbb.com/1/upload?key=${encodeURIComponent(apiKey)}`,
+    { method: "POST", body: form },
+  );
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    throw new Error(`ImgBB upload failed (${res.status})`);
+  }
+  if (!res.ok || body?.success !== true) {
+    const detail =
+      typeof body?.error?.message === "string" ? body.error.message : `HTTP ${res.status}`;
+    throw new Error(`ImgBB upload failed: ${detail}`);
+  }
+  const url = pickImgbbDirectUrl(body);
+  if (!url) {
+    throw new Error("ImgBB did not return a direct image link");
+  }
+  return url;
+}
+
 function notifyAppIconUrl() {
   const candidates = [
     path.join(__dirname, "..", "dist", "icon-192.png"),
@@ -212,9 +297,17 @@ function flushPendingVoiceCommands() {
   }
 }
 
+let screenPreviewWanted = false;
+
+function pushScreenPreview() {
+  const active = screenPreviewWanted || popouts.size > 0;
+  sendToVoiceHostRenderer("voice:preview", active);
+}
+
 function markVoiceHostReady() {
   voiceHostReady = true;
   flushPendingVoiceCommands();
+  pushScreenPreview();
 }
 
 function closeAllScreenPopouts() {
@@ -228,6 +321,7 @@ function closeAllScreenPopouts() {
     }
   }
   popouts.clear();
+  pushScreenPreview();
 }
 
 function clearVoiceHostDestroyFallback() {
@@ -260,24 +354,54 @@ function destroyVoiceHost() {
     return;
   }
   const wc = win.webContents;
-  if (wc && !wc.isDestroyed()) {
-    wc.setBackgroundThrottling(true);
+  const finish = () => {
+    if (win.isDestroyed()) return;
+    if (wc && !wc.isDestroyed()) {
+      try {
+        wc.setBackgroundThrottling(true);
+      } catch {
+        /* ignore */
+      }
+      try {
+        wc.close();
+      } catch {
+        /* ignore */
+      }
+    }
     try {
-      wc.clearCache();
+      win.destroy();
     } catch {
       /* ignore */
     }
-    try {
-      wc.close();
-    } catch {
-      /* ignore */
-    }
+  };
+  if (!wc || wc.isDestroyed()) {
+    finish();
+    return;
   }
-  try {
-    win.destroy();
-  } catch {
-    /* ignore */
-  }
+  // Release desktop-capture consumers before the renderer dies. Killing the
+  // window while a hidden <video> still holds the share track leaks that process.
+  const release = wc
+    .executeJavaScript(
+      `(() => {
+        document.querySelectorAll("video,audio").forEach((el) => {
+          try { el.pause(); } catch (e) {}
+          const stream = el.srcObject;
+          try { el.srcObject = null; el.removeAttribute("src"); el.load(); } catch (e) {}
+          if (stream && stream.getTracks) {
+            for (const track of stream.getTracks()) {
+              try { track.stop(); } catch (e) {}
+            }
+          }
+        });
+      })()`,
+      true,
+    )
+    .catch(() => undefined);
+  const timer = setTimeout(finish, 500);
+  void release.finally(() => {
+    clearTimeout(timer);
+    finish();
+  });
 }
 
 /** Commands that must never recreate the hidden LiveKit window. */
@@ -579,7 +703,11 @@ function registerIpc() {
     });
 
     popouts.set(key, win);
-    win.on("closed", () => popouts.delete(key));
+    pushScreenPreview();
+    win.on("closed", () => {
+      popouts.delete(key);
+      pushScreenPreview();
+    });
 
     if (isDev) {
       void win.loadURL(url);
@@ -696,6 +824,11 @@ function registerIpc() {
 
   ipcMain.on("voice:host-ready", () => {
     markVoiceHostReady();
+  });
+
+  ipcMain.on("voice:set-preview", (_evt, active) => {
+    screenPreviewWanted = Boolean(active);
+    pushScreenPreview();
   });
 
   ipcMain.handle("relay:signal", (_evt, payload) => {
@@ -815,12 +948,8 @@ function registerIpc() {
     return { url: text, size: buf.length, filename };
   });
 
-  /** Upload images to ImgBB from the desktop process (bypasses VPS for file bytes). */
+  /** Images go to Catbox as a direct file URL. ImgBB is only a fallback. */
   ipcMain.handle("media:upload-image", async (_evt, payload = {}) => {
-    const apiKey = String(payload.apiKey || "").trim();
-    if (!apiKey) {
-      throw new Error("ImgBB API key required");
-    }
     const filename = String(payload.filename || "image.png").replace(/[/\\]/g, "_");
     const contentType = String(payload.contentType || "image/png");
     const raw = payload.data;
@@ -838,39 +967,22 @@ function registerIpc() {
       throw new Error("file too large (max 25 MB)");
     }
 
-    const form = new FormData();
-    form.append(
-      "image",
-      new Blob([new Uint8Array(buf)], { type: contentType }),
-      filename,
-    );
+    if (!payload.forceImgbb) {
+      try {
+        const url = await uploadImageToCatbox(buf, filename, contentType);
+        return { url, size: buf.length, filename, contentType };
+      } catch (err) {
+        if (!String(payload.apiKey || "").trim()) {
+          throw err;
+        }
+      }
+    }
 
-    const res = await fetch(
-      `https://api.imgbb.com/1/upload?key=${encodeURIComponent(apiKey)}`,
-      { method: "POST", body: form },
-    );
-    let body;
-    try {
-      body = await res.json();
-    } catch {
-      throw new Error(`ImgBB upload failed (${res.status})`);
+    const apiKey = String(payload.apiKey || "").trim();
+    if (!apiKey) {
+      throw new Error("image upload failed");
     }
-    if (!res.ok || body?.success !== true) {
-      const detail =
-        typeof body?.error?.message === "string"
-          ? body.error.message
-          : `HTTP ${res.status}`;
-      throw new Error(`ImgBB upload failed: ${detail}`);
-    }
-    const url =
-      typeof body?.data?.url === "string"
-        ? body.data.url
-        : typeof body?.data?.display_url === "string"
-          ? body.data.display_url
-          : "";
-    if (!/^https:\/\//i.test(url)) {
-      throw new Error("ImgBB response missing url");
-    }
+    const url = await uploadImageToImgbb(buf, filename, contentType, apiKey);
     return { url, size: buf.length, filename, contentType };
   });
 }

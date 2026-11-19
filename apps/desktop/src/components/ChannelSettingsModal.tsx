@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useAppStore } from "../store/appStore";
 import {
   effectiveChannelPerms,
@@ -19,6 +19,102 @@ import {
 } from "../types";
 import { ChannelIntegrationsPanel } from "./ChannelIntegrationsPanel";
 import { ColorField } from "./ColorField";
+
+function RoleMultiSelect({
+  roles,
+  selectedIds,
+  onChange,
+}: {
+  roles: Role[];
+  selectedIds: string[];
+  onChange: (ids: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const choices = roles.filter((role) => !isEveryoneRole(role));
+  const selected = choices.filter((role) =>
+    selectedIds.some((id) => sameId(id, role.id)),
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (event: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  function toggle(roleId: string) {
+    onChange(
+      selectedIds.some((id) => sameId(id, roleId))
+        ? selectedIds.filter((id) => !sameId(id, roleId))
+        : [...selectedIds, roleId],
+    );
+  }
+
+  return (
+    <div className="role-multi" ref={rootRef}>
+      <p className="muted tiny">Who can access</p>
+      <button
+        type="button"
+        className="role-multi-trigger"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        onClick={() => setOpen((value) => !value)}
+      >
+        {selected.length === 0 ? (
+          <span className="muted">Select roles…</span>
+        ) : (
+          <span className="role-multi-chips">
+            {selected.map((role) => (
+              <span key={role.id} className="role-multi-chip">
+                <span className="role-dot" style={{ background: role.color }} />
+                {role.name}
+              </span>
+            ))}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="role-multi-menu" role="listbox" aria-multiselectable="true">
+          {choices.length === 0 ? (
+            <p className="muted tiny">Create a role first, then grant it access here.</p>
+          ) : (
+            choices.map((role) => {
+              const on = selectedIds.some((id) => sameId(id, role.id));
+              return (
+                <button
+                  key={role.id}
+                  type="button"
+                  role="option"
+                  aria-selected={on}
+                  className={`role-multi-option${on ? " is-on" : ""}`}
+                  onClick={() => toggle(role.id)}
+                >
+                  <span className="role-multi-mark" aria-hidden>
+                    {on ? "✓" : ""}
+                  </span>
+                  <span className="role-dot" style={{ background: role.color }} />
+                  <span>{role.name}</span>
+                </button>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 type Tab = "overview" | "permissions" | "integrations" | "danger";
 
@@ -845,42 +941,11 @@ export function ChannelSettingsModal() {
                       <span>Make private / locked</span>
                     </label>
                     {privateLocked && (
-                      <div className="private-role-list">
-                        <p className="muted tiny">
-                          Who can access (admin and moderator roles start selected):
-                        </p>
-                        {roles
-                          .filter((r) => !isEveryoneRole(r))
-                          .map((role) => (
-                            <label key={role.id} className="check-row">
-                              <input
-                                type="checkbox"
-                                checked={accessRoleIds.some((id) =>
-                                  sameId(id, role.id),
-                                )}
-                                onChange={(e) => {
-                                  setAccessRoleIds((ids) =>
-                                    e.target.checked
-                                      ? ids.some((id) => sameId(id, role.id))
-                                        ? ids
-                                        : [...ids, role.id]
-                                      : ids.filter((id) => !sameId(id, role.id)),
-                                  );
-                                }}
-                              />
-                              <span
-                                className="role-dot"
-                                style={{ background: role.color }}
-                              />
-                              <span>{role.name}</span>
-                            </label>
-                          ))}
-                        {roles.filter((r) => !isEveryoneRole(r)).length === 0 && (
-                          <p className="muted tiny">
-                            Create a role first, then grant it access here.
-                          </p>
-                        )}
-                      </div>
+                      <RoleMultiSelect
+                        roles={roles}
+                        selectedIds={accessRoleIds}
+                        onChange={setAccessRoleIds}
+                      />
                     )}
                     <button
                       type="button"

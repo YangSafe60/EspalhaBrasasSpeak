@@ -5,8 +5,8 @@
  * The LiveKit publish path is separate and is not touched here.
  */
 
-const PREVIEW_MAX_WIDTH = 1920;
-const JPEG_QUALITY = 0.82;
+const PREVIEW_MAX_WIDTH = 1280;
+const JPEG_QUALITY = 0.72;
 
 export function jpegPreviewMaxWidth(): number {
   return PREVIEW_MAX_WIDTH;

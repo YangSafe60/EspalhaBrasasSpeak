@@ -178,6 +178,9 @@ export function useVoiceClient() {
       });
       setLocalScreens(evt.localScreens as LocalScreen[]);
       setRemoteScreens(evt.remoteScreens as RemoteScreen[]);
+      if (evt.localScreens.length === 0 && evt.remoteScreens.length === 0) {
+        clearLobbyFrames();
+      }
       if (evt.connected && !wasConnectedRef.current && !evt.deafened) {
         playVoiceJoinSound();
       } else if (!evt.connected && wasConnectedRef.current && !evt.deafened) {

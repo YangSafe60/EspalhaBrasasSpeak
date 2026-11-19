@@ -70,18 +70,21 @@ export type ElectronAPI = {
     filename: string;
     contentType: string;
   }>;
-  /** Upload an image to ImgBB from the desktop process (no VPS storage). */
+  /** Upload an image to a direct public file URL from the desktop process. */
   uploadImage: (payload: {
     filename: string;
     contentType: string;
     data: ArrayBuffer;
-    apiKey: string;
+    apiKey?: string;
+    forceImgbb?: boolean;
   }) => Promise<{
     url: string;
     size: number;
     filename: string;
     contentType: string;
   }>;
+  setScreenPreviewActive?: (active: boolean) => void;
+  onScreenPreview?: (handler: (active: boolean) => void) => () => void;
   ensureVoiceHost?: () => Promise<boolean>;
   destroyVoiceHost?: () => Promise<boolean>;
   sendVoiceCommand?: (cmd: import("../voice/voiceIpc").VoiceHostCommand) => void;

@@ -11,11 +11,13 @@ import {
   type Room,
 } from "../lib/livekit";
 import {
+  forceStopAllDomMedia,
   hardTeardownLivekitRoom,
   requestRendererMemoryTrim,
 } from "../lib/voiceCleanup";
 import { api, getAccessToken, getApiBase } from "../api/client";
 import { getElectronAPI, isVoiceHostWindow } from "../lib/desktop";
+import { stopVoiceHostLobbyRelay } from "../voice/voiceHostLobbyRelay";
 import {
   loadMediaSettings,
   outputGainFromSettings,
@@ -552,6 +554,11 @@ export function useVoiceEngine() {
   /** Stop all screen shares and optionally halt the underlying capture tracks. */
   const endScreenShare = useCallback(
     async (room: Room | null, stopTracks: boolean) => {
+      // Drop the hidden preview <video> before stopping capture. Chromium keeps
+      // the desktop-capture process alive if the track is stopped while a video
+      // element still holds it, and destroying the voice host then leaks that RAM.
+      stopVoiceHostLobbyRelay();
+      void getElectronAPI()?.closeAllPopouts?.();
       clearMainScreenBridge();
 
       const stops = [...shareStopsRef.current.values()];
@@ -706,6 +713,8 @@ export function useVoiceEngine() {
         /* best effort */
       }
     } finally {
+      stopVoiceHostLobbyRelay();
+      forceStopAllDomMedia();
       leavingRef.current = false;
       if (isVoiceHostWindow()) {
         void getElectronAPI()?.publishVoiceEvent?.({ op: "host-idle" });

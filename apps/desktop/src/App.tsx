@@ -14,6 +14,7 @@ import {
   micIntroDone,
 } from "./components/MicConsentModal";
 import { ServerRail } from "./components/ServerRail";
+import { SidebarResizeHandle } from "./components/SidebarResizeHandle";
 import { UpdateOverlay } from "./components/UpdateOverlay";
 import { VoiceLobbyView } from "./components/VoiceLobbyView";
 import { VoicePanel } from "./components/VoicePanel";
@@ -297,6 +298,7 @@ function MainApp() {
             />
           )}
           <VoicePanel voice={voice} />
+          <SidebarResizeHandle />
         </div>
         <MainColumn
           voice={voice}

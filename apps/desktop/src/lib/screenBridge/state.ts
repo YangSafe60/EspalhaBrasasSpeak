@@ -11,7 +11,7 @@ export type Unlisten = () => void;
 export type RelayEntry = { stop: () => void; viewers: number };
 
 /** Local JPEG preview cap. The LiveKit stream still uses the chosen preset. */
-export const ABS_MAX_RELAY_WIDTH = 1920;
+export const ABS_MAX_RELAY_WIDTH = 1280;
 
 /** Registered MediaStreamTrack by LiveKit trackSid (fallback capture path). */
 export const tracks = new Map<string, MediaStreamTrack>();
