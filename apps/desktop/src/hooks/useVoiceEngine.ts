@@ -554,9 +554,6 @@ export function useVoiceEngine() {
   /** Stop all screen shares and optionally halt the underlying capture tracks. */
   const endScreenShare = useCallback(
     async (room: Room | null, stopTracks: boolean) => {
-      // Drop the hidden preview <video> before stopping capture. Chromium keeps
-      // the desktop-capture process alive if the track is stopped while a video
-      // element still holds it, and destroying the voice host then leaks that RAM.
       stopVoiceHostLobbyRelay();
       void getElectronAPI()?.closeAllPopouts?.();
       clearMainScreenBridge();
@@ -564,43 +561,46 @@ export function useVoiceEngine() {
       const stops = [...shareStopsRef.current.values()];
       shareStopsRef.current.clear();
       setActiveShareIds([]);
-      await Promise.all(stops.map((stop) => stop().catch(() => undefined)));
 
-      if (!room) {
-        setLocalScreens([]);
-        setVoiceLocal({ streaming: false });
-        return;
-      }
-      const pubs = [
-        ...room.localParticipant.trackPublications.values(),
-      ] as LocalTrackPublication[];
-      for (const pub of pubs) {
-        if (
-          pub.source !== getLivekit().Track.Source.ScreenShare &&
-          pub.source !== getLivekit().Track.Source.ScreenShareAudio
-        ) {
-          continue;
-        }
-        if (pub.trackSid) unregisterMainScreenTrack(pub.trackSid);
-        const track = pub.track;
-        if (!track) continue;
-        try {
-          // stopOnUnpublish=false — capture/media already stopped above (or caller owns stop).
-          await room.localParticipant.unpublishTrack(track, false);
-        } catch {
-          /* already gone */
-        }
-        if (stopTracks) {
+      // Drop the PeerConnection sender before stopping the capture. Stopping
+      // the track while it is still published leaves the Windows capture
+      // process running.
+      if (room) {
+        const pubs = [
+          ...room.localParticipant.trackPublications.values(),
+        ] as LocalTrackPublication[];
+        for (const pub of pubs) {
+          if (
+            pub.source !== getLivekit().Track.Source.ScreenShare &&
+            pub.source !== getLivekit().Track.Source.ScreenShareAudio
+          ) {
+            continue;
+          }
+          if (pub.trackSid) unregisterMainScreenTrack(pub.trackSid);
+          const track = pub.track;
+          if (!track) continue;
           try {
-            track.stop();
+            track.detach();
           } catch {
-            /* ignore */
+            /* already detached */
+          }
+          try {
+            await room.localParticipant.unpublishTrack(track, false);
+          } catch {
+            /* already gone */
           }
         }
       }
+
+      if (stopTracks) {
+        await Promise.all(stops.map((stop) => stop().catch(() => undefined)));
+      }
+
       setLocalScreens([]);
       setVoiceLocal({ streaming: false });
-      void syncSessionState({ streaming: false });
+      if (room) {
+        void syncSessionState({ streaming: false });
+      }
     },
     [setVoiceLocal, syncSessionState],
   );

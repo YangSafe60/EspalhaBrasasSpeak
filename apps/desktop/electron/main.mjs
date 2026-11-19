@@ -380,27 +380,46 @@ function destroyVoiceHost() {
   }
   // Release desktop-capture consumers before the renderer dies. Killing the
   // window while a hidden <video> still holds the share track leaks that process.
+  // Stop every attached track and wait until it fires "ended" before the
+  // renderer is killed. Destroying the window in the same turn drops the
+  // capturer-stop message, and Windows then keeps that utility process.
   const release = wc
     .executeJavaScript(
-      `(() => {
+      `(async () => {
+        const tracks = [];
+        const seen = new Set();
+        const take = (track) => {
+          if (track && !seen.has(track)) {
+            seen.add(track);
+            tracks.push(track);
+          }
+        };
         document.querySelectorAll("video,audio").forEach((el) => {
           try { el.pause(); } catch (e) {}
           const stream = el.srcObject;
+          if (stream && stream.getTracks) stream.getTracks().forEach(take);
           try { el.srcObject = null; el.removeAttribute("src"); el.load(); } catch (e) {}
-          if (stream && stream.getTracks) {
-            for (const track of stream.getTracks()) {
-              try { track.stop(); } catch (e) {}
-            }
-          }
         });
+        const ended = tracks.map((track) => new Promise((resolve) => {
+          if (track.readyState === "ended") { resolve(); return; }
+          const timer = setTimeout(resolve, 800);
+          track.addEventListener("ended", () => { clearTimeout(timer); resolve(); }, { once: true });
+        }));
+        for (const track of tracks) {
+          try { track.stop(); } catch (e) {}
+        }
+        await Promise.race([
+          Promise.all(ended),
+          new Promise((resolve) => setTimeout(resolve, 900)),
+        ]);
       })()`,
       true,
     )
     .catch(() => undefined);
-  const timer = setTimeout(finish, 500);
+  const timer = setTimeout(finish, 1500);
   void release.finally(() => {
     clearTimeout(timer);
-    finish();
+    setTimeout(finish, 300);
   });
 }
 
@@ -564,8 +583,40 @@ function createMainWindow() {
   });
 }
 
+let pendingDisplayCapture = null;
+
 function installSessionHandlers() {
   const ses = session.defaultSession;
+
+  // Chosen source from our picker. getDisplayMedia (not the legacy
+  // chromeMediaSource getUserMedia path) is what actually exits the Windows
+  // capture process when the track stops.
+  ses.setDisplayMediaRequestHandler(async (_request, callback) => {
+    const pending = pendingDisplayCapture;
+    pendingDisplayCapture = null;
+    if (!pending?.sourceId) {
+      callback({});
+      return;
+    }
+    try {
+      const sources = await desktopCapturer.getSources({
+        types: ["screen", "window"],
+        thumbnailSize: { width: 1, height: 1 },
+        fetchWindowIcons: false,
+      });
+      const source = sources.find((s) => s.id === pending.sourceId);
+      if (!source) {
+        callback({});
+        return;
+      }
+      callback({
+        video: source,
+        audio: pending.systemAudio ? "loopback" : undefined,
+      });
+    } catch {
+      callback({});
+    }
+  });
 
   ses.setPermissionRequestHandler((_wc, permission, callback) => {
     const allow = [
@@ -655,6 +706,23 @@ function registerIpc() {
       mainWindow.setTitle(next);
     }
     process.title = next;
+    return true;
+  });
+
+  ipcMain.handle("share:prepare-capture", (_evt, payload = {}) => {
+    const sourceId = String(payload.sourceId || "");
+    if (!sourceId) {
+      throw new Error("screen source required");
+    }
+    pendingDisplayCapture = {
+      sourceId,
+      systemAudio: payload.systemAudio !== false,
+    };
+    return true;
+  });
+
+  ipcMain.handle("share:cancel-capture", () => {
+    pendingDisplayCapture = null;
     return true;
   });
 

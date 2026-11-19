@@ -42,6 +42,11 @@ export type ElectronAPI = {
   listShareSources: (opts?: {
     types?: Array<"screen" | "window">;
   }) => Promise<DesktopShareSource[]>;
+  prepareDisplayCapture: (opts: {
+    sourceId: string;
+    systemAudio?: boolean;
+  }) => Promise<boolean>;
+  cancelDisplayCapture: () => Promise<boolean>;
   openPopout: (opts: {
     title: string;
     trackSid: string;

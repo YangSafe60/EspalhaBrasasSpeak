@@ -77,6 +77,80 @@ type CaptureConstraints = {
   };
 };
 
+function waitUntilEnded(tracks: MediaStreamTrack[]): Promise<void> {
+  const unique = [...new Set(tracks.filter(Boolean))];
+  return Promise.all(
+    unique.map(
+      (track) =>
+        new Promise<void>((resolve) => {
+          if (track.readyState === "ended") {
+            resolve();
+            return;
+          }
+          const timer = window.setTimeout(resolve, 1200);
+          track.addEventListener(
+            "ended",
+            () => {
+              window.clearTimeout(timer);
+              resolve();
+            },
+            { once: true },
+          );
+        }),
+    ),
+  ).then(() => undefined);
+}
+
+function releaseStream(stream: MediaStream, extra: MediaStreamTrack[]): Promise<void> {
+  const tracks = [...stream.getTracks(), ...extra];
+  for (const track of tracks) {
+    try {
+      stream.removeTrack(track);
+    } catch {
+      /* ignore */
+    }
+    try {
+      track.enabled = false;
+    } catch {
+      /* ignore */
+    }
+    try {
+      track.stop();
+    } catch {
+      /* ignore */
+    }
+  }
+  return waitUntilEnded(tracks);
+}
+
+async function captureWithChromeMediaSource(
+  sourceId: string,
+  opts: { systemAudio: boolean; maxWidth: number; maxHeight: number; maxFps: number },
+): Promise<MediaStream> {
+  const constraints: CaptureConstraints = {
+    audio: opts.systemAudio
+      ? {
+          mandatory: {
+            chromeMediaSource: "desktop",
+          },
+        }
+      : false,
+    video: {
+      mandatory: {
+        chromeMediaSource: "desktop",
+        chromeMediaSourceId: sourceId,
+        maxWidth: opts.maxWidth,
+        maxHeight: opts.maxHeight,
+        maxFrameRate: opts.maxFps,
+        minFrameRate: Math.min(30, opts.maxFps),
+      },
+    },
+  };
+  return navigator.mediaDevices.getUserMedia(
+    constraints as unknown as MediaStreamConstraints,
+  );
+}
+
 /**
  * Native Chromium desktop capture (no JPEG) via Electron desktopCapturer source id.
  */
@@ -93,33 +167,39 @@ export async function captureElectronSource(
   const maxWidth = opts?.maxWidth ?? 1920;
   const maxHeight = opts?.maxHeight ?? 1080;
   const maxFps = opts?.maxFps ?? 60;
+  const api = getElectronAPI();
 
-  const constraints: CaptureConstraints = {
-    audio: systemAudio
-      ? {
-          mandatory: {
-            chromeMediaSource: "desktop",
-          },
-        }
-      : false,
-    video: {
-      mandatory: {
-        chromeMediaSource: "desktop",
-        chromeMediaSourceId: sourceId,
+  let stream: MediaStream;
+  if (api?.prepareDisplayCapture) {
+    await api.prepareDisplayCapture({ sourceId, systemAudio });
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({
+        video: {
+          width: { max: maxWidth },
+          height: { max: maxHeight },
+          frameRate: { ideal: maxFps, max: maxFps },
+        },
+        audio: systemAudio,
+      });
+    } catch {
+      await api.cancelDisplayCapture?.().catch(() => undefined);
+      stream = await captureWithChromeMediaSource(sourceId, {
+        systemAudio,
         maxWidth,
         maxHeight,
-        maxFrameRate: maxFps,
-        minFrameRate: Math.min(30, maxFps),
-      },
-    },
-  };
+        maxFps,
+      });
+    }
+  } else {
+    stream = await captureWithChromeMediaSource(sourceId, {
+      systemAudio,
+      maxWidth,
+      maxHeight,
+      maxFps,
+    });
+  }
 
   const { LocalAudioTrack, LocalVideoTrack } = await loadLivekit();
-
-  // Electron uses legacy chromeMediaSource constraints not in standard typings.
-  const stream = await navigator.mediaDevices.getUserMedia(
-    constraints as unknown as MediaStreamConstraints,
-  );
 
   const mediaVideo = stream.getVideoTracks()[0];
   if (!mediaVideo) {
@@ -137,6 +217,10 @@ export async function captureElectronSource(
     videoTrack,
     audioTrack,
     stop: async () => {
+      const media = [
+        videoTrack.mediaStreamTrack,
+        audioTrack?.mediaStreamTrack,
+      ].filter((track): track is MediaStreamTrack => !!track);
       try {
         videoTrack.stop();
       } catch {
@@ -147,13 +231,7 @@ export async function captureElectronSource(
       } catch {
         /* ignore */
       }
-      for (const t of stream.getTracks()) {
-        try {
-          t.stop();
-        } catch {
-          /* ignore */
-        }
-      }
+      await releaseStream(stream, media);
     },
   };
 }

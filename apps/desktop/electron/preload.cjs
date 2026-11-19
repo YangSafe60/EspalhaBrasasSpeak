@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("window:set-background-throttling", enabled),
   trimMemory: () => ipcRenderer.invoke("memory:trim"),
   listShareSources: (opts) => ipcRenderer.invoke("share:list-sources", opts),
+  prepareDisplayCapture: (opts) => ipcRenderer.invoke("share:prepare-capture", opts),
+  cancelDisplayCapture: () => ipcRenderer.invoke("share:cancel-capture"),
   openPopout: (opts) => ipcRenderer.invoke("popout:open", opts),
   closeAllPopouts: () => ipcRenderer.invoke("popout:close-all"),
   relaySignal: (payload) => ipcRenderer.invoke("relay:signal", payload),
