@@ -105,6 +105,25 @@ export type ElectronAPI = {
   onLobbyFrame?: (
     handler: (frame: import("../voice/voiceIpc").VoiceLobbyFrame) => void,
   ) => () => void;
+  openScreenPublisher?: (payload: {
+    sourceId: string;
+    mode: "channel" | "dm";
+    targetId: string;
+    systemAudio?: boolean;
+    maxWidth: number;
+    maxHeight: number;
+    maxFps: number;
+    resolution: string;
+  }) => Promise<{ trackSid: string; hasAudio: boolean }>;
+  closeScreenPublisher?: (sourceId: string) => Promise<boolean>;
+  reportScreenPublisher?: (payload: {
+    ok: boolean;
+    sourceId: string;
+    trackSid?: string;
+    hasAudio?: boolean;
+    error?: string;
+  }) => void;
+  onScreenPublisherClosed?: (handler: (sourceId: string) => void) => () => void;
 };
 
 export type AppUpdateEvent = {

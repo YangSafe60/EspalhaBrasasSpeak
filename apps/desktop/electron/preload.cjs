@@ -78,4 +78,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("voice:lobby-frame", listener);
     return () => ipcRenderer.removeListener("voice:lobby-frame", listener);
   },
+  openScreenPublisher: (payload) => ipcRenderer.invoke("screen:open", payload),
+  closeScreenPublisher: (sourceId) => ipcRenderer.invoke("screen:close", sourceId),
+  reportScreenPublisher: (payload) => ipcRenderer.send("screen:result", payload),
+  onScreenPublisherClosed: (handler) => {
+    const listener = (_event, payload) => handler(payload?.sourceId || "");
+    ipcRenderer.on("screen:closed", listener);
+    return () => ipcRenderer.removeListener("screen:closed", listener);
+  },
 });

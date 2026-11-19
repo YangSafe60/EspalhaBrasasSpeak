@@ -26,6 +26,7 @@ export default defineConfig({
       input: {
         main: path.resolve(__dirname, "index.html"),
         voiceHost: path.resolve(__dirname, "voice-host.html"),
+        screenHost: path.resolve(__dirname, "screen-host.html"),
       },
       output: {
         codeSplitting: {

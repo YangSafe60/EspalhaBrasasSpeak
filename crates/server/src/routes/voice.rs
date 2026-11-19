@@ -1,7 +1,7 @@
 use crate::auth::AuthUser;
 use crate::db;
 use crate::error::{AppError, AppResult};
-use crate::livekit::{mint_participant_token, voice_room_name};
+use crate::livekit::{mint_participant_token, screen_publisher_identity, voice_room_name};
 use crate::state::AppState;
 use axum::{
     extract::{Path, Query, State},
@@ -79,6 +79,50 @@ pub struct ListVoiceQuery {
     pub server_id: Uuid,
 }
 
+#[derive(Deserialize)]
+pub struct ScreenTokenReq {
+    pub source_id: String,
+}
+
+/// Token for a screen-only LiveKit connection. Does not change voice membership.
+pub async fn screen_token(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ScreenTokenReq>,
+) -> AppResult<Json<VoiceTokenResponse>> {
+    let channel = db::get_channel(&state.db, id).await?;
+    if channel.channel_type != ChannelType::Voice {
+        return Err(AppError::BadRequest("not a voice channel".into()));
+    }
+    let in_channel: Option<String> = sqlx::query_scalar(
+        "SELECT channel_id FROM voice_states WHERE user_id = ?",
+    )
+    .bind(user.id.to_string())
+    .fetch_optional(&state.db)
+    .await?;
+    let expected = id.to_string();
+    if in_channel.as_deref() != Some(expected.as_str()) {
+        return Err(AppError::BadRequest("join the voice channel first".into()));
+    }
+    let profile = db::user_public(&state.db, user.id).await?;
+    let room = voice_room_name(id);
+    let token = mint_participant_token(
+        &state.config.livekit_api_key,
+        &state.config.livekit_api_secret,
+        &room,
+        &screen_publisher_identity(user.id, &body.source_id),
+        &profile.display_name,
+        true,
+        false,
+    )?;
+    Ok(Json(VoiceTokenResponse {
+        token,
+        url: state.config.client_livekit_url(),
+        room,
+    }))
+}
+
 pub async fn token(
     State(state): State<AppState>,
     user: AuthUser,
@@ -124,9 +168,10 @@ pub async fn token(
         &state.config.livekit_api_key,
         &state.config.livekit_api_secret,
         &room,
-        user.id,
+        &user.id.to_string(),
         &profile.display_name,
         can_speak,
+        true,
     )?;
 
     // Upsert voice state join — keep mute/deafen/streaming across lobby switches.

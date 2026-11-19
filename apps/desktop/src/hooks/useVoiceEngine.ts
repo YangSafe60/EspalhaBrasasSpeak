@@ -17,6 +17,11 @@ import {
 } from "../lib/voiceCleanup";
 import { api, getAccessToken, getApiBase } from "../api/client";
 import { getElectronAPI, isVoiceHostWindow } from "../lib/desktop";
+import {
+  isOwnScreenPublisher,
+  isScreenPublisher,
+  livekitUserId,
+} from "../lib/screenPublisher";
 import { stopVoiceHostLobbyRelay } from "../voice/voiceHostLobbyRelay";
 import {
   loadMediaSettings,
@@ -33,7 +38,6 @@ import {
 } from "../lib/screenBridge";
 import {
   applyScreenShareQualityHints,
-  captureElectronSource,
   isShareCancelError,
   isDesktopApp,
   publishScreenShareVideo,
@@ -144,6 +148,8 @@ export function useVoiceEngine() {
   const [speakingIds, setSpeakingIds] = useState<string[]>([]);
   /** sourceId -> stop() for each active Tauri capture */
   const shareStopsRef = useRef<Map<string, () => Promise<void>>>(new Map());
+  /** Lives published by a separate screen process, not this voice room. */
+  const externalScreensRef = useRef<LocalScreen[]>([]);
   const activeShareIdsRef = useRef<string[]>([]);
   const [activeShareIds, setActiveShareIds] = useState<string[]>([]);
   /** Last chosen screen-share quality (for lobby hops / republish). */
@@ -226,18 +232,43 @@ export function useVoiceEngine() {
         s.label =
           found.length > 1 ? `Screen share ${i + 1}` : "Screen share 1";
       });
-      pruneScreenTracks(new Set(found.map((s) => s.trackSid)));
-      setLocalScreens(found);
-      setVoiceLocal({ streaming: found.length > 0 });
+      const external = externalScreensRef.current.filter(
+        (s) => !found.some((f) => f.sourceId && f.sourceId === s.sourceId),
+      );
+      const merged = [...found, ...external];
+      merged.forEach((s, i) => {
+        s.label = merged.length > 1 ? `Screen share ${i + 1}` : "Screen share";
+      });
+      pruneScreenTracks(new Set(merged.map((s) => s.trackSid)));
+      setLocalScreens(merged);
+      setVoiceLocal({ streaming: merged.length > 0 });
     },
     [setVoiceLocal],
   );
+
+  useEffect(() => {
+    return getElectronAPI()?.onScreenPublisherClosed?.((sourceId) => {
+      externalScreensRef.current = externalScreensRef.current.filter(
+        (s) => s.sourceId !== sourceId,
+      );
+      shareStopsRef.current.delete(sourceId);
+      setActiveShareIds((ids) => ids.filter((id) => id !== sourceId));
+      const room = roomRef.current;
+      if (room) syncLocalScreen(room);
+    });
+  }, [syncLocalScreen]);
 
   const refreshScreens = useCallback(
     (room: Room) => {
       const screens: RemoteScreen[] = [];
       const seen = new Set<string>();
       room.remoteParticipants.forEach((p) => {
+        if (isOwnScreenPublisher(p.identity, useAppStore.getState().user?.id)) {
+          p.trackPublications.forEach((pub) => {
+            if (pub.isSubscribed) pub.setSubscribed(false);
+          });
+          return;
+        }
         const audioPub = [...p.trackPublications.values()].find(
           (pub) => pub.source === getLivekit().Track.Source.ScreenShareAudio,
         );
@@ -249,7 +280,7 @@ export function useVoiceEngine() {
           ) {
             return;
           }
-          if (getUserVoicePref(p.identity).hideVideo) {
+          if (getUserVoicePref(livekitUserId(p.identity)).hideVideo) {
             watchingScreensRef.current.delete(pub.trackSid);
             if (pub.isSubscribed) pub.setSubscribed(false);
             unregisterMainScreenTrack(pub.trackSid);
@@ -504,7 +535,7 @@ export function useVoiceEngine() {
           const match = [...p.trackPublications.values()].find(
             (x) => x.trackSid === trackSid,
           );
-          if (match && getUserVoicePref(p.identity).hideVideo) return;
+          if (match && getUserVoicePref(livekitUserId(p.identity)).hideVideo) return;
         }
       }
       setRemoteScreenSubscribed(trackSid, true);
@@ -561,6 +592,7 @@ export function useVoiceEngine() {
 
       const stops = [...shareStopsRef.current.values()];
       shareStopsRef.current.clear();
+      externalScreensRef.current = [];
       setActiveShareIds([]);
 
       // Drop the PeerConnection sender before stopping the capture. Stopping
@@ -848,7 +880,17 @@ export function useVoiceEngine() {
         ) => {
           if (
             participant &&
-            getUserVoicePref(participant.identity).hideVideo
+            isOwnScreenPublisher(
+              participant.identity,
+              useAppStore.getState().user?.id,
+            )
+          ) {
+            pub.setSubscribed(false);
+            return true;
+          }
+          if (
+            participant &&
+            getUserVoicePref(livekitUserId(participant.identity)).hideVideo
           ) {
             pub.setSubscribed(false);
             return true;
@@ -896,7 +938,7 @@ export function useVoiceEngine() {
           }
 
           const out = outputGainFromSettings(loadMediaSettings());
-          const pref = getUserVoicePref(participant.identity);
+          const pref = getUserVoicePref(livekitUserId(participant.identity));
           attachRemoteAudio(
             track,
             pub,
@@ -971,14 +1013,19 @@ export function useVoiceEngine() {
           onTrack();
           if (!deafenedRef.current && !isVoiceHostWindow()) playVoiceJoinSound();
         });
-        room.on(getLivekit().RoomEvent.ParticipantDisconnected, () => {
+        room.on(getLivekit().RoomEvent.ParticipantDisconnected, (participant) => {
           onTrack();
+          if (isScreenPublisher(participant.identity)) return;
           if (!deafenedRef.current && !switchingRef.current) {
             playVoiceLeaveSound();
           }
         });
         room.on(getLivekit().RoomEvent.ActiveSpeakersChanged, (speakers) => {
-          setSpeakingIds(speakers.map((p) => p.identity));
+          setSpeakingIds(
+            speakers
+              .map((p) => p.identity)
+              .filter((id) => !isScreenPublisher(id)),
+          );
         });
         room.on(getLivekit().RoomEvent.Disconnected, () => {
           if (leavingRef.current) return;
@@ -1163,7 +1210,7 @@ export function useVoiceEngine() {
           }
           return;
         }
-        const pref = getUserVoicePref(p.identity);
+        const pref = getUserVoicePref(livekitUserId(p.identity));
         const out = outputGainFromSettings(loadMediaSettings());
         const mute = deafened || pref.muted;
         pub.track.setMuted(mute);
@@ -1321,49 +1368,49 @@ export function useVoiceEngine() {
       shareFpsRef.current = fps;
       shareResolutionRef.current = resolution;
       const capture = resolveCaptureDimensions(resolution);
-      const encoding = screenShareEncoding(resolution, fps);
+      const session = activeSessionRef.current;
       try {
         if (opts.replaceAll) {
           await endScreenShare(room, true);
         }
-
-        const captured = await captureElectronSource(opts.sourceId, {
+        if (!session) throw new Error("Not in a call");
+        const desktop = getElectronAPI();
+        if (!desktop?.openScreenPublisher) {
+          throw new Error("Screen sharing needs the desktop app");
+        }
+        const published = await desktop.openScreenPublisher({
+          sourceId: opts.sourceId,
+          mode: session.kind,
+          targetId: session.id,
           systemAudio: opts.systemAudio !== false,
           maxWidth: capture.maxWidth,
           maxHeight: capture.maxHeight,
           maxFps: fps,
+          resolution,
         });
 
-        shareStopsRef.current.set(opts.sourceId, captured.stop);
+        externalScreensRef.current = [
+          ...externalScreensRef.current.filter((s) => s.sourceId !== opts.sourceId),
+          {
+            trackSid: published.trackSid,
+            track: null,
+            sourceId: opts.sourceId,
+            label: "Screen share",
+          },
+        ];
+        shareStopsRef.current.set(opts.sourceId, async () => {
+          externalScreensRef.current = externalScreensRef.current.filter(
+            (s) => s.sourceId !== opts.sourceId,
+          );
+          await getElectronAPI()?.closeScreenPublisher?.(opts.sourceId);
+        });
         setActiveShareIds((ids) =>
           ids.includes(opts.sourceId) ? ids : [...ids, opts.sourceId],
         );
-
-        if (!captured.audioTrack) {
+        if (!published.hasAudio) {
           setError(
             "System audio wasn’t captured for this source. Try sharing a full screen with “Share system audio” enabled.",
           );
-        }
-
-        applyScreenShareQualityHints(captured.videoTrack.mediaStreamTrack);
-
-        await publishScreenShareVideo(
-          (screenTrack, opts) => room.localParticipant.publishTrack(screenTrack, opts),
-          captured.videoTrack,
-          {
-            name: `screen:${opts.sourceId}`,
-            source: getLivekit().Track.Source.ScreenShare,
-            videoEncoding: encoding,
-          },
-        );
-        await tunePublishedScreenShare(captured.videoTrack);
-
-        if (captured.audioTrack) {
-          await room.localParticipant.publishTrack(captured.audioTrack, {
-            name: `screen-audio:${opts.sourceId}`,
-            source: getLivekit().Track.Source.ScreenShareAudio,
-            audioPreset: { maxBitrate: 128_000 },
-          });
         }
 
         syncLocalScreen(room);

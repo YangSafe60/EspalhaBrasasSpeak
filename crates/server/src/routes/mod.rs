@@ -151,6 +151,10 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/dms/{id}/typing", post(dms::typing))
         .route("/api/dms/{id}/call/token", post(dms::call_token))
+        .route(
+            "/api/dms/{id}/call/screen-token",
+            post(dms::screen_call_token),
+        )
         .route("/api/dms/{id}/call/state", put(dms::call_state))
         .route("/api/servers", get(servers::list).post(servers::create))
         .route(
@@ -285,6 +289,10 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/channels/{id}/typing", post(messages::typing))
         .route("/api/channels/{id}/voice/token", post(voice::token))
+        .route(
+            "/api/channels/{id}/voice/screen-token",
+            post(voice::screen_token),
+        )
         .route("/api/voice/state", put(voice::update_state).get(voice::list_states))
         .route("/api/media/upload", post(media::upload))
         .route("/api/media/imgbb-key", get(media::imgbb_upload_key))

@@ -31,9 +31,10 @@ pub fn mint_participant_token(
     api_key: &str,
     api_secret: &str,
     room: &str,
-    identity: Uuid,
+    identity: &str,
     name: &str,
     can_publish: bool,
+    can_subscribe: bool,
 ) -> AppResult<String> {
     let now = Utc::now();
     let claims = Claims {
@@ -46,7 +47,7 @@ pub fn mint_participant_token(
             room: room.to_string(),
             room_join: true,
             can_publish,
-            can_subscribe: true,
+            can_subscribe,
             can_publish_data: true,
         },
         metadata: String::new(),
@@ -66,4 +67,21 @@ pub fn voice_room_name(channel_id: Uuid) -> String {
 
 pub fn dm_call_room_name(dm_channel_id: Uuid) -> String {
     format!("dm_call_{dm_channel_id}")
+}
+
+/// Separate LiveKit identity so a screen publisher can live in its own process.
+pub fn screen_publisher_identity(user_id: Uuid, source_id: &str) -> String {
+    let mut slug = String::new();
+    for c in source_id.chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c.to_ascii_lowercase());
+        }
+        if slug.len() == 40 {
+            break;
+        }
+    }
+    if slug.is_empty() {
+        slug.push_str("share");
+    }
+    format!("{user_id}~screen~{slug}")
 }

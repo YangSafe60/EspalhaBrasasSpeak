@@ -1,7 +1,7 @@
 use crate::auth::AuthUser;
 use crate::db;
 use crate::error::{AppError, AppResult};
-use crate::livekit::{dm_call_room_name, mint_participant_token};
+use crate::livekit::{dm_call_room_name, mint_participant_token, screen_publisher_identity};
 use crate::routes::friends::{ensure_dm_with_peer, is_blocked, load_dm_for_user};
 use crate::routes::voice::VoiceTokenResponse;
 use crate::state::AppState;
@@ -598,6 +598,41 @@ async fn broadcast_dm_call(
     Ok(())
 }
 
+pub async fn screen_call_token(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<crate::routes::voice::ScreenTokenReq>,
+) -> AppResult<Json<VoiceTokenResponse>> {
+    require_participant(&state.db, id, user.id).await?;
+    let in_call: Option<String> = sqlx::query_scalar(
+        "SELECT dm_channel_id FROM voice_states WHERE user_id = ?",
+    )
+    .bind(user.id.to_string())
+    .fetch_optional(&state.db)
+    .await?;
+    let expected = id.to_string();
+    if in_call.as_deref() != Some(expected.as_str()) {
+        return Err(AppError::BadRequest("join the call first".into()));
+    }
+    let profile = db::user_public(&state.db, user.id).await?;
+    let room = dm_call_room_name(id);
+    let token = mint_participant_token(
+        &state.config.livekit_api_key,
+        &state.config.livekit_api_secret,
+        &room,
+        &screen_publisher_identity(user.id, &body.source_id),
+        &profile.display_name,
+        true,
+        false,
+    )?;
+    Ok(Json(VoiceTokenResponse {
+        token,
+        url: state.config.client_livekit_url(),
+        room,
+    }))
+}
+
 pub async fn call_token(
     State(state): State<AppState>,
     user: AuthUser,
@@ -613,8 +648,9 @@ pub async fn call_token(
         &state.config.livekit_api_key,
         &state.config.livekit_api_secret,
         &room,
-        user.id,
+        &user.id.to_string(),
         &profile.display_name,
+        true,
         true,
     )?;
 

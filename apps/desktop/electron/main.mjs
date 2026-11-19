@@ -278,6 +278,44 @@ function voiceHostPageUrl() {
   return path.join(__dirname, "..", "dist", "voice-host.html");
 }
 
+const screenHosts = new Map();
+const screenOpenWaiters = new Map();
+
+function destroyScreenHostWindow(sourceId) {
+  const win = screenHosts.get(sourceId);
+  screenHosts.delete(sourceId);
+  if (win && !win.isDestroyed()) {
+    try {
+      win.destroy();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+async function closeScreenHost(sourceId) {
+  const win = screenHosts.get(sourceId);
+  if (!win || win.isDestroyed()) {
+    screenHosts.delete(sourceId);
+    return;
+  }
+  try {
+    await Promise.race([
+      win.webContents.executeJavaScript("window.__stopScreenHost?.()", true),
+      new Promise((resolve) => setTimeout(resolve, 1200)),
+    ]);
+  } catch {
+    /* page already gone */
+  }
+  destroyScreenHostWindow(sourceId);
+}
+
+function closeAllScreenHosts() {
+  for (const sourceId of [...screenHosts.keys()]) {
+    void closeScreenHost(sourceId);
+  }
+}
+
 function sendToMainRenderer(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, payload);
@@ -343,6 +381,7 @@ function scheduleVoiceHostDestroyFallback(delayMs = 5000) {
 
 function destroyVoiceHost() {
   clearVoiceHostDestroyFallback();
+  closeAllScreenHosts();
   voiceHostReady = false;
   voiceHostSessionActive = false;
   voiceHostTeardownUntil = Date.now() + 5000;
@@ -824,6 +863,94 @@ function registerIpc() {
 
   ipcMain.handle("voice:destroy-host", () => {
     destroyVoiceHost();
+    return true;
+  });
+
+  ipcMain.handle("screen:open", async (_evt, payload = {}) => {
+    const sourceId = String(payload.sourceId || "");
+    if (!sourceId) throw new Error("screen source required");
+    if (screenHosts.has(sourceId)) {
+      throw new Error("That screen is already being shared");
+    }
+    const query = new URLSearchParams({
+      sourceId,
+      mode: payload.mode === "dm" ? "dm" : "channel",
+      targetId: String(payload.targetId || ""),
+      systemAudio: payload.systemAudio === false ? "0" : "1",
+      maxWidth: String(payload.maxWidth || 1920),
+      maxHeight: String(payload.maxHeight || 1080),
+      maxFps: String(payload.maxFps === 60 ? 60 : 30),
+      resolution: String(payload.resolution || "1080p"),
+    });
+    const win = new BrowserWindow({
+      show: false,
+      width: 640,
+      height: 480,
+      backgroundColor: "#000000",
+      autoHideMenuBar: true,
+      webPreferences: {
+        preload: preloadPath(),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        spellcheck: false,
+        backgroundThrottling: false,
+        v8CacheOptions: "code",
+      },
+    });
+    screenHosts.set(sourceId, win);
+    win.on("closed", () => {
+      screenHosts.delete(sourceId);
+      const waiter = screenOpenWaiters.get(sourceId);
+      if (waiter) {
+        screenOpenWaiters.delete(sourceId);
+        clearTimeout(waiter.timer);
+        waiter.reject(new Error("Screen publisher closed"));
+      }
+      sendToVoiceHostRenderer("screen:closed", { sourceId });
+    });
+    const ready = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        screenOpenWaiters.delete(sourceId);
+        reject(new Error("Screen publisher timed out"));
+        void closeScreenHost(sourceId);
+      }, 20000);
+      screenOpenWaiters.set(sourceId, { resolve, reject, timer });
+    });
+    if (isDev) {
+      void win.loadURL(`${DEV_URL}/screen-host.html?${query.toString()}`);
+    } else {
+      void win.loadFile(path.join(__dirname, "..", "dist", "screen-host.html"), {
+        search: query.toString(),
+      });
+    }
+    return ready;
+  });
+
+  ipcMain.on("screen:result", (_evt, payload = {}) => {
+    const sourceId = String(payload.sourceId || "");
+    const waiter = screenOpenWaiters.get(sourceId);
+    if (!waiter) return;
+    screenOpenWaiters.delete(sourceId);
+    clearTimeout(waiter.timer);
+    if (payload.ok && payload.trackSid) {
+      waiter.resolve({
+        trackSid: String(payload.trackSid),
+        hasAudio: Boolean(payload.hasAudio),
+      });
+      return;
+    }
+    void closeScreenHost(sourceId);
+    waiter.reject(new Error(String(payload.error || "Screen share failed")));
+  });
+
+  ipcMain.handle("screen:close", async (_evt, sourceId) => {
+    await closeScreenHost(String(sourceId || ""));
+    return true;
+  });
+
+  ipcMain.handle("screen:close-all", async () => {
+    await Promise.all([...screenHosts.keys()].map((id) => closeScreenHost(id)));
     return true;
   });
 
