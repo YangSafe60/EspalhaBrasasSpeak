@@ -36,6 +36,7 @@ import {
   captureElectronSource,
   isShareCancelError,
   isDesktopApp,
+  publishScreenShareVideo,
   tunePublishedScreenShare,
 } from "../lib/screenShare";
 import {
@@ -616,23 +617,25 @@ export function useVoiceEngine() {
       for (const { track, name } of tracks) {
         if (track.kind === getLivekit().Track.Kind.Video) {
           const media = track.mediaStreamTrack;
-          if (media) {
-            applyScreenShareQualityHints(media);
-          }
+          if (media) applyScreenShareQualityHints(media);
+          const video = track as LocalVideoTrack;
+          await publishScreenShareVideo(
+            (screenTrack, opts) => room.localParticipant.publishTrack(screenTrack, opts),
+            video,
+            {
+              name: name ?? "screen",
+              source: getLivekit().Track.Source.ScreenShare,
+              videoEncoding: encoding,
+            },
+          );
+          await tunePublishedScreenShare(video);
+          continue;
         }
         await room.localParticipant.publishTrack(track, {
           name,
-          source:
-            track.kind === getLivekit().Track.Kind.Audio
-              ? getLivekit().Track.Source.ScreenShareAudio
-              : getLivekit().Track.Source.ScreenShare,
+          source: getLivekit().Track.Source.ScreenShareAudio,
           simulcast: false,
-          videoEncoding:
-            track.kind === getLivekit().Track.Kind.Video ? encoding : undefined,
         });
-        if (track.kind === getLivekit().Track.Kind.Video) {
-          await tunePublishedScreenShare(track as LocalVideoTrack);
-        }
       }
       syncLocalScreen(room);
       refreshScreens(room);
@@ -1344,12 +1347,15 @@ export function useVoiceEngine() {
 
         applyScreenShareQualityHints(captured.videoTrack.mediaStreamTrack);
 
-        await room.localParticipant.publishTrack(captured.videoTrack, {
-          name: `screen:${opts.sourceId}`,
-          source: getLivekit().Track.Source.ScreenShare,
-          simulcast: false,
-          videoEncoding: encoding,
-        });
+        await publishScreenShareVideo(
+          (screenTrack, opts) => room.localParticipant.publishTrack(screenTrack, opts),
+          captured.videoTrack,
+          {
+            name: `screen:${opts.sourceId}`,
+            source: getLivekit().Track.Source.ScreenShare,
+            videoEncoding: encoding,
+          },
+        );
         await tunePublishedScreenShare(captured.videoTrack);
 
         if (captured.audioTrack) {

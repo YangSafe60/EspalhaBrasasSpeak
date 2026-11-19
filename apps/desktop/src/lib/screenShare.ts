@@ -1,3 +1,4 @@
+import type { TrackPublishOptions } from "livekit-client";
 import {
   loadLivekit,
   type LocalAudioTrack,
@@ -33,6 +34,29 @@ export async function tunePublishedScreenShare(track: LocalVideoTrack): Promise<
     await sender.setParameters(params);
   } catch {
     /* optional */
+  }
+}
+
+/** Hardware encoder when the GPU has one. Same bitrate and frame cap as the preset. */
+export async function publishScreenShareVideo(
+  publish: (track: LocalVideoTrack, opts: TrackPublishOptions) => Promise<unknown>,
+  track: LocalVideoTrack,
+  opts: {
+    name: string;
+    source: TrackPublishOptions["source"];
+    videoEncoding: { maxBitrate: number; maxFramerate: number };
+  },
+): Promise<void> {
+  const base: TrackPublishOptions = {
+    name: opts.name,
+    source: opts.source,
+    simulcast: false,
+    videoEncoding: opts.videoEncoding,
+  };
+  try {
+    await publish(track, { ...base, videoCodec: "h264" });
+  } catch {
+    await publish(track, base);
   }
 }
 
@@ -127,6 +151,8 @@ async function captureWithChromeMediaSource(
   sourceId: string,
   opts: { systemAudio: boolean; maxWidth: number; maxHeight: number; maxFps: number },
 ): Promise<MediaStream> {
+  // No minFrameRate. With that set, Chromium on Windows keeps the capture
+  // utility running after every track is stopped.
   const constraints: CaptureConstraints = {
     audio: opts.systemAudio
       ? {
@@ -142,7 +168,6 @@ async function captureWithChromeMediaSource(
         maxWidth: opts.maxWidth,
         maxHeight: opts.maxHeight,
         maxFrameRate: opts.maxFps,
-        minFrameRate: Math.min(30, opts.maxFps),
       },
     },
   };
@@ -167,37 +192,16 @@ export async function captureElectronSource(
   const maxWidth = opts?.maxWidth ?? 1920;
   const maxHeight = opts?.maxHeight ?? 1080;
   const maxFps = opts?.maxFps ?? 60;
-  const api = getElectronAPI();
 
-  let stream: MediaStream;
-  if (api?.prepareDisplayCapture) {
-    await api.prepareDisplayCapture({ sourceId, systemAudio });
-    try {
-      stream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          width: { max: maxWidth },
-          height: { max: maxHeight },
-          frameRate: { ideal: maxFps, max: maxFps },
-        },
-        audio: systemAudio,
-      });
-    } catch {
-      await api.cancelDisplayCapture?.().catch(() => undefined);
-      stream = await captureWithChromeMediaSource(sourceId, {
-        systemAudio,
-        maxWidth,
-        maxHeight,
-        maxFps,
-      });
-    }
-  } else {
-    stream = await captureWithChromeMediaSource(sourceId, {
-      systemAudio,
-      maxWidth,
-      maxHeight,
-      maxFps,
-    });
-  }
+  // getDisplayMedia from the hidden voice window does not receive the click,
+  // so it fails and the fallback used to start a second capturer. One capped
+  // desktop capture is what actually stops when the live stops.
+  const stream = await captureWithChromeMediaSource(sourceId, {
+    systemAudio,
+    maxWidth,
+    maxHeight,
+    maxFps,
+  });
 
   const { LocalAudioTrack, LocalVideoTrack } = await loadLivekit();
 
@@ -218,16 +222,16 @@ export async function captureElectronSource(
     audioTrack,
     stop: async () => {
       const media = [
-        videoTrack.mediaStreamTrack,
         audioTrack?.mediaStreamTrack,
+        videoTrack.mediaStreamTrack,
       ].filter((track): track is MediaStreamTrack => !!track);
       try {
-        videoTrack.stop();
+        audioTrack?.stop();
       } catch {
         /* ignore */
       }
       try {
-        audioTrack?.stop();
+        videoTrack.stop();
       } catch {
         /* ignore */
       }

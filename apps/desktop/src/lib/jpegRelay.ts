@@ -21,7 +21,7 @@ export function jpegBytes(data: ArrayBuffer | Uint8Array): ArrayBuffer {
 
 export function startLatestJpegRelay(opts: {
   video: HTMLVideoElement;
-  fps: () => 30 | 60;
+  fps: () => number;
   maxWidth?: number;
   onFrame: (jpeg: ArrayBuffer) => void;
 }): { stop: () => void } {
@@ -35,7 +35,6 @@ export function startLatestJpegRelay(opts: {
   let lastStart = 0;
   let gapTimer: number | null = null;
   let pollTimer: number | null = null;
-  let rVfc: number | null = null;
 
   const clearGap = () => {
     if (gapTimer != null) {
@@ -50,7 +49,7 @@ export function startLatestJpegRelay(opts: {
       dirty = true;
       return;
     }
-    const fps = opts.fps() === 60 ? 60 : 30;
+    const fps = Math.min(15, Math.max(1, opts.fps()));
     const minGap = 1000 / fps;
     const now = performance.now();
     const since = now - lastStart;
@@ -101,19 +100,13 @@ export function startLatestJpegRelay(opts: {
 
   const schedule = () => {
     if (stopped) return;
-    const video = opts.video;
-    if (typeof video.requestVideoFrameCallback === "function") {
-      rVfc = video.requestVideoFrameCallback(() => {
-        void encodeLatest();
-        schedule();
-      });
-      return;
-    }
+    // Timer, not every captured frame. The live others receive is the WebRTC
+    // track; this JPEG is only the local preview.
     pollTimer = window.setTimeout(() => {
       pollTimer = null;
       void encodeLatest();
       schedule();
-    }, 1000 / (opts.fps() === 60 ? 60 : 30));
+    }, 1000 / Math.min(15, Math.max(1, opts.fps())));
   };
 
   void encodeLatest();
@@ -125,12 +118,6 @@ export function startLatestJpegRelay(opts: {
       stopped = true;
       clearGap();
       if (pollTimer != null) window.clearTimeout(pollTimer);
-      if (
-        rVfc != null &&
-        typeof opts.video.cancelVideoFrameCallback === "function"
-      ) {
-        opts.video.cancelVideoFrameCallback(rVfc);
-      }
       canvas.width = 0;
       canvas.height = 0;
     },

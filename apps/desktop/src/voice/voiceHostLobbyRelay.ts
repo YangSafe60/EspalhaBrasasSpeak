@@ -64,7 +64,7 @@ function startRelay(
   const relay = startLatestJpegRelay({
     video,
     maxWidth: jpegPreviewMaxWidth(),
-    fps: () => 30,
+    fps: () => 8,
     onFrame: (jpeg) => {
       window.electronAPI?.publishLobbyFrame?.({ trackSid, jpeg });
     },
