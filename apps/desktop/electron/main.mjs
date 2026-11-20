@@ -924,12 +924,26 @@ function registerIpc() {
       thumbnailSize: { width: 160, height: 90 },
       fetchWindowIcons: false,
     });
-    return sources.map((s) => ({
-      id: s.id,
-      name: s.name,
-      kind: s.id.startsWith("screen:") ? "screen" : "window",
-      thumbnail: s.thumbnail.isEmpty() ? "" : s.thumbnail.toDataURL(),
-    }));
+    // Windows names screens in the OS language ("Ecrã 1"); the app is in
+    // English, so name them ourselves. Window names are real window titles.
+    const screenSources = sources.filter((x) => x.id.startsWith("screen:"));
+    const primaryId = String(screen.getPrimaryDisplay().id);
+    const screenName = (src) => {
+      if (screenSources.length <= 1) return "Entire Screen";
+      const n = screenSources.indexOf(src) + 1;
+      return src.display_id && src.display_id === primaryId
+        ? `Screen ${n} (Primary)`
+        : `Screen ${n}`;
+    };
+    return sources.map((s) => {
+      const isScreen = s.id.startsWith("screen:");
+      return {
+        id: s.id,
+        name: isScreen ? screenName(s) : s.name,
+        kind: isScreen ? "screen" : "window",
+        thumbnail: s.thumbnail.isEmpty() ? "" : s.thumbnail.toDataURL(),
+      };
+    });
   });
 
   ipcMain.handle("popout:open", async (_evt, { title, trackSid, url }) => {

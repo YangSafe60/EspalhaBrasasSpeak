@@ -327,13 +327,17 @@ export function DmCallLobbyView({ voice, compact = false }: Props) {
                         !participants.some((p) => sameId(p.user_id, u.user_id)) ? (
                           <span className="waiting">Ringing…</span>
                         ) : null}
-                        {!u.muted &&
+                        {u.isSelf && !voice.connected ? (
+                          <span className="waiting">Connecting…</span>
+                        ) : (
+                          !u.muted &&
                           !u.deafened &&
                           !u.streaming &&
                           (u.isSelf ||
                             participants.some((p) =>
                               sameId(p.user_id, u.user_id),
-                            )) && <span className="ok">Connected</span>}
+                            )) && <span className="ok">Connected</span>
+                        )}
                       </span>
                     </div>
                   </div>

@@ -89,6 +89,7 @@ export function VoiceLobbyView({ voice }: Props) {
   const connectedHere =
     voice.voiceChannelId === channel.id &&
     (voice.connected || voice.joining);
+  const selfConnected = voice.connected && voice.voiceChannelId === channel.id;
   const otherScreens = voice.remoteScreens.filter(
     (s) => !sameId(livekitUserId(s.participantIdentity), user?.id),
   );
@@ -257,8 +258,14 @@ export function VoiceLobbyView({ voice }: Props) {
                       {u.muted && <span title="Muted">Mic off</span>}
                       {u.deafened && <span title="Deafened">Deafened</span>}
                       {u.streaming && <span title="Sharing">Sharing</span>}
-                      {!u.muted && !u.deafened && !u.streaming && (
-                        <span className="ok">Connected</span>
+                      {/* Your voice state reaches the server before the voice
+                          connection is up: say so until it really is. */}
+                      {u.isSelf && !selfConnected ? (
+                        <span className="waiting">Connecting…</span>
+                      ) : (
+                        !u.muted &&
+                        !u.deafened &&
+                        !u.streaming && <span className="ok">Connected</span>
                       )}
                     </span>
                   </div>
