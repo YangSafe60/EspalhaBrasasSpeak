@@ -25,6 +25,78 @@ const isDev = !app.isPackaged;
 const DEV_URL = process.env.VITE_DEV_SERVER_URL || "http://127.0.0.1:1420";
 const DEFAULT_APP_TITLE = "Espalha Brasas";
 
+/*
+ * Lockdown: app windows may only show the app's own pages. Anything else
+ * (a link, a redirect) is refused and, if it is a web link, opened in the
+ * user's browser instead, so an outside page never runs with the preload API
+ * or gets mic/camera/screen permissions.
+ */
+const APP_ROOT = path.resolve(__dirname, "..").toLowerCase();
+const DEV_ORIGIN = (() => {
+  try {
+    return new URL(DEV_URL).origin;
+  } catch {
+    return "";
+  }
+})();
+
+function isAppUrl(raw) {
+  if (typeof raw !== "string" || !raw) return false;
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (isDev && DEV_ORIGIN && u.origin === DEV_ORIGIN) return true;
+  if (u.protocol === "file:") {
+    try {
+      const file = path.resolve(fileURLToPath(u)).toLowerCase();
+      return file === APP_ROOT || file.startsWith(APP_ROOT + path.sep);
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+/**
+ * Fallback for permission checks that carry only an origin. A bare "file://"
+ * origin can't be told apart from any other local file, so it is accepted
+ * only in production where the app itself is loaded from files.
+ */
+function isAppOrigin(origin) {
+  if (typeof origin !== "string" || !origin) return false;
+  if (isDev) return Boolean(DEV_ORIGIN) && origin.replace(/\/$/, "") === DEV_ORIGIN;
+  return origin.startsWith("file://");
+}
+
+/** Only web links leave the app, and only to the default browser. */
+function openExternalSafe(raw) {
+  try {
+    const u = new URL(raw);
+    if (u.protocol === "http:" || u.protocol === "https:") void shell.openExternal(u.href);
+  } catch {
+    /* not a URL */
+  }
+}
+
+app.on("web-contents-created", (_event, contents) => {
+  contents.on("will-navigate", (event, url) => {
+    if (isAppUrl(url)) return;
+    event.preventDefault();
+    openExternalSafe(url);
+  });
+  contents.on("will-redirect", (event, url) => {
+    if (!isAppUrl(url)) event.preventDefault();
+  });
+  contents.on("will-attach-webview", (event) => event.preventDefault());
+  contents.setWindowOpenHandler(({ url }) => {
+    openExternalSafe(url);
+    return { action: "deny" };
+  });
+});
+
 /** Optional separate profile for multi-account testing. */
 if (process.env.ELECTRON_USER_DATA) {
   app.setPath("userData", process.env.ELECTRON_USER_DATA);
@@ -636,9 +708,7 @@ function createMainWindow() {
   trackFrameWindow(mainWindow, "consumer", "main");
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith("http:") || url.startsWith("https:")) {
-      void shell.openExternal(url);
-    }
+    openExternalSafe(url);
     return { action: "deny" };
   });
 
@@ -689,28 +759,28 @@ function installSessionHandlers() {
     }
   });
 
-  ses.setPermissionRequestHandler((_wc, permission, callback) => {
-    const allow = [
-      "media",
-      "audioCapture",
-      "videoCapture",
-      "display-capture",
-      "mediaKeySystem",
-      "notifications",
-    ].includes(permission);
-    callback(allow);
+  // Mic, camera, screen and notifications: granted only to the app's own pages.
+  const allowedPermissions = new Set([
+    "media",
+    "audioCapture",
+    "videoCapture",
+    "display-capture",
+    "mediaKeySystem",
+    "notifications",
+  ]);
+
+  ses.setPermissionRequestHandler((wc, permission, callback, details) => {
+    const url = details?.requestingUrl || wc?.getURL?.() || "";
+    callback(allowedPermissions.has(permission) && isAppUrl(url));
   });
 
-  ses.setPermissionCheckHandler((_wc, permission) =>
-    [
-      "media",
-      "audioCapture",
-      "videoCapture",
-      "display-capture",
-      "mediaKeySystem",
-      "notifications",
-    ].includes(permission),
-  );
+  ses.setPermissionCheckHandler((wc, permission, requestingOrigin, details) => {
+    if (!allowedPermissions.has(permission)) return false;
+    // Judge by the full URL (an origin of "file://" would match any local file).
+    const url = details?.requestingUrl || wc?.getURL?.() || "";
+    if (url) return isAppUrl(url);
+    return isAppOrigin(requestingOrigin);
+  });
 }
 
 function registerIpc() {
@@ -852,6 +922,11 @@ function registerIpc() {
     });
 
     if (isDev) {
+      // The renderer supplies this URL: only ever load our own pages.
+      if (!isAppUrl(url)) {
+        win.destroy();
+        return { ok: false, error: "invalid pop-out url" };
+      }
       void win.loadURL(url);
     } else {
       const u = new URL(`file://${path.join(__dirname, "..", "dist", "index.html")}`);

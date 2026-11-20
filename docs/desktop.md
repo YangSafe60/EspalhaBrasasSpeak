@@ -116,6 +116,21 @@ encrypted with Electron `safeStorage` (DPAPI on Windows, Keychain on macOS,
 libsecret/kwallet on Linux). Only when the OS has no keystore are they written
 as plain JSON. Back them up from **User Settings** before wiping app data.
 
+## Security lockdown
+
+- **Content-Security-Policy** on every page (injected by `cspPlugin` in
+  `vite.config.ts`; the notification popup has its own): only the app's own
+  scripts run. Inline scripts, inline event handlers, `eval` and scripts from
+  other hosts are blocked, so markup that slipped into a message could not
+  reach the preload API (E2E keys, tokens, uploads). Dev also allows inline
+  scripts for Vite's HMR. Network and media stay open because the API and
+  LiveKit hosts are configured at runtime.
+- **Navigation lock** (`web-contents-created` in `electron/main.mjs`): app
+  windows only load the app's own pages. Other navigations and redirects are
+  refused, `window.open` is denied, and web links open in the default browser.
+- **Permissions** (mic, camera, screen, notifications) are granted only to the
+  app's own pages, judged by the full URL.
+
 ## Notes
 
 - Capture uses Chromium `desktopCapturer` (custom in-app picker + optional system audio).
