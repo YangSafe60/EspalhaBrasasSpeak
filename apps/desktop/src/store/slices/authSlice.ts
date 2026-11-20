@@ -2,8 +2,7 @@
 import {
   api,
   clearTokens,
-  getAccessToken,
-  getRefreshToken,
+  hasSavedSession,
 } from "../../api/client";
 import { clearIdentityCache } from "../../lib/e2e";
 import { normalizePresenceStatus } from "../../lib/presence";
@@ -18,7 +17,7 @@ import type { AppStoreSlice } from "./sliceTypes";
 
 export const createAuthSlice: AppStoreSlice = (set, get) => ({
   bootstrap: async () => {
-    if (!getAccessToken() || !getRefreshToken()) {
+    if (!(await hasSavedSession())) {
       set({ bootstrapped: true, user: null });
       return;
     }
@@ -53,8 +52,11 @@ export const createAuthSlice: AppStoreSlice = (set, get) => ({
           set({ e2eIdentityMissing: true });
         }
       }
-    } catch {
-      clearTokens();
+    } catch (error) {
+      // Only a rejected session signs out; a server that's down or a network
+      // error keeps the saved session for the next start.
+      const status = (error as { status?: number })?.status;
+      if (status === 401 || status === 403) clearTokens();
       set({ user: null });
     } finally {
       set({ bootstrapped: true, connecting: false });

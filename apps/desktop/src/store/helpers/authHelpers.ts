@@ -6,7 +6,7 @@ export function applyAuth(
   set: (p: Record<string, unknown>) => void,
   data: AuthResponse,
 ) {
-  setTokens(data.access_token, data.refresh_token);
+  void setTokens(data.access_token, data.refresh_token);
   set({
     user: { ...data.user, email: "" },
     error: null,

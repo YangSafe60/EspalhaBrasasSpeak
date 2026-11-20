@@ -94,6 +94,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("crypto:identity:save", userId, data),
   deleteE2eIdentity: (userId) =>
     ipcRenderer.invoke("crypto:identity:delete", userId),
+  // Session: the refresh token goes in, but never comes back out.
+  saveSession: (apiBase, refresh) => ipcRenderer.invoke("auth:session:save", apiBase, refresh),
+  hasSession: () => ipcRenderer.invoke("auth:session:has"),
+  refreshSession: () => ipcRenderer.invoke("auth:session:refresh"),
+  clearSession: () => ipcRenderer.invoke("auth:session:clear"),
   onNotificationClick: (handler) => {
     const listener = (_event, payload) => handler(payload);
     ipcRenderer.on("desktop:notify-click", listener);

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { getAccessToken, wsUrl } from "../api/client";
+import { getAccessToken, refreshAccessToken, wsProtocols, wsUrl } from "../api/client";
 import { useAppStore } from "../store/appStore";
 import type { WsEvent } from "../types";
 
@@ -18,10 +18,12 @@ export function useWebSocket(enabled: boolean) {
     const connect = () => {
       const token = getAccessToken();
       if (!token || cancelled) return;
-      const ws = new WebSocket(wsUrl(token));
+      const ws = new WebSocket(wsUrl(), wsProtocols(token));
       wsRef.current = ws;
+      let opened = false;
 
       ws.onopen = () => {
+        opened = true;
         retryRef.current = 0;
       };
 
@@ -37,6 +39,8 @@ export function useWebSocket(enabled: boolean) {
       ws.onclose = () => {
         wsRef.current = null;
         if (cancelled) return;
+        // Refused before opening: most likely an expired access token.
+        if (!opened) void refreshAccessToken();
         const delay = Math.min(1000 * 2 ** retryRef.current, 15000);
         retryRef.current += 1;
         timerRef.current = window.setTimeout(connect, delay);

@@ -18,6 +18,12 @@ import {
   previewNotifySound,
 } from "../lib/messageNotify";
 import { restoreIdentityBackup } from "../store/helpers/dmHelpers";
+import {
+  encryptKeyBackup,
+  isEncryptedKeyBackup,
+  MIN_BACKUP_PASSWORD,
+  readKeyBackup,
+} from "../lib/keyBackup";
 import { useAppStore } from "../store/appStore";
 import { AccessibilitySettings } from "./AccessibilitySettings";
 import { ProfileMediaEditControl } from "./ProfileMediaEditControl";
@@ -62,6 +68,7 @@ export function UserSettingsModal() {
   const [soundErr, setSoundErr] = useState<string | null>(null);
   const [e2eBackupJson, setE2eBackupJson] = useState("");
   const [e2eBackupMsg, setE2eBackupMsg] = useState<string | null>(null);
+  const [e2eBackupPassword, setE2eBackupPassword] = useState("");
   const e2eIdentityMissing = useAppStore((s) => s.e2eIdentityMissing);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -516,7 +523,8 @@ export function UserSettingsModal() {
                 <p className="muted tiny">
                   Direct messages are encrypted on this device. Back up your keys
                   before reinstalling or updating, then restore them here if this
-                  device lost access.
+                  device lost access. The backup is locked with a password you
+                  choose; without it the backup can't be restored, so keep it safe.
                 </p>
                 {e2eIdentityMissing ? (
                   <p className="form-error tiny">
@@ -525,13 +533,23 @@ export function UserSettingsModal() {
                   </p>
                 ) : null}
                 <label>
-                  Key backup (JSON)
+                  Backup password
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    value={e2eBackupPassword}
+                    onChange={(e) => setE2eBackupPassword(e.target.value)}
+                    placeholder={`At least ${MIN_BACKUP_PASSWORD} characters`}
+                  />
+                </label>
+                <label>
+                  Key backup
                   <textarea
                     className="e2e-backup-textarea"
                     rows={4}
                     value={e2eBackupJson}
                     onChange={(e) => setE2eBackupJson(e.target.value)}
-                    placeholder='{"publicKey":"…","privateKey":"…"}'
+                    placeholder='{"v":2,"salt":"…","iv":"…","ct":"…"}'
                     spellCheck={false}
                   />
                 </label>
@@ -540,10 +558,16 @@ export function UserSettingsModal() {
                   <button
                     type="button"
                     className="btn ghost sm"
-                    disabled={busy || !user}
+                    disabled={busy || !user || e2eBackupPassword.length < MIN_BACKUP_PASSWORD}
+                    title={
+                      e2eBackupPassword.length < MIN_BACKUP_PASSWORD
+                        ? "Choose a backup password first"
+                        : undefined
+                    }
                     onClick={async () => {
                       if (!user) return;
                       setE2eBackupMsg(null);
+                      setErr(null);
                       let blob;
                       try {
                         blob = await loadStoredIdentity(user.id);
@@ -559,11 +583,17 @@ export function UserSettingsModal() {
                         setErr("No encryption keys found on this device.");
                         return;
                       }
-                      setE2eBackupJson(JSON.stringify(blob, null, 2));
-                      setE2eBackupMsg("Backup loaded from this device.");
+                      try {
+                        setE2eBackupJson(await encryptKeyBackup(blob, e2eBackupPassword));
+                        setE2eBackupMsg(
+                          "Encrypted backup created. Copy it somewhere safe; you'll need the same password to restore it.",
+                        );
+                      } catch (e) {
+                        setErr(e instanceof Error ? e.message : "Could not create the backup.");
+                      }
                     }}
                   >
-                    Load from device
+                    Create backup
                   </button>
                   <button
                     type="button"
@@ -575,22 +605,18 @@ export function UserSettingsModal() {
                       setErr(null);
                       setE2eBackupMsg(null);
                       try {
-                        const parsed = JSON.parse(e2eBackupJson) as {
-                          publicKey?: string;
-                          privateKey?: string;
-                        };
-                        if (!parsed.publicKey || !parsed.privateKey) {
-                          throw new Error("Backup must include publicKey and privateKey.");
-                        }
-                        const pair = await restoreIdentityBackup(user.id, {
-                          publicKey: parsed.publicKey,
-                          privateKey: parsed.privateKey,
-                        });
+                        const wasEncrypted = isEncryptedKeyBackup(e2eBackupJson);
+                        const keys = await readKeyBackup(e2eBackupJson, e2eBackupPassword);
+                        const pair = await restoreIdentityBackup(user.id, keys);
                         useAppStore.setState({
                           identityPublicKey: pair.publicKeyB64,
                           e2eIdentityMissing: false,
                         });
-                        setE2eBackupMsg("Encryption keys restored.");
+                        setE2eBackupMsg(
+                          wasEncrypted
+                            ? "Encryption keys restored."
+                            : "Encryption keys restored. That backup wasn't password-protected: create a new one and delete the old copy.",
+                        );
                       } catch (e) {
                         setErr(
                           e instanceof Error

@@ -130,6 +130,16 @@ as plain JSON. Back them up from **User Settings** before wiping app data.
   refused, `window.open` is denied, and web links open in the default browser.
 - **Permissions** (mic, camera, screen, notifications) are granted only to the
   app's own pages, judged by the full URL.
+- **Session**: the 30-day refresh token is kept only in the main process,
+  encrypted with `safeStorage` (`electron/sessionStore.mjs`), tied to the API
+  origin that issued it. Pages ask the main process to refresh and only get the
+  12-hour access token back. Tokens left in `localStorage` by older versions
+  are moved there on start.
+- **WebSocket** auth goes in the `Sec-WebSocket-Protocol` header
+  (`speakapp.auth, <token>`) instead of the URL, so it doesn't end up in logs.
+- **E2E key backup** is encrypted with a password (PBKDF2-SHA256, 600k
+  iterations, AES-256-GCM, `src/lib/keyBackup.ts`). Old plain backups can still
+  be restored.
 
 ## Notes
 

@@ -38,6 +38,22 @@ is_loopback_or_docker() {
 API_HOST="$(api_host "$PUBLIC_URL")"
 API_HOST_ONLY="$(host_only "$API_HOST")"
 
+# A public server must not run with the well-known dev secrets: with the
+# default JWT_SECRET anyone can mint a login token for any account, and with
+# the default LiveKit secret anyone can join any call. Stop here (the running
+# stack is left untouched) until the GitHub secrets are set.
+SPEAKAPP_ENV=""
+if ! is_loopback_or_docker "$API_HOST_ONLY"; then
+  SPEAKAPP_ENV="production"
+  weak_secret() {
+    [[ ${#1} -lt 32 ]] || [[ "$1" == "dev-secret-change-me-in-production" ]]       || [[ "$1" == "espalha_brasas_dev_livekit_secret_32b" ]] || [[ "$1" == "change-me-please" ]]
+  }
+  if weak_secret "$JWT_SECRET" || weak_secret "$LIVEKIT_API_SECRET"; then
+    echo "::error::JWT_SECRET and LIVEKIT_API_SECRET must be set as GitHub Actions secrets (32+ random characters, not the dev defaults). Deploy stopped; the running server was not changed."
+    exit 1
+  fi
+fi
+
 # If LIVEKIT_URL is unset or still points at loopback/Docker, derive from PUBLIC_URL.
 # Otherwise clients get ws://127.0.0.1:7880 and voice fails with "Failed to fetch".
 if [[ -z "$LIVEKIT_URL" ]] || is_loopback_or_docker "$(host_only "$(api_host "$LIVEKIT_URL")")"; then
@@ -60,6 +76,7 @@ LIVEKIT_URL=${LIVEKIT_URL}
 LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
 LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
 MAX_UPLOAD_BYTES=${MAX_UPLOAD_BYTES}
+SPEAKAPP_ENV=${SPEAKAPP_ENV}
 IMGBB_API_KEY=${IMGBB_API_KEY}
 KLIPY_API_KEY=${KLIPY_API_KEY}
 EOF

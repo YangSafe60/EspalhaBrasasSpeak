@@ -184,6 +184,15 @@ pub async fn register(
     issue_pair(&state, id).await
 }
 
+/// Argon2 hash of a random password, used to equalise login timing.
+fn dummy_password_hash() -> &'static str {
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        hash_password(&crate::auth::issue_refresh_token_value())
+            .unwrap_or_else(|_| String::new())
+    })
+}
+
 pub async fn login(
     State(state): State<AppState>,
     ClientIp(ip): ClientIp,
@@ -203,12 +212,26 @@ pub async fn login(
     .bind(body.login.trim())
     .bind(body.login.trim())
     .fetch_optional(&state.db)
-    .await?
-    .ok_or(AppError::Unauthorized)?;
+    .await?;
 
-    if !verify_password(&body.password, &row.password_hash)? {
-        return Err(AppError::Unauthorized);
-    }
+    // Unknown account: still run Argon2 against a dummy hash, so the response
+    // time doesn't reveal which usernames/emails exist.
+    let (row, hash) = match row {
+        Some(r) => {
+            let h = r.password_hash.clone();
+            (Some(r), h)
+        }
+        None => (None, dummy_password_hash().to_string()),
+    };
+    let password = body.password.clone();
+    // Argon2 is deliberately slow; keep it off the async worker threads.
+    let ok = tokio::task::spawn_blocking(move || verify_password(&password, &hash))
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))??;
+    let row = match row {
+        Some(r) if ok => r,
+        _ => return Err(AppError::Unauthorized),
+    };
     let id = Uuid::parse_str(&row.id).unwrap();
     if db::is_user_disabled(&state.db, id).await? {
         return Err(AppError::BadRequest("account disabled".into()));

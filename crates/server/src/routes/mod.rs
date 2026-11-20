@@ -16,7 +16,7 @@ use crate::state::AppState;
 use crate::ws;
 use axum::{
     extract::{DefaultBodyLimit, Query, State, WebSocketUpgrade},
-    http::{header, HeaderValue, Method},
+    http::{header, HeaderMap, HeaderValue, Method},
     response::IntoResponse,
     routing::{delete, get, patch, post, put},
     Router,
@@ -317,15 +317,42 @@ pub fn router(state: AppState) -> Router {
 
 #[derive(Deserialize)]
 struct WsQuery {
-    token: String,
+    /// Legacy: clients before the subprotocol change sent the token in the URL.
+    token: Option<String>,
+}
+
+/// WebSocket subprotocol that carries the access token, so it is not in the
+/// URL (URLs end up in proxy and access logs). The client offers
+/// `speakapp.auth, <token>` and the server answers with `speakapp.auth`.
+const WS_AUTH_PROTOCOL: &str = "speakapp.auth";
+
+fn ws_token_from_protocols(headers: &HeaderMap) -> Option<String> {
+    let offered: Vec<String> = headers
+        .get_all(header::SEC_WEBSOCKET_PROTOCOL)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .collect();
+    if !offered.iter().any(|p| p == WS_AUTH_PROTOCOL) {
+        return None;
+    }
+    offered.into_iter().find(|p| p != WS_AUTH_PROTOCOL)
 }
 
 async fn ws_upgrade(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(q): Query<WsQuery>,
 ) -> AppResult<impl IntoResponse> {
-    let claims = decode_token(&q.token, &state.config.jwt_secret)?;
+    let from_protocol = ws_token_from_protocols(&headers);
+    let uses_protocol = from_protocol.is_some();
+    let token = from_protocol
+        .or(q.token)
+        .ok_or(AppError::Unauthorized)?;
+    let claims = decode_token(&token, &state.config.jwt_secret)?;
     if claims.typ != "access" {
         return Err(AppError::Unauthorized);
     }
@@ -339,6 +366,12 @@ async fn ws_upgrade(
         let members = crate::db::server_member_ids(&state.db, s.id).await?;
         state.hub.set_server_members(s.id, members);
     }
+    // Echo the auth subprotocol, or browsers reject the connection.
+    let ws = if uses_protocol {
+        ws.protocols([WS_AUTH_PROTOCOL])
+    } else {
+        ws
+    };
     Ok(ws.on_upgrade(move |socket| ws::handle_socket(socket, user_id, state)))
 }
 

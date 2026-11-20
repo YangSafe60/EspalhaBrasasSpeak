@@ -25,6 +25,14 @@ export type ElectronAPI = {
     versions: { electron: string; chrome: string; node: string };
   }>;
   getAppUpdate: () => Promise<AppUpdateEvent | null>;
+  /** Store the refresh token in the main process (encrypted, never read back). */
+  saveSession?: (apiBase: string, refresh: string) => Promise<boolean>;
+  hasSession?: () => Promise<boolean>;
+  /** Main process exchanges the stored refresh token; returns the access token. */
+  refreshSession?: () => Promise<
+    { ok: true; access_token: string } | { ok: false; status: number }
+  >;
+  clearSession?: () => Promise<boolean>;
   /** Colours of the OS window buttons drawn over the in-app title strip. */
   setTitleBarColors?: (colors: { color: string; symbolColor: string }) => Promise<boolean>;
   /** RAM per Electron process, for memory diagnostics. */

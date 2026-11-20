@@ -52,16 +52,24 @@ Repo → **Settings → Secrets and variables → Actions**:
 | `VPS_SSH_KEY` | yes | full private key PEM (`espalha-deploy`) |
 | `VPS_PORT` | no | `22` |
 | `VPS_DEPLOY_PATH` | no | `/home/ubuntu/espalha-brasas` |
-| `JWT_SECRET` | no* | long random string |
+| `JWT_SECRET` | **yes** (public VPS) | 32+ random characters (letters and digits) |
 | `PUBLIC_URL` | no* | `https://your.domain` |
 | `LIVEKIT_URL` | no* | `wss://livekit.your.domain` **or** `ws://YOUR_VPS_IP:7880` (written into voice tokens) |
 | `LIVEKIT_API_KEY` | no* | same key on API **and** LiveKit container |
-| `LIVEKIT_API_SECRET` | no* | ≥32 chars; same secret on API **and** LiveKit container |
+| `LIVEKIT_API_SECRET` | **yes** (public VPS) | 32+ random characters (letters and digits); same secret on API **and** LiveKit container |
 | `MAX_UPLOAD_BYTES` | no | `26214400` |
 | `IMGBB_API_KEY` | recommended | ImgBB key, used **only by the server** as the fallback when the desktop app cannot upload an image to Catbox |
 | `KLIPY_API_KEY` | yes for GIFs | Klipy API key ([partner.klipy.com](https://partner.klipy.com)) |
 
-\*If these are missing or empty, the deploy script and Compose keep **localhost / local-dev defaults** (same as `.env.example`). Set them for a real public VPS.
+\*If these are missing or empty, the deploy script and Compose keep **localhost / local-dev defaults** (same as `.env.example`).
+
+**`JWT_SECRET` and `LIVEKIT_API_SECRET` are required as soon as `PUBLIC_URL` points at a real server** (anything but localhost). With the public dev defaults anyone could sign in as any user or join any call, so `remote-deploy.sh` stops before touching the running stack, and the API runs with `SPEAKAPP_ENV=production`, which refuses weak secrets. Generate them with, for example:
+
+```powershell
+-join ((48..57) + (65..90) + (97..122) | Get-Random -Count 48 | ForEach-Object { [char]$_ })
+```
+
+Changing `JWT_SECRET` signs everyone out once (they log in again); E2E keys are not affected.
 
 If `LIVEKIT_URL` is empty (or still `ws://127.0.0.1:7880`) while `PUBLIC_URL` is your VPS IP/domain, deploy now derives `ws://<PUBLIC_HOST>:7880` automatically. Without that, desktop clients try to open LiveKit on their own PC and fail with **could not establish signal connection: Failed to fetch**.
 

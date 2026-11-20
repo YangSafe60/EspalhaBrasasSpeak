@@ -530,3 +530,80 @@ async fn memory_samples_are_stored_per_user_and_rate_limited() {
     let mine = app.call(Method::GET, path, Some(&alice), None).await;
     assert_eq!(mine.body.as_array().unwrap().len(), 0);
 }
+
+#[tokio::test]
+async fn websocket_takes_token_from_subprotocol_or_legacy_query() {
+    use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValue};
+
+    let app = test_app().await;
+    let auth = app.register("alice").await;
+    let token = auth.trim_start_matches("Bearer ").to_string();
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let router = app.router.clone();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+
+    // Token in Sec-WebSocket-Protocol: accepted, protocol echoed back.
+    let mut req = format!("ws://{addr}/api/ws").into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_str(&format!("speakapp.auth, {token}")).unwrap(),
+    );
+    let (_ws, res) = tokio_tungstenite::connect_async(req).await.expect("subprotocol auth");
+    assert_eq!(
+        res.headers().get("sec-websocket-protocol").unwrap(),
+        "speakapp.auth"
+    );
+
+    // Older clients: token in the URL still works.
+    let legacy = format!("ws://{addr}/api/ws?token={token}");
+    assert!(tokio_tungstenite::connect_async(legacy).await.is_ok());
+
+    // No token, or a bad one: refused.
+    assert!(tokio_tungstenite::connect_async(format!("ws://{addr}/api/ws")).await.is_err());
+    let mut bad = format!("ws://{addr}/api/ws").into_client_request().unwrap();
+    bad.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static("speakapp.auth, not-a-token"),
+    );
+    assert!(tokio_tungstenite::connect_async(bad).await.is_err());
+}
+
+#[tokio::test]
+async fn login_takes_as_long_for_unknown_accounts() {
+    let app = test_app().await;
+    app.register("alice").await;
+    let time = |login: &'static str| {
+        let app = &app;
+        async move {
+            let t = std::time::Instant::now();
+            let r = app
+                .call(
+                    Method::POST,
+                    "/api/auth/login",
+                    None,
+                    Some(json!({ "login": login, "password": "wrong password!" })),
+                )
+                .await;
+            assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+            t.elapsed()
+        }
+    };
+    // Warm the dummy hash, then compare (limit is 5/min per IP, so 4 calls).
+    time("nobody").await;
+    let known = time("alice").await;
+    let unknown = time("nobody").await;
+    let ratio = unknown.as_secs_f64() / known.as_secs_f64();
+    assert!(
+        (0.5..2.0).contains(&ratio),
+        "unknown {unknown:?} vs known {known:?}"
+    );
+}

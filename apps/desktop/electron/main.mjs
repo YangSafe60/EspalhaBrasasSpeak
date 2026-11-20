@@ -19,6 +19,7 @@ import {
   loadE2eIdentity,
   saveE2eIdentity,
 } from "./e2eIdentityStore.mjs";
+import { clearSession, hasSession, refreshSession, saveSession } from "./sessionStore.mjs";
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -865,6 +866,12 @@ function registerIpc() {
   ipcMain.handle("crypto:identity:delete", (_evt, userId) =>
     deleteE2eIdentity(userId),
   );
+
+  // Refresh token kept in the main process only (see sessionStore.mjs).
+  ipcMain.handle("auth:session:save", (_evt, apiBase, refresh) => saveSession(apiBase, refresh));
+  ipcMain.handle("auth:session:has", () => hasSession());
+  ipcMain.handle("auth:session:refresh", () => refreshSession());
+  ipcMain.handle("auth:session:clear", () => clearSession());
 
   /** Updates taskbar + Windows Task Manager process label while in voice. */
   ipcMain.handle("window:titlebar-colors", (_evt, colors = {}) => {

@@ -20,18 +20,59 @@ export function getAccessToken(): string | null {
   return localStorage.getItem(STORAGE_ACCESS);
 }
 
-export function getRefreshToken(): string | null {
-  return localStorage.getItem(STORAGE_REFRESH);
+/**
+ * Desktop: the refresh token is handed to the main process, which keeps it
+ * encrypted with the OS keystore and never gives it back to a page. Only the
+ * short-lived access token stays in localStorage. The browser build (no
+ * Electron) keeps both in localStorage as before.
+ */
+function sessionApi() {
+  const api = typeof window !== "undefined" ? window.electronAPI : undefined;
+  return api?.saveSession && api.refreshSession && api.hasSession && api.clearSession
+    ? api
+    : null;
 }
 
-export function setTokens(access: string, refresh: string) {
+export function setTokens(access: string, refresh: string): Promise<void> {
   localStorage.setItem(STORAGE_ACCESS, access);
-  localStorage.setItem(STORAGE_REFRESH, refresh);
+  const desktop = sessionApi();
+  if (!desktop) {
+    localStorage.setItem(STORAGE_REFRESH, refresh);
+    return Promise.resolve();
+  }
+  localStorage.removeItem(STORAGE_REFRESH);
+  return desktop.saveSession!(getApiBase(), refresh).then(
+    () => undefined,
+    () => undefined,
+  );
 }
 
 export function clearTokens() {
   localStorage.removeItem(STORAGE_ACCESS);
   localStorage.removeItem(STORAGE_REFRESH);
+  void sessionApi()?.clearSession?.();
+}
+
+/** Moves a refresh token left in localStorage by older versions into the main process. */
+async function migrateLegacyRefresh(): Promise<void> {
+  const desktop = sessionApi();
+  const legacy = localStorage.getItem(STORAGE_REFRESH);
+  if (!desktop || !legacy) return;
+  try {
+    await desktop.saveSession!(getApiBase(), legacy);
+    localStorage.removeItem(STORAGE_REFRESH);
+  } catch {
+    /* keep it; try again next start */
+  }
+}
+
+/** Whether there is a session to resume (access token, or a stored refresh token). */
+export async function hasSavedSession(): Promise<boolean> {
+  await migrateLegacyRefresh();
+  if (getAccessToken()) return true;
+  const desktop = sessionApi();
+  if (desktop) return Boolean(await desktop.hasSession!().catch(() => false));
+  return Boolean(localStorage.getItem(STORAGE_REFRESH));
 }
 
 export class ApiError extends Error {
@@ -60,33 +101,52 @@ export function rateLimitMessage(retryAfter: string | null): string {
 
 let refreshPromise: Promise<boolean> | null = null;
 
-async function tryRefresh(): Promise<boolean> {
-  if (refreshPromise) return refreshPromise;
-  refreshPromise = (async () => {
-    const refresh = getRefreshToken();
-    if (!refresh) return false;
-    try {
-      const res = await fetch(`${getApiBase()}/api/auth/refresh`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refresh_token: refresh }),
-      });
-      // Rate-limited: keep the session and let the caller retry later.
-      if (res.status === 429) return false;
-      if (!res.ok) {
-        clearTokens();
-        return false;
-      }
-      const data = (await res.json()) as AuthResponse;
-      setTokens(data.access_token, data.refresh_token);
+async function refreshOnce(): Promise<boolean> {
+  const desktop = sessionApi();
+  if (desktop) {
+    // The main process does the exchange; we only receive the access token.
+    const res = await desktop.refreshSession!().catch(() => ({ ok: false as const, status: 0 }));
+    if (res.ok) {
+      localStorage.setItem(STORAGE_ACCESS, res.access_token);
       return true;
-    } catch {
+    }
+    // Rejected by the server: the session is over. 429 / offline: keep it.
+    if (res.status === 400 || res.status === 401 || res.status === 403) {
+      localStorage.removeItem(STORAGE_ACCESS);
+    }
+    return false;
+  }
+
+  const refresh = localStorage.getItem(STORAGE_REFRESH);
+  if (!refresh) return false;
+  try {
+    const res = await fetch(`${getApiBase()}/api/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refresh }),
+    });
+    // Rate-limited: keep the session and let the caller retry later.
+    if (res.status === 429) return false;
+    if (!res.ok) {
       clearTokens();
       return false;
-    } finally {
-      refreshPromise = null;
     }
-  })();
+    const data = (await res.json()) as AuthResponse;
+    await setTokens(data.access_token, data.refresh_token);
+    return true;
+  } catch {
+    // Network error: keep the session.
+    return false;
+  }
+}
+
+/** Single flight per window (the desktop main process also single-flights). */
+async function tryRefresh(): Promise<boolean> {
+  if (!refreshPromise) {
+    refreshPromise = refreshOnce().finally(() => {
+      refreshPromise = null;
+    });
+  }
   return refreshPromise;
 }
 
@@ -170,7 +230,20 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
   return JSON.parse(text) as T;
 }
 
-export function wsUrl(token: string): string {
+export function wsUrl(): string {
   const base = getApiBase().replace(/^http/, "ws");
-  return `${base}/api/ws?token=${encodeURIComponent(token)}`;
+  return `${base}/api/ws`;
+}
+
+/**
+ * The access token travels as a WebSocket subprotocol (Sec-WebSocket-Protocol
+ * header) instead of in the URL, which proxies and servers tend to log.
+ */
+export function wsProtocols(token: string): string[] {
+  return ["speakapp.auth", token];
+}
+
+/** Get a fresh access token (e.g. after the WebSocket was refused). */
+export function refreshAccessToken(): Promise<boolean> {
+  return tryRefresh();
 }
