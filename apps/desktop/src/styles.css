@@ -49,6 +49,12 @@ body,
    env() values keep our content clear of them. */
 :root {
   --titlebar-height: 0px;
+  /* Top colour of the server rail. */
+  --titlebar-bg: #081014;
+}
+
+html[data-theme="light"] {
+  --titlebar-bg: var(--bg-1);
 }
 
 html.has-titlebar {
@@ -67,32 +73,52 @@ html.has-titlebar .app-frame {
 }
 
 .app-titlebar {
+  position: relative;
   flex: none;
   height: var(--titlebar-height);
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding-left: 0.7rem;
-  padding-right: calc(100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px));
-  background: var(--bg-0);
-  color: var(--text-dim);
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.01em;
+  /* Same colour as the server rail, so the bar reads as part of the app. */
+  background: var(--titlebar-bg);
+  color: var(--text);
   user-select: none;
   -webkit-app-region: drag;
   app-region: drag;
 }
 
-.app-titlebar-logo {
-  width: 16px;
-  height: 16px;
-  object-fit: contain;
+/* Centred on the window, like Discord; never runs under the OS buttons. */
+.app-titlebar-center {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: calc(env(titlebar-area-width, 100vw) - 2 * 160px);
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.app-titlebar-icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  object-fit: cover;
+}
+
+.app-titlebar-icon.placeholder {
+  display: grid;
+  place-items: center;
+  background: var(--bg-3);
+  color: var(--text-dim);
+  font-size: 0.62rem;
 }
 
 .app-titlebar-title {
   overflow: hidden;
-  white-space: nowrap;
   text-overflow: ellipsis;
 }
 
@@ -703,16 +729,45 @@ input[type="number"]::-webkit-inner-spin-button {
   font: inherit;
 }
 
+/* Home button: the bare logo, larger and without the frame, so it doesn't
+   look like one of the servers below it. */
 .rail-brand.rail-home {
-  border: 1px solid rgba(227, 27, 35, 0.45);
-  transition: border-color 160ms ease, border-radius 160ms ease, transform 160ms ease;
+  width: 54px;
+  height: 54px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  transition: transform 160ms ease, filter 160ms ease;
 }
 
-.rail-brand.rail-home:hover,
+.rail-brand.rail-home img {
+  border-radius: 0;
+  background: transparent;
+}
+
+.rail-brand.rail-home:hover {
+  transform: scale(1.05);
+}
+
 .rail-brand.rail-home.active {
+  filter: drop-shadow(0 0 10px rgba(227, 27, 35, 0.45));
+}
+
+/* The logo's text is white: on the light theme give it a dark tile back. */
+html[data-theme="light"] .rail-brand.rail-home {
+  width: 48px;
+  height: 48px;
+  padding: 4px;
   border-radius: 12px;
-  border-color: var(--accent);
-  transform: translateY(-1px);
+  background: #111;
+}
+
+.rail-brand.rail-home:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 8px;
 }
 
 .rail-badge {
@@ -4434,6 +4489,18 @@ html[data-compact="1"] .message {
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+
+/* Title and close button stay in view while the tab content scrolls. */
+.channel-settings-main > .modal-header {
+  position: sticky;
+  top: -1.1rem;
+  z-index: 5;
+  flex: none;
+  margin: -1.1rem -1.4rem 0.85rem;
+  padding: 1.1rem 1.4rem 0.75rem;
+  background: #0a0a0a;
+  border-bottom: 1px solid var(--border);
 }
 
 .settings-form {

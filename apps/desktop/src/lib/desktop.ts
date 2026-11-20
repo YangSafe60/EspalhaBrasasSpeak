@@ -25,8 +25,6 @@ export type ElectronAPI = {
     versions: { electron: string; chrome: string; node: string };
   }>;
   getAppUpdate: () => Promise<AppUpdateEvent | null>;
-  /** Main window title changes (the in-app title strip mirrors it). */
-  onWindowTitle?: (handler: (title: string) => void) => () => void;
   /** Colours of the OS window buttons drawn over the in-app title strip. */
   setTitleBarColors?: (colors: { color: string; symbolColor: string }) => Promise<boolean>;
   /** RAM per Electron process, for memory diagnostics. */

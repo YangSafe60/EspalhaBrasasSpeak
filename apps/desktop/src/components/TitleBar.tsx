@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
-import logoMark from "../assets/logo-mark.png";
+import { useEffect } from "react";
 import { getElectronAPI } from "../lib/desktop";
+import { mediaUrl } from "../lib/mediaUrl";
+import { sameId } from "../lib/serverPerms";
+import { useAppStore } from "../store/appStore";
 
 /** Main window opened with the native title bar hidden (see main.mjs). */
 export function hasCustomTitleBar(): boolean {
@@ -8,32 +10,31 @@ export function hasCustomTitleBar(): boolean {
   return new URLSearchParams(window.location.search).get("titlebar") === "1";
 }
 
-/** Reads the theme's colours so the native window buttons match the bar. */
+/** The bar's colour (theme-aware) so the native window buttons match it. */
 function readBarColors(): { color: string; symbolColor: string } {
   const css = getComputedStyle(document.documentElement);
-  const color = css.getPropertyValue("--bg-0").trim() || "#050505";
+  const color = css.getPropertyValue("--titlebar-bg").trim() || "#081014";
   const symbolColor = css.getPropertyValue("--text").trim() || "#f4f4f4";
   return { color, symbolColor };
 }
 
 /**
- * Discord-style title strip: the app draws the top bar itself and the OS
- * minimise / maximise / close buttons sit inside it (Electron
- * titleBarOverlay), instead of a separate native title bar.
+ * Discord-style top bar: same colour as the server rail so it reads as part
+ * of the app, the current server (or Direct Messages) centred, and the OS
+ * minimise / maximise / close buttons inside it (Electron titleBarOverlay).
  */
 export function TitleBar() {
   const enabled = hasCustomTitleBar();
-  const [title, setTitle] = useState("Espalha Brasas");
+  const user = useAppStore((s) => s.user);
+  const friendsHome = useAppStore((s) => s.friendsHome);
+  const server = useAppStore((s) =>
+    s.activeServerId ? s.servers.find((sv) => sameId(sv.id, s.activeServerId)) : undefined,
+  );
 
   useEffect(() => {
     if (!enabled) return;
     document.documentElement.classList.add("has-titlebar");
     return () => document.documentElement.classList.remove("has-titlebar");
-  }, [enabled]);
-
-  useEffect(() => {
-    if (!enabled) return;
-    return getElectronAPI()?.onWindowTitle?.((next) => setTitle(next || "Espalha Brasas"));
   }, [enabled]);
 
   // Keep the native buttons' background/icon colours in step with the theme.
@@ -64,10 +65,28 @@ export function TitleBar() {
   }, [enabled]);
 
   if (!enabled) return null;
+
+  let label = "Espalha Brasas";
+  let icon: string | null = null;
+  let initial = "";
+  if (user && friendsHome) {
+    label = "Direct Messages";
+  } else if (user && server) {
+    label = server.name;
+    icon = server.icon_url ? mediaUrl(server.icon_url) : null;
+    initial = (server.name.trim().charAt(0) || "?").toUpperCase();
+  }
+
   return (
     <header className="app-titlebar">
-      <img className="app-titlebar-logo" src={logoMark} alt="" draggable={false} />
-      <span className="app-titlebar-title">{title}</span>
+      <div className="app-titlebar-center" title={label}>
+        {icon ? (
+          <img className="app-titlebar-icon" src={icon} alt="" draggable={false} referrerPolicy="no-referrer" />
+        ) : initial ? (
+          <span className="app-titlebar-icon placeholder">{initial}</span>
+        ) : null}
+        <span className="app-titlebar-title">{label}</span>
+      </div>
     </header>
   );
 }

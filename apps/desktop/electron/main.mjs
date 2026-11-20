@@ -715,7 +715,7 @@ function createMainWindow() {
     ...(CUSTOM_TITLEBAR
       ? {
           titleBarStyle: "hidden",
-          titleBarOverlay: { color: "#050505", symbolColor: "#f4f4f4", height: TITLEBAR_HEIGHT },
+          titleBarOverlay: { color: "#081014", symbolColor: "#f4f4f4", height: TITLEBAR_HEIGHT },
         }
       : {}),
     webPreferences: {
@@ -871,7 +871,7 @@ function registerIpc() {
     if (!CUSTOM_TITLEBAR || !mainWindow || mainWindow.isDestroyed()) return false;
     try {
       mainWindow.setTitleBarOverlay({
-        color: safeCssColor(colors.color, "#050505"),
+        color: safeCssColor(colors.color, "#081014"),
         symbolColor: safeCssColor(colors.symbolColor, "#f4f4f4"),
         height: TITLEBAR_HEIGHT,
       });
@@ -888,7 +888,6 @@ function registerIpc() {
         : DEFAULT_APP_TITLE;
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.setTitle(next);
-      mainWindow.webContents.send("window:title", next);
     }
     process.title = next;
     return true;

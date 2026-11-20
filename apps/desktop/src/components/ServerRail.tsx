@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAppStore } from "../store/appStore";
 import { mediaCssUrl } from "../lib/mediaUrl";
-import logoMark from "../assets/logo-mark.png";
+import logoMark from "../assets/logo-flame.png";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { MUTE_DURATIONS } from "../lib/channelMutePrefs";
