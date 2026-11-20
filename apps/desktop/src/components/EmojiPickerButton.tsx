@@ -1,7 +1,15 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import { createPortal } from "react-dom";
 import { customEmojiToken } from "../lib/customEmoji";
-import { loadEmojiCatalog, searchEmojis } from "../lib/emojiCatalog";
+import { cachedEmojiCatalog, loadEmojiCatalog, searchEmojis } from "../lib/emojiCatalog";
 import { EMOJI_CATEGORIES, type EmojiCategory } from "../lib/emojis";
 import { mediaCssUrl, mediaUrl } from "../lib/mediaUrl";
 import { useAppStore } from "../store/appStore";
@@ -96,6 +104,11 @@ function serverSectionId(serverId: string) {
   return `server-${serverId}`;
 }
 
+/**
+ * Trigger only. Every message row has one or two of these, so the picker's
+ * state, store subscriptions and emoji grids live in `EmojiPickerPanel`,
+ * which mounts only while the picker is open.
+ */
 export function EmojiPickerButton({
   onPick,
   placement = "up",
@@ -105,16 +118,53 @@ export function EmojiPickerButton({
   children,
 }: Props) {
   const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+
+  return (
+    <div className={`emoji-picker-root${className ? ` ${className}` : ""}`} ref={rootRef}>
+      <button
+        type="button"
+        className="icon-btn emoji-picker-toggle"
+        title={title}
+        aria-label={title}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {children ?? (variant === "reaction" ? <ReactionSmileIcon /> : "🙂")}
+      </button>
+      {open && (
+        <EmojiPickerPanel
+          rootRef={rootRef}
+          placement={placement}
+          onPick={onPick}
+          onClose={close}
+        />
+      )}
+    </div>
+  );
+}
+
+type PanelProps = {
+  rootRef: RefObject<HTMLDivElement | null>;
+  placement: PlacementProp;
+  onPick: (emoji: string) => void;
+  onClose: () => void;
+};
+
+function EmojiPickerPanel({ rootRef, placement, onPick, onClose }: PanelProps) {
   const [resolvedPlacement, setResolvedPlacement] = useState<Placement>(
     placement === "auto" ? "up" : placement,
   );
   const [query, setQuery] = useState("");
-  const [categories, setCategories] = useState<EmojiCategory[]>(EMOJI_CATEGORIES);
+  const [categories, setCategories] = useState<EmojiCategory[]>(
+    () => cachedEmojiCatalog() ?? EMOJI_CATEGORIES,
+  );
   const [categoryId, setCategoryId] = useState(
     EMOJI_CATEGORIES[0]?.id ?? "smileys-emotion",
   );
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
-  const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
@@ -133,16 +183,15 @@ export function EmojiPickerButton({
   }, []);
 
   useEffect(() => {
-    if (!open) return;
     void loadMyEmojis();
     const onDown = (e: MouseEvent) => {
       const target = e.target as Node;
       if (rootRef.current?.contains(target)) return;
       if (panelRef.current?.contains(target)) return;
-      setOpen(false);
+      onClose();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") onClose();
     };
     window.addEventListener("mousedown", onDown);
     window.addEventListener("keydown", onKey);
@@ -150,7 +199,7 @@ export function EmojiPickerButton({
       window.removeEventListener("mousedown", onDown);
       window.removeEventListener("keydown", onKey);
     };
-  }, [open, loadMyEmojis]);
+  }, [loadMyEmojis, onClose, rootRef]);
 
   const customGroups = useMemo((): CustomGroup[] => {
     const byServer = new Map<string, ServerEmoji[]>();
@@ -183,7 +232,7 @@ export function EmojiPickerButton({
   const searching = query.trim().length > 0;
 
   useLayoutEffect(() => {
-    if (!open || !rootRef.current) return;
+    if (!rootRef.current) return;
     const toggle = rootRef.current.querySelector(
       ".emoji-picker-toggle",
     ) as HTMLElement | null;
@@ -234,7 +283,7 @@ export function EmojiPickerButton({
       window.removeEventListener("resize", updatePlacement);
       window.removeEventListener("scroll", updatePlacement, true);
     };
-  }, [open, placement, query, searching, customGroups.length]);
+  }, [rootRef, placement, query, searching, customGroups.length]);
 
   const searchHits = useMemo(
     () => (searching ? searchEmojis(categories, query) : []),
@@ -265,15 +314,14 @@ export function EmojiPickerButton({
 
   function pick(emoji: string) {
     onPick(emoji);
-    setOpen(false);
-    setQuery("");
+    onClose();
   }
 
   function pickCustom(emoji: ServerEmoji) {
     pick(customEmojiToken(emoji));
   }
 
-  const panel = open ? (
+  const panel = (
     <div
       ref={panelRef}
       className={`emoji-picker-panel is-portaled ${resolvedPlacement === "up" ? "up" : "down"}`}
@@ -452,22 +500,7 @@ export function EmojiPickerButton({
         </div>
       </div>
     </div>
-  ) : null;
-
-  return (
-    <div className={`emoji-picker-root${className ? ` ${className}` : ""}`} ref={rootRef}>
-      <button
-        type="button"
-        className="icon-btn emoji-picker-toggle"
-        title={title}
-        aria-label={title}
-        aria-expanded={open}
-        aria-haspopup="dialog"
-        onClick={() => setOpen((v) => !v)}
-      >
-        {children ?? (variant === "reaction" ? <ReactionSmileIcon /> : "🙂")}
-      </button>
-      {panel && createPortal(panel, document.body)}
-    </div>
   );
+
+  return createPortal(panel, document.body);
 }

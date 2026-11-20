@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, type MouseEvent } from "react";
+import { memo, useEffect, useMemo, useState, type MouseEvent } from "react";
+import { useStableHandlers } from "../hooks/useStableHandlers";
 import { useAppStore } from "../store/appStore";
 import { mediaUrl } from "../lib/mediaUrl";
 import { sameId } from "../lib/serverPerms";
@@ -33,7 +34,18 @@ function highestRoleColor(m: Member, roles: Role[]): string | undefined {
   return owned[0]?.color || undefined;
 }
 
-function MemberRow({
+const EMPTY_MEMBERS: Member[] = [];
+const EMPTY_ROLES: Role[] = [];
+
+/** Find a per-server list by id (ids may differ in case), keeping its identity. */
+function pickByServer<T>(map: Record<string, T[]>, serverId: string | null, empty: T[]): T[] {
+  if (!serverId) return empty;
+  if (map[serverId]) return map[serverId];
+  const key = Object.keys(map).find((id) => sameId(id, serverId));
+  return key ? map[key] || empty : empty;
+}
+
+const MemberRow = memo(function MemberRow({
   member,
   status,
   color,
@@ -92,13 +104,16 @@ function MemberRow({
       </div>
     </li>
   );
-}
+});
 
 export function MemberList({ voice }: { voice?: MemberVoiceHandlers }) {
   const activeServerId = useAppStore((s) => s.activeServerId);
   const servers = useAppStore((s) => s.servers);
-  const membersByServer = useAppStore((s) => s.membersByServer);
-  const rolesByServer = useAppStore((s) => s.rolesByServer);
+  // Only the active server's lists, so other servers' updates don't re-render.
+  const members = useAppStore((s) =>
+    pickByServer(s.membersByServer, s.activeServerId, EMPTY_MEMBERS),
+  );
+  const roles = useAppStore((s) => pickByServer(s.rolesByServer, s.activeServerId, EMPTY_ROLES));
   const presenceByUser = useAppStore((s) => s.presenceByUser);
   const myStatus = useAppStore((s) => s.myStatus);
   const user = useAppStore((s) => s.user);
@@ -115,18 +130,29 @@ export function MemberList({ voice }: { voice?: MemberVoiceHandlers }) {
   }, [open]);
 
   const server = servers.find((s) => sameId(s.id, activeServerId));
-  const membersKey = activeServerId
-    ? Object.keys(membersByServer).find((id) => sameId(id, activeServerId))
-    : undefined;
-  const rolesKey = activeServerId
-    ? Object.keys(rolesByServer).find((id) => sameId(id, activeServerId))
-    : undefined;
-  const members = membersKey ? membersByServer[membersKey] || [] : [];
-  const roles = rolesKey ? rolesByServer[rolesKey] || [] : [];
-
   function isServerOwner(member: Member): boolean {
     return Boolean(server && sameId(server.owner_id, member.user.id));
   }
+
+  // Role colour per member, computed once per members/roles change instead of
+  // filtering and sorting the roles for every row on every render.
+  const colorByUser = useMemo(() => {
+    const out = new Map<string, string | undefined>();
+    for (const m of members) out.set(m.user.id, highestRoleColor(m, roles));
+    return out;
+  }, [members, roles]);
+
+  // Fixed-identity handlers so memoized rows skip re-rendering.
+  const rowHandlers = useStableHandlers({
+    open: (e: MouseEvent, member: Member) =>
+      openMiniProfile({
+        userId: member.user.id,
+        serverId: activeServerId,
+        x: e.clientX,
+        y: e.clientY,
+      }),
+    context: (e: MouseEvent, member: Member) => openForMember(e, member),
+  });
 
   const { online, offline } = useMemo(() => {
     const on: Member[] = [];
@@ -149,15 +175,6 @@ export function MemberList({ voice }: { voice?: MemberVoiceHandlers }) {
   }, [members, presenceByUser, user?.id, myStatus]);
 
   if (!activeServerId) return null;
-
-  function openProfile(e: MouseEvent, member: Member) {
-    openMiniProfile({
-      userId: member.user.id,
-      serverId: activeServerId,
-      x: e.clientX,
-      y: e.clientY,
-    });
-  }
 
   function statusFor(member: Member): PresenceStatus {
     if (member.user.id === user?.id) return myStatus;
@@ -213,10 +230,10 @@ export function MemberList({ voice }: { voice?: MemberVoiceHandlers }) {
                   key={m.user.id}
                   member={m}
                   status={statusFor(m)}
-                  color={highestRoleColor(m, roles)}
+                  color={colorByUser.get(m.user.id)}
                   isOwner={isServerOwner(m)}
-                  onOpen={openProfile}
-                  onContext={openForMember}
+                  onOpen={rowHandlers.open}
+                  onContext={rowHandlers.context}
                 />
               ))}
             </ul>
@@ -231,10 +248,10 @@ export function MemberList({ voice }: { voice?: MemberVoiceHandlers }) {
                   key={m.user.id}
                   member={m}
                   status="offline"
-                  color={highestRoleColor(m, roles)}
+                  color={colorByUser.get(m.user.id)}
                   isOwner={isServerOwner(m)}
-                  onOpen={openProfile}
-                  onContext={openForMember}
+                  onOpen={rowHandlers.open}
+                  onContext={rowHandlers.context}
                 />
               ))}
             </ul>

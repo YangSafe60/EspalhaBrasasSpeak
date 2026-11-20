@@ -47,6 +47,11 @@ function normalizeGroup(g: RemoteGroup, index: number): EmojiCategory | null {
   };
 }
 
+/** The catalog if it has already loaded, without waiting. */
+export function cachedEmojiCatalog(): EmojiCategory[] | null {
+  return cache;
+}
+
 export async function loadEmojiCatalog(): Promise<EmojiCategory[]> {
   if (cache) return cache;
   if (pending) return pending;
