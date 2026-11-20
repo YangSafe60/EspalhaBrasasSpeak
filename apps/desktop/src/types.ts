@@ -108,20 +108,7 @@ export interface Message {
   created_at: string;
   attachments: Attachment[];
   reactions: ReactionSummary[];
-  webhook_id?: string | null;
-  webhook_name?: string | null;
 }
-
-export interface ChannelWebhook {
-  id: string;
-  channel_id: string;
-  name: string;
-  avatar_url: string | null;
-  creator_id: string;
-  created_at: string;
-}
-
-export type ChannelWebhookCreated = ChannelWebhook & { token: string };
 
 export interface Invite {
   code: string;

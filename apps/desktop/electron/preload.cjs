@@ -100,6 +100,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return () => ipcRenderer.removeListener("desktop:notify-click", listener);
   },
   setWindowTitle: (title) => ipcRenderer.invoke("window:set-title", title),
+  onWindowTitle: (handler) => {
+    const listener = (_event, title) => handler(String(title || ""));
+    ipcRenderer.on("window:title", listener);
+    return () => ipcRenderer.removeListener("window:title", listener);
+  },
+  setTitleBarColors: (colors) => ipcRenderer.invoke("window:titlebar-colors", colors),
   setBackgroundThrottling: (enabled) =>
     ipcRenderer.invoke("window:set-background-throttling", enabled),
   trimMemory: () => ipcRenderer.invoke("memory:trim"),

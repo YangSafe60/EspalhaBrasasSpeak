@@ -24,18 +24,10 @@ const QUICK_EMOJIS = ["👍", "🔥", "😂"];
 /** Discord-like: group consecutive messages from the same author within this window. */
 const GROUP_WINDOW_MS = 7 * 60 * 1000;
 
-function messageIdentity(m: Message): string {
-  if (m.webhook_id) return `wh:${m.webhook_id}`;
-  return `user:${m.author_id}`;
-}
-
-function isIntegrationMessage(m: Message): boolean {
-  return Boolean(m.webhook_id);
-}
 
 function shouldStartGroup(prev: Message | undefined, current: Message): boolean {
   if (!prev) return true;
-  if (messageIdentity(prev) !== messageIdentity(current)) return true;
+  if (prev.author_id !== current.author_id) return true;
   const gap = new Date(current.created_at).getTime() - new Date(prev.created_at).getTime();
   return gap > GROUP_WINDOW_MS;
 }
@@ -273,14 +265,13 @@ export function MessageView() {
 
       <div className="message-list">
         {messages.map((m, i) => {
-          const integration = isIntegrationMessage(m);
           return (
             <MessageRow
               key={m.id}
               m={m}
               author={authors[m.author_id]}
               isGroupStart={shouldStartGroup(messages[i - 1], m)}
-              mine={user?.id === m.author_id && !integration}
+              mine={user?.id === m.author_id}
               editing={editingId === m.id}
               selected={selectedIds.has(m.id)}
               mentioned={mentionedIds.has(m.id)}
@@ -374,8 +365,7 @@ const MessageRow = memo(function MessageRow({
   serverId,
   actions,
 }: RowProps) {
-  const integration = isIntegrationMessage(m);
-  const displayName = m.webhook_name || author?.display_name || "Unknown";
+  const displayName = author?.display_name || "Unknown";
   const onReact = (emoji: string) => actions.react(m, emoji);
 
   return (
@@ -385,23 +375,17 @@ const MessageRow = memo(function MessageRow({
     >
       <div className="avatar-col">
         {isGroupStart ? (
-          integration ? (
-            <div className="avatar integration-avatar" aria-hidden>
-              <span>{displayName.charAt(0).toUpperCase()}</span>
-            </div>
-          ) : (
-            <button
-              type="button"
-              className="avatar clickable-user"
-              onClick={(e) => actions.openProfile(m.author_id, e)}
-            >
-              {author?.avatar_url ? (
-                <img src={mediaUrl(author.avatar_url)} alt="" referrerPolicy="no-referrer" />
-              ) : (
-                <span>{(author?.display_name || "?").charAt(0).toUpperCase()}</span>
-              )}
-            </button>
-          )
+          <button
+            type="button"
+            className="avatar clickable-user"
+            onClick={(e) => actions.openProfile(m.author_id, e)}
+          >
+            {author?.avatar_url ? (
+              <img src={mediaUrl(author.avatar_url)} alt="" referrerPolicy="no-referrer" />
+            ) : (
+              <span>{(author?.display_name || "?").charAt(0).toUpperCase()}</span>
+            )}
+          </button>
         ) : (
           <time className="grouped-time" dateTime={m.created_at} title={formatTime(m.created_at)}>
             {new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
@@ -411,17 +395,13 @@ const MessageRow = memo(function MessageRow({
       <div className="message-body">
         {isGroupStart && (
           <div className="message-meta">
-            {integration ? (
-              <span className="message-author integration-author">{displayName}</span>
-            ) : (
-              <button
-                type="button"
-                className="message-author-btn"
-                onClick={(e) => actions.openProfile(m.author_id, e)}
-              >
-                {displayName}
-              </button>
-            )}
+            <button
+              type="button"
+              className="message-author-btn"
+              onClick={(e) => actions.openProfile(m.author_id, e)}
+            >
+              {displayName}
+            </button>
             <time dateTime={m.created_at}>{formatTime(m.created_at)}</time>
           </div>
         )}

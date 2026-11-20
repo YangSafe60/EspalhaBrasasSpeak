@@ -3,6 +3,7 @@ import {
   BrowserWindow,
   desktopCapturer,
   ipcMain,
+  Menu,
   MessageChannelMain,
   screen,
   session,
@@ -681,6 +682,24 @@ function ensureVoiceHostWindow() {
   });
 }
 
+/*
+ * Main window title bar: on Windows/Linux the native bar is hidden and the
+ * app draws its own strip (TitleBar.tsx); Electron paints the OS window
+ * buttons over its right end. macOS keeps its native title bar.
+ */
+const CUSTOM_TITLEBAR = process.platform === "win32" || process.platform === "linux";
+const TITLEBAR_HEIGHT = 32;
+
+/** Accept only plain CSS colours from the renderer (hex, rgb[a], hsl[a]). */
+function safeCssColor(value, fallback) {
+  if (typeof value !== "string") return fallback;
+  const v = value.trim();
+  if (v.length > 40) return fallback;
+  if (/^#[0-9a-f]{3,8}$/i.test(v)) return v;
+  if (/^(rgb|hsl)a?\([0-9.,%\s/]+\)$/i.test(v)) return v;
+  return fallback;
+}
+
 function createMainWindow() {
   const iconPath = path.join(__dirname, "icon.png");
   mainWindow = new BrowserWindow({
@@ -693,6 +712,12 @@ function createMainWindow() {
     backgroundColor: "#0c0d11",
     autoHideMenuBar: true,
     icon: iconPath,
+    ...(CUSTOM_TITLEBAR
+      ? {
+          titleBarStyle: "hidden",
+          titleBarOverlay: { color: "#050505", symbolColor: "#f4f4f4", height: TITLEBAR_HEIGHT },
+        }
+      : {}),
     webPreferences: {
       preload: preloadPath(),
       contextIsolation: true,
@@ -713,9 +738,11 @@ function createMainWindow() {
   });
 
   if (isDev) {
-    void mainWindow.loadURL(DEV_URL);
+    void mainWindow.loadURL(CUSTOM_TITLEBAR ? `${DEV_URL}/?titlebar=1` : DEV_URL);
   } else {
-    void mainWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"));
+    void mainWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"), {
+      query: CUSTOM_TITLEBAR ? { titlebar: "1" } : {},
+    });
   }
 
   mainWindow.on("closed", () => {
@@ -840,6 +867,20 @@ function registerIpc() {
   );
 
   /** Updates taskbar + Windows Task Manager process label while in voice. */
+  ipcMain.handle("window:titlebar-colors", (_evt, colors = {}) => {
+    if (!CUSTOM_TITLEBAR || !mainWindow || mainWindow.isDestroyed()) return false;
+    try {
+      mainWindow.setTitleBarOverlay({
+        color: safeCssColor(colors.color, "#050505"),
+        symbolColor: safeCssColor(colors.symbolColor, "#f4f4f4"),
+        height: TITLEBAR_HEIGHT,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
   ipcMain.handle("window:set-title", (_evt, title) => {
     const next =
       typeof title === "string" && title.trim()
@@ -847,6 +888,7 @@ function registerIpc() {
         : DEFAULT_APP_TITLE;
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.setTitle(next);
+      mainWindow.webContents.send("window:title", next);
     }
     process.title = next;
     return true;
@@ -1444,6 +1486,10 @@ function startMemoryLog() {
 }
 
 app.whenReady().then(() => {
+  // No File/Edit/View menu (it popped up on Alt). Copy/paste in text fields
+  // works without it on Windows/Linux; macOS keeps its standard menu. Dev
+  // keeps it for reload / DevTools shortcuts.
+  if (process.platform !== "darwin" && !isDev) Menu.setApplicationMenu(null);
   installSessionHandlers();
   registerIpc();
   createMainWindow();

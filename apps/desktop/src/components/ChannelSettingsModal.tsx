@@ -17,7 +17,6 @@ import {
   type PermissionOverwrite,
   type Role,
 } from "../types";
-import { ChannelIntegrationsPanel } from "./ChannelIntegrationsPanel";
 import { ColorField } from "./ColorField";
 
 function RoleMultiSelect({
@@ -116,7 +115,7 @@ function RoleMultiSelect({
   );
 }
 
-type Tab = "overview" | "permissions" | "integrations" | "danger";
+type Tab = "overview" | "permissions" | "danger";
 
 type Tri = "allow" | "deny" | "inherit";
 
@@ -703,9 +702,6 @@ export function ChannelSettingsModal() {
             [
               ["overview", "Overview"],
               ["permissions", "Permissions"],
-              ...(isCategory
-                ? []
-                : ([["integrations", "Integrations"]] as [Tab, string][])),
             ] as [Tab, string][]
           ).map(([id, label]) => (
             <button
@@ -740,7 +736,6 @@ export function ChannelSettingsModal() {
             <h3>
               {tab === "overview" && "Overview"}
               {tab === "permissions" && "Permissions"}
-              {tab === "integrations" && "Integrations"}
               {tab === "danger" && `Delete ${isCategory ? "Category" : "Channel"}`}
             </h3>
             <button
@@ -1016,14 +1011,6 @@ export function ChannelSettingsModal() {
                 )}
               </div>
             </div>
-          )}
-
-          {tab === "integrations" && channel && (
-            <ChannelIntegrationsPanel
-              channelId={channel.id}
-              channelType={channel.channel_type}
-              canManageChannel={canManageThisChannel}
-            />
           )}
 
           {tab === "danger" && (

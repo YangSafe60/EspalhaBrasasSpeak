@@ -373,46 +373,6 @@ async fn invalid_attachment_leaves_no_message() {
 }
 
 #[tokio::test]
-async fn webhook_limits_and_token_check() {
-    let app = test_app().await;
-    let auth = app.register("alice").await;
-    let (_, channel) = app.server_with_text_channel(&auth).await;
-    let wh = app
-        .call(
-            Method::POST,
-            &format!("/api/channels/{channel}/webhooks"),
-            Some(&auth),
-            Some(json!({ "name": "CI" })),
-        )
-        .await;
-    assert_eq!(wh.status, StatusCode::OK, "{}", wh.body);
-    let id = wh.body["id"].as_str().unwrap();
-    let token = wh.body["token"].as_str().unwrap();
-
-    let exec = |tok: String, body: Value| {
-        let app = &app;
-        let path = format!("/api/webhooks/{id}/{tok}");
-        async move { app.call(Method::POST, &path, None, Some(body)).await }
-    };
-    let r = exec("wh_wrong".into(), json!({ "content": "hi" })).await;
-    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
-    let r = exec(token.into(), json!({ "content": "x".repeat(4001) })).await;
-    assert_eq!(r.status, StatusCode::BAD_REQUEST);
-    let r = exec(
-        token.into(),
-        json!({ "content": "hi", "username": "u".repeat(81) }),
-    )
-    .await;
-    assert_eq!(r.status, StatusCode::BAD_REQUEST);
-    let r = exec(
-        token.into(),
-        json!({ "content": "hi", "username": "u".repeat(80) }),
-    )
-    .await;
-    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-}
-
-#[tokio::test]
 async fn json_body_over_1mb_is_rejected_but_upload_route_allows_more() {
     let app = test_app().await;
     let auth = app.register("alice").await;

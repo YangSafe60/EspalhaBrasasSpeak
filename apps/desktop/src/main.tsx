@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { TitleBar } from "./components/TitleBar";
 import {
   applyAccessibility,
   loadAccessibility,
@@ -13,6 +14,9 @@ applyAccessibility(loadAccessibility());
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <App />
+    <TitleBar />
+    <div className="app-frame">
+      <App />
+    </div>
   </StrictMode>,
 );

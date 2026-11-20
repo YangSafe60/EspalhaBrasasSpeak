@@ -1822,7 +1822,6 @@ dependencies = [
  "sha2",
  "speakapp-shared",
  "sqlx",
- "subtle",
  "thiserror",
  "tokio",
  "tokio-util",

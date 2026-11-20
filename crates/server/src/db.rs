@@ -799,11 +799,9 @@ pub async fn load_message(db: &SqlitePool, id: Uuid, viewer_id: Uuid) -> AppResu
         reply_to_id: Option<String>,
         edited_at: Option<String>,
         created_at: String,
-        webhook_id: Option<String>,
-        webhook_name: Option<String>,
     }
     let row = sqlx::query_as::<_, MRow>(
-        "SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, webhook_id, webhook_name FROM messages WHERE id = ?",
+        "SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at FROM messages WHERE id = ?",
     )
     .bind(id.to_string())
     .fetch_optional(db)
@@ -829,8 +827,6 @@ pub async fn load_message(db: &SqlitePool, id: Uuid, viewer_id: Uuid) -> AppResu
             .unwrap_or_else(|_| Utc::now()),
         attachments,
         reactions,
-        webhook_id: row.webhook_id.and_then(|x| Uuid::parse_str(&x).ok()),
-        webhook_name: row.webhook_name,
     })
 }
 
@@ -994,12 +990,10 @@ pub async fn list_messages(
         reply_to_id: Option<String>,
         edited_at: Option<String>,
         created_at: String,
-        webhook_id: Option<String>,
-        webhook_name: Option<String>,
     }
     let rows: Vec<MRow> = if let Some(before_id) = before {
         sqlx::query_as(
-            r#"SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, webhook_id, webhook_name
+            r#"SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at
                FROM messages
                WHERE channel_id = ? AND created_at < (SELECT created_at FROM messages WHERE id = ?)
                ORDER BY created_at DESC LIMIT ?"#,
@@ -1011,7 +1005,7 @@ pub async fn list_messages(
         .await?
     } else {
         sqlx::query_as(
-            r#"SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, webhook_id, webhook_name
+            r#"SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at
                FROM messages WHERE channel_id = ? ORDER BY created_at DESC LIMIT ?"#,
         )
         .bind(channel_id.to_string())
@@ -1042,8 +1036,6 @@ pub async fn list_messages(
                 .unwrap_or_else(|_| Utc::now()),
             attachments: attachments.get(&id_key).cloned().unwrap_or_default(),
             reactions: reactions.get(&id_key).cloned().unwrap_or_default(),
-            webhook_id: row.webhook_id.and_then(|x| Uuid::parse_str(&x).ok()),
-            webhook_name: row.webhook_name,
         });
     }
     out.reverse();

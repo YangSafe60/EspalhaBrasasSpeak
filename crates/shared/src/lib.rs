@@ -145,27 +145,6 @@ pub struct Message {
     pub created_at: DateTime<Utc>,
     pub attachments: Vec<Attachment>,
     pub reactions: Vec<ReactionSummary>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub webhook_id: Option<Uuid>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub webhook_name: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChannelWebhook {
-    pub id: Uuid,
-    pub channel_id: Uuid,
-    pub name: String,
-    pub avatar_url: Option<String>,
-    pub creator_id: Uuid,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChannelWebhookCreated {
-    #[serde(flatten)]
-    pub webhook: ChannelWebhook,
-    pub token: String,
 }
 
 

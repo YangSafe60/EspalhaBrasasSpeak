@@ -38,7 +38,7 @@ pub const REFRESH: Limit = Limit {
     max: 30,
     period: Duration::from_secs(60),
 };
-/// Shared by channel messages, DMs and webhook executions.
+/// Shared by channel messages and DMs.
 pub const MESSAGE: Limit = Limit {
     name: "msg",
     max: 10,

@@ -8,7 +8,6 @@ mod media;
 mod messages;
 mod presence;
 mod servers;
-mod webhooks;
 pub(crate) mod voice;
 
 use crate::auth::{decode_token, AuthUser};
@@ -263,18 +262,6 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/channels/{id}/invite",
             post(channels::invite_to_channel),
-        )
-        .route(
-            "/api/channels/{id}/webhooks",
-            get(webhooks::list).post(webhooks::create),
-        )
-        .route(
-            "/api/webhooks/{id}",
-            patch(webhooks::update).delete(webhooks::delete),
-        )
-        .route(
-            "/api/webhooks/{id}/{token}",
-            post(webhooks::execute),
         )
         .route(
             "/api/channels/{id}/messages",

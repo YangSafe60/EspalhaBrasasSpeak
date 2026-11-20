@@ -11,7 +11,7 @@ use serde::Deserialize;
 use speakapp_shared::{Message, Permissions, Server, WsEvent};
 use uuid::Uuid;
 
-/// Max characters in a channel message, edit or webhook message.
+/// Max characters in a channel message or edit.
 pub const MAX_MESSAGE_CHARS: usize = 4000;
 
 pub(crate) fn check_message_len(content: &str) -> AppResult<()> {

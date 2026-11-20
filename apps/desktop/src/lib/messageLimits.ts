@@ -1,4 +1,4 @@
-/** Server cap on channel messages, edits and webhooks (see MAX_MESSAGE_CHARS). */
+/** Server cap on channel messages and edits (see MAX_MESSAGE_CHARS). */
 export const MAX_MESSAGE_CHARS = 4000;
 /** Show the counter once the draft gets this close to the limit. */
 export const MESSAGE_COUNTER_FROM = 3500;
