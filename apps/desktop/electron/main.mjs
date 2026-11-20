@@ -1049,6 +1049,10 @@ function registerIpc() {
     sendToMainRenderer("voice:evt", payload);
   });
 
+  ipcMain.on("voice:preview-keyframe", (_evt, trackSid) => {
+    for (const [, win] of framePublishers()) win.webContents.send("frames:keyframe", trackSid);
+  });
+
   ipcMain.on("voice:lobby-frame", (_evt, payload) => {
     sendToMainRenderer("voice:lobby-frame", payload);
     const sid = payload?.trackSid;

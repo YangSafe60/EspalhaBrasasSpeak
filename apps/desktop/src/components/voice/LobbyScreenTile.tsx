@@ -65,7 +65,7 @@ export function LobbyScreenTile({
 }: LobbyScreenTileProps) {
   const tileRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const imgRef = useRef<HTMLImageElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const [expanded, setExpanded] = useState(false);
   const useRelayPreview = useRelay;
 
@@ -81,15 +81,14 @@ export function LobbyScreenTile({
 
   useEffect(() => {
     if (!useRelayPreview) return;
-    return subscribeLobbyFrame(trackSid, (url) => {
-      const img = imgRef.current;
-      if (img) img.src = url;
-    });
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    return subscribeLobbyFrame(trackSid, canvas);
   }, [trackSid, useRelayPreview]);
 
   useEffect(() => {
     registerScreenCapture(trackSid, () =>
-      useRelayPreview ? imgRef.current : videoRef.current,
+      useRelayPreview ? canvasRef.current : videoRef.current,
     );
     return () => unregisterScreenCapture(trackSid);
   }, [trackSid, useRelayPreview]);
@@ -125,10 +124,9 @@ export function LobbyScreenTile({
       ref={tileRef}
     >
       {useRelayPreview ? (
-        <img
-          ref={imgRef}
+        <canvas
+          ref={canvasRef}
           className="lobby-screen-relay-img"
-          alt=""
           onDoubleClick={() => toggleExpanded()}
         />
       ) : (

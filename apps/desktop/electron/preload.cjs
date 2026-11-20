@@ -13,6 +13,12 @@ const apiBase = String(
 const framePortsOut = new Map(); // consumer id -> { port, trackSid }
 const framePortsIn = new Map(); // publisher id -> port
 const frameListeners = new Set();
+const keyFrameHandlers = new Set();
+
+function onKeyFrameRequest(trackSid) {
+  if (typeof trackSid !== "string" || !trackSid) return;
+  for (const handler of keyFrameHandlers) handler(trackSid);
+}
 
 ipcRenderer.on("frames:port", (event, info) => {
   const port = event.ports && event.ports[0];
@@ -20,12 +26,18 @@ ipcRenderer.on("frames:port", (event, info) => {
   if (info.role === "publisher") {
     const old = framePortsOut.get(info.id);
     if (old) old.port.close();
+    // Viewers talk back on the same port to ask for a keyframe.
+    port.onmessage = (e) => {
+      if (e.data && e.data.op === "keyframe") onKeyFrameRequest(e.data.trackSid);
+    };
     framePortsOut.set(info.id, { port, trackSid: info.trackSid || null });
   } else {
     const old = framePortsIn.get(info.id);
     if (old) old.close();
+    const from = info.id;
     port.onmessage = (e) => {
-      for (const handler of frameListeners) handler(e.data);
+      const frame = e.data && typeof e.data === "object" ? { ...e.data, from } : e.data;
+      for (const handler of frameListeners) handler(frame);
     };
     framePortsIn.set(info.id, port);
   }
@@ -45,6 +57,18 @@ ipcRenderer.on("frames:port-close", (_event, info) => {
     framePortsIn.delete(id);
   }
 });
+
+// Without ports (fallback), keyframe requests go through the main process.
+ipcRenderer.on("frames:keyframe", (_event, trackSid) => onKeyFrameRequest(trackSid));
+
+function requestKeyFrame(trackSid) {
+  if (!trackSid) return;
+  if (framePortsIn.size === 0) {
+    ipcRenderer.send("voice:preview-keyframe", trackSid);
+    return;
+  }
+  for (const port of framePortsIn.values()) port.postMessage({ op: "keyframe", trackSid });
+}
 
 function publishFrame(frame) {
   // Until the main window's port arrives, use the old IPC relay.
@@ -128,6 +152,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   sendVoiceCommand: (cmd) => ipcRenderer.send("voice:cmd", cmd),
   publishVoiceEvent: (evt) => ipcRenderer.send("voice:evt", evt),
   publishLobbyFrame: (frame) => publishFrame(frame),
+  requestPreviewKeyFrame: (trackSid) => requestKeyFrame(String(trackSid || "")),
+  onPreviewKeyFrameRequest: (handler) => {
+    keyFrameHandlers.add(handler);
+    return () => keyFrameHandlers.delete(handler);
+  },
   notifyVoiceHostReady: () => ipcRenderer.send("voice:host-ready"),
   onVoiceCommand: (handler) => {
     const listener = (_event, cmd) => handler(cmd);

@@ -4,7 +4,7 @@ export type ScreenBridgeSignal =
   | { type: "stop"; trackSid: string };
 
 /** JPEG snapshot relayed to the pop-out window (raw bytes, not a data URL). */
-export type ScreenBridgeFrame = { trackSid: string; jpeg: ArrayBuffer };
+export type ScreenBridgeFrame = import("../previewFrames").PreviewFrame;
 
 export type Unlisten = () => void;
 
@@ -20,7 +20,7 @@ export const tracks = new Map<string, MediaStreamTrack>();
  * Prefer capturing the lobby `<video>` — remote WebRTC tracks often won't
  * decode in an off-DOM clone.
  */
-export type CaptureElement = HTMLVideoElement | HTMLImageElement;
+export type CaptureElement = HTMLVideoElement | HTMLImageElement | HTMLCanvasElement;
 
 export const captureSources = new Map<string, () => CaptureElement | null>();
 

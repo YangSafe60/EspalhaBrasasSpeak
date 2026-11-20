@@ -1,8 +1,12 @@
 import type { LocalScreen, RemoteScreen } from "../hooks/voice/types";
-import { previewProfile, startLatestJpegRelay } from "../lib/jpegRelay";
+import { previewProfile } from "../lib/jpegRelay";
+import { startPreviewEncoder } from "../lib/previewEncoder";
 
 type RelayEntry = {
   stop: () => void;
+  requestKeyFrame: () => void;
+  /** The track it was started from; a resubscribe brings a new object. */
+  track: object;
 };
 
 const relays = new Map<string, RelayEntry>();
@@ -62,23 +66,28 @@ function startRelay(
     detach: (el?: HTMLMediaElement) => void;
   },
 ) {
-  if (relays.has(trackSid)) return;
+  const running = relays.get(trackSid);
+  if (running && running.track === track) return;
+  if (running) stopRelay(trackSid);
   const video = mountHiddenVideo();
   videos.set(trackSid, video);
   track.attach(video);
   void video.play().catch(() => undefined);
 
-  const relay = startLatestJpegRelay({
+  const relay = startPreviewEncoder({
     video,
     maxWidth: () => previewProfile(previewLevel).maxWidth,
     quality: () => previewProfile(previewLevel).quality,
     fps: () => previewProfile(previewLevel).fps,
-    onFrame: (jpeg) => {
-      window.electronAPI?.publishLobbyFrame?.({ trackSid, jpeg });
+    warm: () => [previewProfile(1), previewProfile(2)],
+    onFrame: (frame) => {
+      window.electronAPI?.publishLobbyFrame?.({ trackSid, ...frame });
     },
   });
 
   relays.set(trackSid, {
+    track,
+    requestKeyFrame: relay.requestKeyFrame,
     stop: () => {
       relay.stop();
       try {
@@ -88,6 +97,11 @@ function startRelay(
       }
     },
   });
+}
+
+/** A viewer (new tile, pop-out, decoder reset) needs a keyframe to start. */
+export function requestLobbyKeyFrame(trackSid: string) {
+  relays.get(trackSid)?.requestKeyFrame();
 }
 
 export function stopVoiceHostLobbyRelay() {

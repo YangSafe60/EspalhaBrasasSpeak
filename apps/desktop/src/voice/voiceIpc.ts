@@ -83,7 +83,4 @@ export type VoiceHostEvent =
   | { op: "host-ready" }
   | { op: "host-idle" };
 
-export type VoiceLobbyFrame = {
-  trackSid: string;
-  jpeg: ArrayBuffer;
-};
+export type VoiceLobbyFrame = import("../lib/previewFrames").PreviewFrame;

@@ -1,4 +1,5 @@
 import { getElectronAPI } from "../desktop";
+import { isPreviewFrame } from "../previewFrames";
 import type {
   ScreenBridgeFrame,
   ScreenBridgeSignal,
@@ -72,8 +73,7 @@ export async function subscribeFrames(
   if (electron) {
     cleanups.push(
       electron.onFrame((payload) => {
-        const msg = payload as ScreenBridgeFrame;
-        if (msg?.trackSid && msg.jpeg) handler(msg);
+        if (isPreviewFrame(payload)) handler(payload);
       }),
     );
   }
@@ -82,8 +82,8 @@ export async function subscribeFrames(
     const bc = new BroadcastChannel(CHANNEL);
     bc.onmessage = (ev: MessageEvent) => {
       const data = ev.data;
-      if (data?.type === "frame" && data.trackSid && data.jpeg) {
-        handler({ trackSid: data.trackSid, jpeg: data.jpeg });
+      if (data?.type === "frame" && isPreviewFrame(data)) {
+        handler({ trackSid: data.trackSid, jpeg: data.jpeg, chunk: data.chunk });
       }
     };
     cleanups.push(() => bc.close());

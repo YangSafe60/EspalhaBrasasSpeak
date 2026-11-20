@@ -3,6 +3,7 @@ import { useVoiceEngine } from "../hooks/useVoiceEngine";
 import { useAppStore } from "../store/appStore";
 import type { VoiceHostCommand, VoiceHostEvent } from "./voiceIpc";
 import {
+  requestLobbyKeyFrame,
   setLobbyPreviewLevel,
   startVoiceHostLobbyRelay,
   stopVoiceHostLobbyRelay,
@@ -42,10 +43,15 @@ export function VoiceHostApp() {
 
   useEffect(() => {
     window.electronAPI?.notifyVoiceHostReady?.();
-    return window.electronAPI?.onScreenPreview?.((level) => {
+    const offKey = window.electronAPI?.onPreviewKeyFrameRequest?.(requestLobbyKeyFrame);
+    const offPreview = window.electronAPI?.onScreenPreview?.((level) => {
       setLobbyPreviewLevel(level);
       setPreviewWanted(level > 0);
     });
+    return () => {
+      offKey?.();
+      offPreview?.();
+    };
   }, []);
 
   useEffect(() => {
@@ -185,8 +191,9 @@ export function VoiceHostApp() {
       stopVoiceHostLobbyRelay();
       return;
     }
+    // Diffs against the running relays, so only added/removed lives change.
+    // Stopping everything on each list update restarted every encoder.
     startVoiceHostLobbyRelay(engine.localScreens, engine.remoteScreens);
-    return () => stopVoiceHostLobbyRelay();
   }, [
     previewWanted,
     engine.connected,
@@ -194,6 +201,8 @@ export function VoiceHostApp() {
     engine.localScreens,
     engine.remoteScreens,
   ]);
+
+  useEffect(() => () => stopVoiceHostLobbyRelay(), []);
 
   return null;
 }

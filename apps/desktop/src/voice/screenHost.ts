@@ -1,6 +1,7 @@
 import { api } from "../api/client";
 import { normalizeLivekitUrl } from "../hooks/voice/livekitHelpers";
-import { previewProfile, startLatestJpegRelay } from "../lib/jpegRelay";
+import { previewProfile } from "../lib/jpegRelay";
+import { startPreviewEncoder } from "../lib/previewEncoder";
 import { getLivekit, loadLivekit } from "../lib/livekit";
 import {
   captureElectronSource,
@@ -151,7 +152,10 @@ export async function startScreenHost(): Promise<void> {
     // Streamer's own preview. Only encode while a lobby tile or pop-out is
     // on screen (level > 0); the old version encoded all the time.
     let video: HTMLVideoElement | null = null;
-    let relay: { stop: () => void } | null = null;
+    let relay: { stop: () => void; requestKeyFrame: () => void } | null = null;
+    const offKeyRequest = window.electronAPI?.onPreviewKeyFrameRequest?.((sid) => {
+      if (sid === trackSid) relay?.requestKeyFrame();
+    });
     const stopPreview = () => {
       relay?.stop();
       relay = null;
@@ -173,17 +177,21 @@ export async function startScreenHost(): Promise<void> {
       video.playsInline = true;
       captured.videoTrack.attach(video);
       void video.play().catch(() => undefined);
-      relay = startLatestJpegRelay({
+      relay = startPreviewEncoder({
         video,
         maxWidth: () => previewProfile(previewLevel).maxWidth,
         quality: () => previewProfile(previewLevel).quality,
         fps: () => previewProfile(previewLevel).fps,
-        onFrame: (jpeg) => {
-          window.electronAPI?.publishLobbyFrame?.({ trackSid, jpeg });
+        warm: () => [previewProfile(1), previewProfile(2)],
+        onFrame: (frame) => {
+          window.electronAPI?.publishLobbyFrame?.({ trackSid, ...frame });
         },
       });
     };
-    stopRelay = stopPreview;
+    stopRelay = () => {
+      offKeyRequest?.();
+      stopPreview();
+    };
     onPreviewLevel = (level) => {
       if (level > 0) startPreview();
       else stopPreview();

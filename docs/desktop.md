@@ -62,8 +62,14 @@ frees its memory. Leaving voice destroys the voice host.
 
 ### Preview levels
 
-The picture you see of a live inside the app (lobby tiles, pop-out) is a JPEG
-relay, separate from the WebRTC track other people receive. Its cost follows
+The picture you see of a live inside the app (lobby tiles, pop-out) is a
+separate preview stream, not the WebRTC track other people receive. The voice
+host and each screen host encode it with WebCodecs (H.264, hardware when
+available, VP8 otherwise) and send the chunks over direct MessagePorts to the
+main window and pop-outs, which decode them onto a `<canvas>`. No Blobs are
+involved (Chromium keeps Blob bytes in the main process), and one encoder per
+level is kept ready so switching level doesn't freeze the picture. Machines
+without WebCodecs fall back to one JPEG per frame. Its cost follows
 how prominently it is shown (`previewProfile()` in `src/lib/jpegRelay.ts`):
 
 | Level | When | fps | Max width | JPEG quality |
@@ -72,8 +78,9 @@ how prominently it is shown (`previewProfile()` in `src/lib/jpegRelay.ts`):
 | 1 | lobby grid tile | 24 | 1280 | 0.72 |
 | 2 | pop-out or expanded tile | 30 | 1920 | 0.8 |
 
-Relays never queue frames: if an encode is still running, only the newest
-frame is kept. Any level is capped at 30 fps.
+The encoder skips a frame rather than queueing when it falls behind, and a
+viewer that appears mid-stream asks for a keyframe over the same port. Any
+level is capped at 30 fps.
 
 ### Measuring memory
 

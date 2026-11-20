@@ -7,7 +7,7 @@ function trackParam(): string {
 }
 
 export function ScreenPopoutApp() {
-  const imgRef = useRef<HTMLImageElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const [status, setStatus] = useState("Connecting to screen…");
   const [error, setError] = useState<string | null>(null);
   const [hasFrame, setHasFrame] = useState(false);
@@ -24,7 +24,7 @@ export function ScreenPopoutApp() {
       return;
     }
 
-    const el = imgRef.current;
+    const el = canvasRef.current;
     if (!el) return;
 
     let cleanup: (() => void) | undefined;
@@ -38,11 +38,10 @@ export function ScreenPopoutApp() {
         setStatus("Live");
       }
     };
-    el.addEventListener("load", onLoad);
 
     void (async () => {
       try {
-        cleanup = await consumeScreenInPopout(trackSid, el);
+        cleanup = await consumeScreenInPopout(trackSid, el, onLoad);
         if (cancelled) {
           cleanup();
           return;
@@ -59,7 +58,6 @@ export function ScreenPopoutApp() {
 
     return () => {
       cancelled = true;
-      el.removeEventListener("load", onLoad);
       cleanup?.();
     };
   }, []);
@@ -78,11 +76,9 @@ export function ScreenPopoutApp() {
       {error ? (
         <p className="form-error centered popout-error">{error}</p>
       ) : (
-        <img
-          ref={imgRef}
+        <canvas
+          ref={canvasRef}
           className={`popout-video${hasFrame ? " ready" : ""}`}
-          alt=""
-          draggable={false}
         />
       )}
     </div>

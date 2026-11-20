@@ -5,7 +5,7 @@
  */
 
 import { getElectronAPI } from "../desktop";
-import { jpegBytes } from "../jpegRelay";
+import { createPreviewHub } from "../previewDecoder";
 import {
   purgeOrphanRelayElements,
   releaseRelay,
@@ -104,20 +104,16 @@ export function teardownScreenBridgeForVoiceLeave() {
   releaseScreenBridgeHost();
 }
 
-/** Attach a live screen share into a pop-out `<img>`. Returns a cleanup fn. */
+/** Draw a live screen share into a pop-out `<canvas>`. Returns a cleanup fn. */
 export async function consumeScreenInPopout(
   trackSid: string,
-  target: HTMLImageElement,
+  target: HTMLCanvasElement,
+  onFrame?: () => void,
 ): Promise<() => void> {
-  let lastUrl: string | null = null;
+  const hub = createPreviewHub((sid) => getElectronAPI()?.requestPreviewKeyFrame?.(sid));
+  const detach = hub.attach(trackSid, target, onFrame);
   const unsub = await subscribeFrames((msg) => {
-    if (msg.trackSid !== trackSid || !msg.jpeg) return;
-    const url = URL.createObjectURL(
-      new Blob([jpegBytes(msg.jpeg)], { type: "image/jpeg" }),
-    );
-    target.src = url;
-    if (lastUrl) URL.revokeObjectURL(lastUrl);
-    lastUrl = url;
+    if (msg.trackSid === trackSid) hub.push(msg);
   });
 
   void publishSignal({ type: "request", trackSid });
@@ -134,9 +130,9 @@ export async function consumeScreenInPopout(
   return () => {
     window.clearInterval(retry);
     unsub();
+    detach();
+    hub.clear();
     void publishSignal({ type: "stop", trackSid });
-    if (lastUrl) URL.revokeObjectURL(lastUrl);
-    target.removeAttribute("src");
   };
 }
 

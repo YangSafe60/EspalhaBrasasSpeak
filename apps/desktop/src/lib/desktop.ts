@@ -109,6 +109,10 @@ export type ElectronAPI = {
   sendVoiceCommand?: (cmd: import("../voice/voiceIpc").VoiceHostCommand) => void;
   publishVoiceEvent?: (evt: import("../voice/voiceIpc").VoiceHostEvent) => void;
   publishLobbyFrame?: (frame: import("../voice/voiceIpc").VoiceLobbyFrame) => void;
+  /** Viewer side: ask the publishers of `trackSid` for a keyframe. */
+  requestPreviewKeyFrame?: (trackSid: string) => void;
+  /** Publisher side: a viewer asked for a keyframe of `trackSid`. */
+  onPreviewKeyFrameRequest?: (handler: (trackSid: string) => void) => () => void;
   notifyVoiceHostReady?: () => void;
   onVoiceCommand?: (
     handler: (cmd: import("../voice/voiceIpc").VoiceHostCommand) => void,

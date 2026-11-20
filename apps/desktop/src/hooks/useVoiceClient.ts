@@ -5,7 +5,7 @@ import { isDesktopApp } from "../lib/desktop";
 import { api } from "../api/client";
 import { ensureScreenBridgeHost, teardownScreenBridgeForVoiceLeave } from "../lib/screenBridge";
 import { closeAllScreenPopouts } from "../lib/popout";
-import { clearLobbyFrames, dropLobbyFrame, applyLobbyJpeg } from "../lib/lobbyFrames";
+import { clearLobbyFrames, dropLobbyFrame, applyLobbyFrame } from "../lib/lobbyFrames";
 import { requestRendererMemoryTrim } from "../lib/voiceCleanup";
 import { playVoiceJoinSound, playVoiceLeaveSound } from "../lib/voiceSounds";
 import { useAppStore } from "../store/appStore";
@@ -247,8 +247,8 @@ export function useVoiceClient() {
         resetVoiceSession();
       }
     });
-    const offFrame = api.onLobbyFrame?.(({ trackSid, jpeg }) => {
-      applyLobbyJpeg(trackSid, jpeg);
+    const offFrame = api.onLobbyFrame?.((frame) => {
+      applyLobbyFrame(frame);
     });
     return () => {
       offEvt();
