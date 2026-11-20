@@ -110,8 +110,6 @@ export interface Message {
   reactions: ReactionSummary[];
   webhook_id?: string | null;
   webhook_name?: string | null;
-  bot_id?: string | null;
-  bot_name?: string | null;
 }
 
 export interface ChannelWebhook {
@@ -124,18 +122,6 @@ export interface ChannelWebhook {
 }
 
 export type ChannelWebhookCreated = ChannelWebhook & { token: string };
-
-export interface ServerBot {
-  id: string;
-  server_id: string;
-  name: string;
-  creator_id: string;
-  created_at: string;
-  /** Bot's own permission bits; effective = creator's ∩ these. */
-  permissions?: number;
-}
-
-export type ServerBotCreated = ServerBot & { token: string };
 
 export interface Invite {
   code: string;

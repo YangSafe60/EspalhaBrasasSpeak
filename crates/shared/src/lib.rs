@@ -43,9 +43,6 @@ impl Permissions {
             | Permissions::ADD_REACTIONS.bits(),
     );
 
-    /// Permissions a new bot gets unless the creator picks others.
-    pub const BOT_DEFAULT: Permissions = Permissions::EVERYONE_DEFAULT;
-
     pub fn has(self, other: Permissions) -> bool {
         self.contains(Permissions::ADMINISTRATOR) || self.contains(other)
     }
@@ -152,10 +149,6 @@ pub struct Message {
     pub webhook_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub webhook_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bot_id: Option<Uuid>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bot_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -175,29 +168,6 @@ pub struct ChannelWebhookCreated {
     pub token: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServerBot {
-    pub id: Uuid,
-    pub server_id: Uuid,
-    pub name: String,
-    pub creator_id: Uuid,
-    pub created_at: DateTime<Utc>,
-    /// The bot's own permission bits. Effective permissions are
-    /// `creator's permissions ∩ these` (see server `db::effective_permissions`).
-    #[serde(default = "default_bot_permissions")]
-    pub permissions: Permissions,
-}
-
-fn default_bot_permissions() -> Permissions {
-    Permissions::BOT_DEFAULT
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServerBotCreated {
-    #[serde(flatten)]
-    pub bot: ServerBot,
-    pub token: String,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Attachment {

@@ -11,7 +11,6 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
-use speakapp_shared::Permissions;
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -270,30 +269,20 @@ async fn message_flood_gets_429() {
 }
 
 #[tokio::test]
-async fn bot_without_send_permission_is_403() {
+async fn non_member_cannot_read_or_post_is_403() {
     let app = test_app().await;
-    let auth = app.register("alice").await;
-    let (server, channel) = app.server_with_text_channel(&auth).await;
-    let bot = app
-        .call(
-            Method::POST,
-            &format!("/api/servers/{server}/bots"),
-            Some(&auth),
-            Some(json!({ "name": "Reader", "permissions": Permissions::VIEW_CHANNEL.bits() })),
-        )
-        .await;
-    assert_eq!(bot.status, StatusCode::OK, "{}", bot.body);
-    let bot_auth = format!("Bot {}", bot.body["token"].as_str().unwrap());
+    let alice = app.register("alice").await;
+    let mallory = app.register("mallory").await;
+    let (_, channel) = app.server_with_text_channel(&alice).await;
 
-    // It can read but not post.
     let path = format!("/api/channels/{channel}/messages");
-    let r = app.call(Method::GET, &path, Some(&bot_auth), None).await;
-    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = app.call(Method::GET, &path, Some(&mallory), None).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
     let r = app
         .call(
             Method::POST,
             &path,
-            Some(&bot_auth),
+            Some(&mallory),
             Some(json!({ "content": "hi" })),
         )
         .await;
@@ -460,4 +449,77 @@ async fn json_body_over_1mb_is_rejected_but_upload_route_allows_more() {
     let r = app.send(req).await;
     assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.body);
     assert!(r.body["error"].as_str().unwrap().contains("IMGBB_API_KEY"));
+}
+
+#[tokio::test]
+async fn batched_channel_viewers_match_per_member_permissions() {
+    use speakapp_shared::Permissions;
+
+    let app = test_app().await;
+    let alice = app.register("alice").await;
+    let bob = app.register("bob").await;
+    let (server_id, channel) = app.server_with_text_channel(&alice).await;
+    let inv = app
+        .call(
+            Method::POST,
+            &format!("/api/servers/{server_id}/invites"),
+            Some(&alice),
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(inv.status, StatusCode::OK, "{}", inv.body);
+    let code = inv.body["code"].as_str().unwrap();
+    let r = app
+        .call(
+            Method::POST,
+            &format!("/api/invites/{code}"),
+            Some(&bob),
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+
+    let db = &app.state.db;
+    let server = crate::db::get_server(db, Uuid::parse_str(&server_id).unwrap())
+        .await
+        .unwrap();
+    let channel_id = Uuid::parse_str(&channel).unwrap();
+    let bob_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username = 'bob'")
+        .fetch_one(db)
+        .await
+        .unwrap();
+
+    let server = &server;
+    let check = |expected_viewers: usize| async move {
+        let batched =
+            crate::db::members_with_channel_perm(db, server, channel_id, Permissions::VIEW_CHANNEL)
+                .await
+                .unwrap();
+        let mut one_by_one = Vec::new();
+        for uid in crate::db::server_member_ids(db, server.id).await.unwrap() {
+            if crate::db::effective_permissions(db, server, Some(channel_id), uid)
+                .await
+                .unwrap()
+                .has(Permissions::VIEW_CHANNEL)
+            {
+                one_by_one.push(uid);
+            }
+        }
+        assert_eq!(batched, one_by_one);
+        assert_eq!(batched.len(), expected_viewers);
+    };
+
+    check(2).await;
+    // Hide the channel from bob with a member overwrite.
+    sqlx::query(
+        "INSERT INTO permission_overwrites (id, channel_id, target_type, target_id, allow_bits, deny_bits) VALUES (?, ?, 'member', ?, 0, ?)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(&channel)
+    .bind(&bob_id)
+    .bind(Permissions::VIEW_CHANNEL.bits() as i64)
+    .execute(db)
+    .await
+    .unwrap();
+    check(1).await;
 }

@@ -34,16 +34,15 @@ const GROUP_WINDOW_MS = 7 * 60 * 1000;
 
 function messageIdentity(m: Message): string {
   if (m.webhook_id) return `wh:${m.webhook_id}`;
-  if (m.bot_id) return `bot:${m.bot_id}`;
   return `user:${m.author_id}`;
 }
 
 function messageDisplayName(m: Message, authorName?: string): string {
-  return m.webhook_name || m.bot_name || authorName || "Unknown";
+  return m.webhook_name || authorName || "Unknown";
 }
 
 function isIntegrationMessage(m: Message): boolean {
-  return Boolean(m.webhook_id || m.bot_id);
+  return Boolean(m.webhook_id);
 }
 
 function shouldStartGroup(prev: Message | undefined, current: Message): boolean {
@@ -551,7 +550,6 @@ export function MessageView() {
                     {integration ? (
                       <span className="message-author integration-author">
                         {displayName}
-                        {m.bot_id && <span className="bot-tag">APP</span>}
                       </span>
                     ) : (
                     <button

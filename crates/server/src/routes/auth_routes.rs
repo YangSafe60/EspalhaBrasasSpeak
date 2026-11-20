@@ -196,11 +196,12 @@ pub async fn login(
         password_hash: String,
     }
     let row = sqlx::query_as::<_, Row>(
-        // Emails registered before validation may be mixed-case.
-        "SELECT id, password_hash FROM users WHERE username = ? OR lower(email) = ?",
+        // `username` and `email` are COLLATE NOCASE, so this is case-insensitive
+        // and still uses their unique indexes.
+        "SELECT id, password_hash FROM users WHERE username = ? OR email = ?",
     )
     .bind(body.login.trim())
-    .bind(body.login.trim().to_lowercase())
+    .bind(body.login.trim())
     .fetch_optional(&state.db)
     .await?
     .ok_or(AppError::Unauthorized)?;

@@ -36,7 +36,12 @@ impl AppState {
 
         let options = SqliteConnectOptions::from_str(&config.database_url)?
             .create_if_missing(true)
-            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+            // Safe with WAL (a crash can lose the last commits, never corrupt)
+            // and avoids an fsync on every write.
+            .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
+            // Wait for a competing writer instead of failing with SQLITE_BUSY.
+            .busy_timeout(std::time::Duration::from_secs(5));
 
         let db = SqlitePoolOptions::new()
             // Every connection to `:memory:` is its own database, so tests use one.

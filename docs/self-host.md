@@ -161,7 +161,7 @@ docker run --rm -v speakapp_speakapp-data:/data -v $PWD:/out alpine \
 | Login | 5 per minute per IP |
 | Register | 3 per hour per IP |
 | Token refresh | 30 per minute per IP |
-| Messages | 10 per 10 s per sender, shared by channels and DMs (per bot for bots, per webhook for webhooks) |
+| Messages | 10 per 10 s per sender, per user, shared by channels and DMs (webhooks: per webhook) |
 | Message / edit / webhook text | 4000 characters; webhook name 80 |
 | JSON request body | 1 MB (image upload: `MAX_UPLOAD_BYTES`, 25 MB by default) |
 | Username | 2–32 of `A-Z a-z 0-9 _ . -` |

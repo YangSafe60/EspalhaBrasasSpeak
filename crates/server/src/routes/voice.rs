@@ -95,15 +95,12 @@ pub async fn screen_token(
     Json(body): Json<ScreenTokenReq>,
 ) -> AppResult<Json<VoiceTokenResponse>> {
     let channel = db::get_channel(&state.db, id).await?;
-    user.bot_server_scope(channel.server_id)?;
     if channel.channel_type != ChannelType::Voice {
         return Err(AppError::BadRequest("not a voice channel".into()));
     }
     let server = db::get_server(&state.db, channel.server_id).await?;
     db::require_perm(&state.db, &server, Some(id), user.id, Permissions::STREAM).await?;
-    if !user.is_bot() {
-        db::require_not_timed_out(&state.db, server.id, user.id).await?;
-    }
+    db::require_not_timed_out(&state.db, server.id, user.id).await?;
     let in_channel: Option<String> = sqlx::query_scalar(
         "SELECT channel_id FROM voice_states WHERE user_id = ?",
     )
@@ -139,7 +136,6 @@ pub async fn token(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<VoiceTokenResponse>> {
     let channel = db::get_channel(&state.db, id).await?;
-    user.bot_server_scope(channel.server_id)?;
     if channel.channel_type != ChannelType::Voice {
         return Err(AppError::BadRequest("not a voice channel".into()));
     }
@@ -152,9 +148,7 @@ pub async fn token(
         Permissions::CONNECT,
     )
     .await?;
-    if !user.is_bot() {
-        db::require_not_timed_out(&state.db, server.id, user.id).await?;
-    }
+    db::require_not_timed_out(&state.db, server.id, user.id).await?;
 
     if channel.user_limit > 0 {
         let count: (i64,) = sqlx::query_as(
@@ -591,7 +585,6 @@ pub async fn list_states(
     user: AuthUser,
     Query(q): Query<ListVoiceQuery>,
 ) -> AppResult<Json<Vec<VoiceStateView>>> {
-    user.bot_server_scope(q.server_id)?;
     if !db::is_member(&state.db, q.server_id, user.id).await? {
         return Err(AppError::Forbidden);
     }

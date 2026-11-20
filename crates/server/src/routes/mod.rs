@@ -1,5 +1,4 @@
 mod auth_routes;
-mod bots;
 mod channels;
 mod dms;
 mod emojis;
@@ -83,10 +82,6 @@ fn build_cors(public_url: &str) -> CorsLayer {
 }
 
 pub fn router(state: AppState) -> Router {
-    let bot_scope = axum::middleware::from_fn_with_state(
-        state.clone(),
-        crate::auth::bot_scope_middleware,
-    );
     let media = ServeDir::new(&state.config.media_dir);
     let cors = build_cors(&state.config.public_url);
     // Multipart overhead (boundaries, headers) on top of the file itself.
@@ -281,12 +276,6 @@ pub fn router(state: AppState) -> Router {
             post(webhooks::execute),
         )
         .route(
-            "/api/servers/{id}/bots",
-            get(bots::list).post(bots::create),
-        )
-        .route("/api/bots/{id}", patch(bots::update).delete(bots::delete))
-        .route("/api/bots/me", get(bots::me))
-        .route(
             "/api/channels/{id}/messages",
             get(messages::list).post(messages::create),
         )
@@ -327,8 +316,6 @@ pub fn router(state: AppState) -> Router {
         ))
         // JSON bodies: 1 MB. The upload route overrides this above.
         .layer(DefaultBodyLimit::max(JSON_BODY_LIMIT))
-        // Caps permission checks for requests made with a bot token.
-        .layer(bot_scope)
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state)

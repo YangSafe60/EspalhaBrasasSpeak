@@ -337,11 +337,6 @@ export function ChannelSettingsModal() {
     );
   }, [server, roles, me, user?.id, overwritesForChannel]);
 
-  const canManageServer = useMemo(() => {
-    const serverPerms = effectiveServerPerms(server, roles, me, user?.id);
-    return hasPerm(serverPerms, Perm.MANAGE_SERVER);
-  }, [server, roles, me, user?.id]);
-
   const [tab, setTab] = useState<Tab>("overview");
   const [name, setName] = useState("");
   const [topic, setTopic] = useState("");
@@ -1027,9 +1022,7 @@ export function ChannelSettingsModal() {
             <ChannelIntegrationsPanel
               channelId={channel.id}
               channelType={channel.channel_type}
-              serverId={channel.server_id}
               canManageChannel={canManageThisChannel}
-              canManageServer={canManageServer}
             />
           )}
 

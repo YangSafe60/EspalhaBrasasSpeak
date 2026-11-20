@@ -508,47 +508,7 @@ fn map_overwrite_row(
     }
 }
 
-/// Effective permissions of `user_id` in `server` (and `channel_id`).
-///
-/// During a request made with a bot token, `user_id` for the bot is its
-/// creator's id. For that id the result is capped to the bot's own bits, so a
-/// bot never gets more than `creator ∩ bot` — and nothing outside its server.
 pub async fn effective_permissions(
-    db: &SqlitePool,
-    server: &Server,
-    channel_id: Option<Uuid>,
-    user_id: Uuid,
-) -> AppResult<Permissions> {
-    let perms = human_permissions(db, server, channel_id, user_id).await?;
-    Ok(apply_bot_scope(
-        crate::auth::current_bot_scope(),
-        server.id,
-        user_id,
-        perms,
-    ))
-}
-
-/// Cap `perms` for the bot acting in this request (pure, unit-tested).
-fn apply_bot_scope(
-    scope: Option<crate::auth::BotScope>,
-    server_id: Uuid,
-    user_id: Uuid,
-    perms: Permissions,
-) -> Permissions {
-    match scope {
-        Some(bot) if bot.creator_id == user_id => {
-            if bot.server_id != server_id {
-                return Permissions::empty();
-            }
-            // `all()` (owner / admin) intersected with the bot bits gives just
-            // the bot bits; ADMINISTRATOR only survives if the bot has it.
-            perms & bot.permissions
-        }
-        _ => perms,
-    }
-}
-
-async fn human_permissions(
     db: &SqlitePool,
     server: &Server,
     channel_id: Option<Uuid>,
@@ -682,13 +642,40 @@ pub async fn members_with_channel_perm(
     channel_id: Uuid,
     need: Permissions,
 ) -> AppResult<Vec<Uuid>> {
+    // Runs on every message, edit, reaction and typing event, so it loads the
+    // server's roles, the channel's overwrites and all role assignments once
+    // (4 queries in total) instead of calling `effective_permissions` per
+    // member (4 queries each). The per-member math is the same.
     let ids = server_member_ids(db, server.id).await?;
+    let roles = server_roles(db, server.id).await?;
+    let overwrites = channel_overwrites(db, channel_id).await?;
+    let everyone = roles.iter().find(|r| r.is_everyone).map(|r| r.id);
+    let assignments: Vec<(String, String)> =
+        sqlx::query_as("SELECT user_id, role_id FROM member_roles WHERE server_id = ?")
+            .bind(server.id.to_string())
+            .fetch_all(db)
+            .await?;
+    let mut roles_by_user: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+    for (uid, rid) in assignments {
+        if let (Ok(uid), Ok(rid)) = (Uuid::parse_str(&uid), Uuid::parse_str(&rid)) {
+            roles_by_user.entry(uid).or_default().push(rid);
+        }
+    }
+
     let mut out = Vec::with_capacity(ids.len());
     for uid in ids {
-        if effective_permissions(db, server, Some(channel_id), uid)
-            .await?
-            .has(need)
-        {
+        let perms = if uid == server.owner_id {
+            Permissions::all()
+        } else {
+            let mut role_ids = roles_by_user.remove(&uid).unwrap_or_default();
+            if let Some(e) = everyone {
+                if !role_ids.contains(&e) {
+                    role_ids.push(e);
+                }
+            }
+            speakapp_shared::resolve_permissions(&roles, &role_ids, false, &overwrites, uid)
+        };
+        if perms.has(need) {
             out.push(uid);
         }
     }
@@ -814,11 +801,9 @@ pub async fn load_message(db: &SqlitePool, id: Uuid, viewer_id: Uuid) -> AppResu
         created_at: String,
         webhook_id: Option<String>,
         webhook_name: Option<String>,
-        bot_id: Option<String>,
-        bot_name: Option<String>,
     }
     let row = sqlx::query_as::<_, MRow>(
-        "SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, webhook_id, webhook_name, bot_id, bot_name FROM messages WHERE id = ?",
+        "SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, webhook_id, webhook_name FROM messages WHERE id = ?",
     )
     .bind(id.to_string())
     .fetch_optional(db)
@@ -846,8 +831,6 @@ pub async fn load_message(db: &SqlitePool, id: Uuid, viewer_id: Uuid) -> AppResu
         reactions,
         webhook_id: row.webhook_id.and_then(|x| Uuid::parse_str(&x).ok()),
         webhook_name: row.webhook_name,
-        bot_id: row.bot_id.and_then(|x| Uuid::parse_str(&x).ok()),
-        bot_name: row.bot_name,
     })
 }
 
@@ -1013,12 +996,10 @@ pub async fn list_messages(
         created_at: String,
         webhook_id: Option<String>,
         webhook_name: Option<String>,
-        bot_id: Option<String>,
-        bot_name: Option<String>,
     }
     let rows: Vec<MRow> = if let Some(before_id) = before {
         sqlx::query_as(
-            r#"SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, webhook_id, webhook_name, bot_id, bot_name
+            r#"SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, webhook_id, webhook_name
                FROM messages
                WHERE channel_id = ? AND created_at < (SELECT created_at FROM messages WHERE id = ?)
                ORDER BY created_at DESC LIMIT ?"#,
@@ -1030,7 +1011,7 @@ pub async fn list_messages(
         .await?
     } else {
         sqlx::query_as(
-            r#"SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, webhook_id, webhook_name, bot_id, bot_name
+            r#"SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, webhook_id, webhook_name
                FROM messages WHERE channel_id = ? ORDER BY created_at DESC LIMIT ?"#,
         )
         .bind(channel_id.to_string())
@@ -1063,67 +1044,9 @@ pub async fn list_messages(
             reactions: reactions.get(&id_key).cloned().unwrap_or_default(),
             webhook_id: row.webhook_id.and_then(|x| Uuid::parse_str(&x).ok()),
             webhook_name: row.webhook_name,
-            bot_id: row.bot_id.and_then(|x| Uuid::parse_str(&x).ok()),
-            bot_name: row.bot_name,
         });
     }
     out.reverse();
     Ok(out)
 }
 
-#[cfg(test)]
-mod bot_scope_tests {
-    use super::apply_bot_scope;
-    use crate::auth::BotScope;
-    use speakapp_shared::Permissions;
-    use uuid::Uuid;
-
-    fn scope(server: Uuid, creator: Uuid, bits: Permissions) -> BotScope {
-        BotScope { server_id: server, creator_id: creator, permissions: bits }
-    }
-
-    #[test]
-    fn owner_bot_is_capped_to_bot_bits() {
-        let (server, creator) = (Uuid::new_v4(), Uuid::new_v4());
-        let bot = Permissions::SEND_MESSAGES | Permissions::VIEW_CHANNEL;
-        let got = apply_bot_scope(Some(scope(server, creator, bot)), server, creator, Permissions::all());
-        assert_eq!(got, bot);
-        assert!(!got.has(Permissions::BAN_MEMBERS));
-    }
-
-    #[test]
-    fn bot_never_exceeds_creator() {
-        let (server, creator) = (Uuid::new_v4(), Uuid::new_v4());
-        let got = apply_bot_scope(
-            Some(scope(server, creator, Permissions::all())),
-            server,
-            creator,
-            Permissions::VIEW_CHANNEL,
-        );
-        assert_eq!(got, Permissions::VIEW_CHANNEL);
-    }
-
-    #[test]
-    fn other_server_is_empty() {
-        let (server, other, creator) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
-        let got = apply_bot_scope(
-            Some(scope(server, creator, Permissions::all())),
-            other,
-            creator,
-            Permissions::all(),
-        );
-        assert!(got.is_empty());
-    }
-
-    #[test]
-    fn other_users_are_untouched() {
-        let (server, creator, someone) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
-        let got = apply_bot_scope(
-            Some(scope(server, creator, Permissions::empty())),
-            server,
-            someone,
-            Permissions::VIEW_CHANNEL,
-        );
-        assert_eq!(got, Permissions::VIEW_CHANNEL);
-    }
-}

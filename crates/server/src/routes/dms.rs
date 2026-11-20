@@ -603,7 +603,6 @@ pub async fn screen_call_token(
     Path(id): Path<Uuid>,
     Json(body): Json<crate::routes::voice::ScreenTokenReq>,
 ) -> AppResult<Json<VoiceTokenResponse>> {
-    user.ensure_human()?;
     require_participant(&state.db, id, user.id).await?;
     let peer = peer_of_dm(&state.db, id, user.id).await?;
     if is_blocked(&state.db, user.id, peer).await? {

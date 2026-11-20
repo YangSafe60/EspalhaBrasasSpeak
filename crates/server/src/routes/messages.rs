@@ -23,13 +23,11 @@ pub(crate) fn check_message_len(content: &str) -> AppResult<()> {
     Ok(())
 }
 
-/// Per-sender message rate limit, shared by channels, DMs and webhooks.
+/// Per-user message rate limit, shared by channel messages and DMs.
 pub(crate) fn check_message_rate(state: &AppState, user: &AuthUser) -> AppResult<()> {
-    let key = match &user.bot {
-        Some(bot) => format!("bot:{}", bot.id),
-        None => format!("user:{}", user.id),
-    };
-    state.limits.check(crate::ratelimit::MESSAGE, &key)
+    state
+        .limits
+        .check(crate::ratelimit::MESSAGE, &format!("user:{}", user.id))
 }
 
 /// Removes duplicates and checks every attachment was uploaded by `uploader`
@@ -119,13 +117,6 @@ async fn broadcast_to_viewers(
     Ok(())
 }
 
-fn message_owned_by(user: &AuthUser, author_id: Uuid, bot_id: Option<Uuid>) -> bool {
-    if let Some(bot) = &user.bot {
-        return bot_id == Some(bot.id);
-    }
-    bot_id.is_none() && author_id == user.id
-}
-
 pub async fn list(
     State(state): State<AppState>,
     user: AuthUser,
@@ -134,7 +125,6 @@ pub async fn list(
 ) -> AppResult<Json<Vec<Message>>> {
     let channel = db::get_channel(&state.db, id).await?;
     let server = db::get_server(&state.db, channel.server_id).await?;
-    user.bot_server_scope(server.id)?;
     db::require_perm(
         &state.db,
         &server,
@@ -165,7 +155,6 @@ pub async fn create(
         return Err(AppError::BadRequest("not a text channel".into()));
     }
     let server = db::get_server(&state.db, channel.server_id).await?;
-    user.bot_server_scope(server.id)?;
     db::require_perm(
         &state.db,
         &server,
@@ -182,9 +171,7 @@ pub async fn create(
         Permissions::SEND_MESSAGES,
     )
     .await?;
-    if !user.is_bot() {
-        db::require_not_timed_out(&state.db, server.id, user.id).await?;
-    }
+    db::require_not_timed_out(&state.db, server.id, user.id).await?;
 
     let content = body.content.trim();
     let has_attachments = body
@@ -221,33 +208,17 @@ pub async fn create(
 
     let msg_id = Uuid::new_v4();
     let now = Utc::now().to_rfc3339();
-    if let Some(bot) = &user.bot {
-        sqlx::query(
-            "INSERT INTO messages (id, channel_id, author_id, content, reply_to_id, created_at, bot_id, bot_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(msg_id.to_string())
-        .bind(id.to_string())
-        .bind(user.id.to_string())
-        .bind(content)
-        .bind(body.reply_to_id.map(|r| r.to_string()))
-        .bind(&now)
-        .bind(bot.id.to_string())
-        .bind(&bot.name)
-        .execute(&mut *tx)
-        .await?;
-    } else {
-        sqlx::query(
-            "INSERT INTO messages (id, channel_id, author_id, content, reply_to_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(msg_id.to_string())
-        .bind(id.to_string())
-        .bind(user.id.to_string())
-        .bind(content)
-        .bind(body.reply_to_id.map(|r| r.to_string()))
-        .bind(&now)
-        .execute(&mut *tx)
-        .await?;
-    }
+    sqlx::query(
+        "INSERT INTO messages (id, channel_id, author_id, content, reply_to_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(msg_id.to_string())
+    .bind(id.to_string())
+    .bind(user.id.to_string())
+    .bind(content)
+    .bind(body.reply_to_id.map(|r| r.to_string()))
+    .bind(&now)
+    .execute(&mut *tx)
+    .await?;
 
     link_attachments(&mut tx, &attachment_ids, msg_id, user.id).await?;
     tx.commit().await?;
@@ -277,10 +248,9 @@ pub async fn update(
     struct Row {
         author_id: String,
         channel_id: String,
-        bot_id: Option<String>,
     }
     let row = sqlx::query_as::<_, Row>(
-        "SELECT author_id, channel_id, bot_id FROM messages WHERE id = ?",
+        "SELECT author_id, channel_id FROM messages WHERE id = ?",
     )
         .bind(id.to_string())
         .fetch_optional(&state.db)
@@ -288,10 +258,8 @@ pub async fn update(
         .ok_or(AppError::NotFound)?;
     let author_id = Uuid::parse_str(&row.author_id).unwrap();
     let channel_id = Uuid::parse_str(&row.channel_id).unwrap();
-    let msg_bot_id = row.bot_id.and_then(|x| Uuid::parse_str(&x).ok());
     let channel = db::get_channel(&state.db, channel_id).await?;
     let server = db::get_server(&state.db, channel.server_id).await?;
-    user.bot_server_scope(server.id)?;
     db::require_perm(
         &state.db,
         &server,
@@ -300,7 +268,7 @@ pub async fn update(
         Permissions::VIEW_CHANNEL,
     )
     .await?;
-    if !message_owned_by(&user, author_id, msg_bot_id) {
+    if author_id != user.id {
         db::require_perm(
             &state.db,
             &server,
@@ -341,10 +309,9 @@ pub async fn delete(
     struct Row {
         author_id: String,
         channel_id: String,
-        bot_id: Option<String>,
     }
     let row = sqlx::query_as::<_, Row>(
-        "SELECT author_id, channel_id, bot_id FROM messages WHERE id = ?",
+        "SELECT author_id, channel_id FROM messages WHERE id = ?",
     )
         .bind(id.to_string())
         .fetch_optional(&state.db)
@@ -352,10 +319,8 @@ pub async fn delete(
         .ok_or(AppError::NotFound)?;
     let author_id = Uuid::parse_str(&row.author_id).unwrap();
     let channel_id = Uuid::parse_str(&row.channel_id).unwrap();
-    let msg_bot_id = row.bot_id.and_then(|x| Uuid::parse_str(&x).ok());
     let channel = db::get_channel(&state.db, channel_id).await?;
     let server = db::get_server(&state.db, channel.server_id).await?;
-    user.bot_server_scope(server.id)?;
     db::require_perm(
         &state.db,
         &server,
@@ -364,7 +329,7 @@ pub async fn delete(
         Permissions::VIEW_CHANNEL,
     )
     .await?;
-    if !message_owned_by(&user, author_id, msg_bot_id) {
+    if author_id != user.id {
         db::require_perm(
             &state.db,
             &server,
@@ -399,7 +364,6 @@ pub async fn add_reaction(
     let message = db::load_message(&state.db, id, user.id).await?;
     let channel = db::get_channel(&state.db, message.channel_id).await?;
     let server = db::get_server(&state.db, channel.server_id).await?;
-    user.bot_server_scope(server.id)?;
     db::require_perm(
         &state.db,
         &server,
@@ -416,9 +380,7 @@ pub async fn add_reaction(
         Permissions::ADD_REACTIONS,
     )
     .await?;
-    if !user.is_bot() {
-        db::require_not_timed_out(&state.db, server.id, user.id).await?;
-    }
+    db::require_not_timed_out(&state.db, server.id, user.id).await?;
     sqlx::query(
         "INSERT OR IGNORE INTO reactions (message_id, user_id, emoji) VALUES (?, ?, ?)",
     )
@@ -450,7 +412,6 @@ pub async fn remove_reaction(
     let message = db::load_message(&state.db, id, user.id).await?;
     let channel = db::get_channel(&state.db, message.channel_id).await?;
     let server = db::get_server(&state.db, channel.server_id).await?;
-    user.bot_server_scope(server.id)?;
     db::require_perm(
         &state.db,
         &server,
@@ -487,7 +448,6 @@ pub async fn typing(
 ) -> AppResult<Json<serde_json::Value>> {
     let channel = db::get_channel(&state.db, id).await?;
     let server = db::get_server(&state.db, channel.server_id).await?;
-    user.bot_server_scope(server.id)?;
     db::require_perm(
         &state.db,
         &server,
@@ -496,9 +456,7 @@ pub async fn typing(
         Permissions::VIEW_CHANNEL,
     )
     .await?;
-    if !user.is_bot() {
-        db::require_not_timed_out(&state.db, server.id, user.id).await?;
-    }
+    db::require_not_timed_out(&state.db, server.id, user.id).await?;
     let u = db::user_public(&state.db, user.id).await?;
     broadcast_to_viewers(
         &state,

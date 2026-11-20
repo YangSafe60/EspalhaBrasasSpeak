@@ -1,12 +1,6 @@
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
-use axum::{
-    extract::{FromRequestParts, Request, State},
-    http::{request::Parts, Method},
-    middleware::Next,
-    response::Response,
-};
-use speakapp_shared::Permissions;
+use axum::{extract::FromRequestParts, http::request::Parts};
 use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
@@ -22,142 +16,8 @@ pub struct Claims {
 }
 
 #[derive(Clone)]
-pub struct BotContext {
-    pub id: Uuid,
-    pub server_id: Uuid,
-    pub name: String,
-    pub creator_id: Uuid,
-    pub created_at: chrono::DateTime<Utc>,
-    pub permissions: Permissions,
-}
-
-/// Set for the duration of a request made with a `Bot` token. `AuthUser.id`
-/// is the creator's id for bots, so permission checks use this to cap the
-/// creator's permissions to the bot's own bits (see `db::effective_permissions`).
-#[derive(Clone, Copy)]
-pub struct BotScope {
-    pub server_id: Uuid,
-    pub creator_id: Uuid,
-    pub permissions: Permissions,
-}
-
-tokio::task_local! {
-    pub static BOT_SCOPE: BotScope;
-}
-
-/// The active bot scope for this request, if it was made with a bot token.
-pub fn current_bot_scope() -> Option<BotScope> {
-    BOT_SCOPE.try_with(|b| *b).ok()
-}
-
-/// Middleware: when the request carries `Authorization: Bot <token>`, run the
-/// rest of the request inside a `BOT_SCOPE`. Unknown tokens pass through; the
-/// `AuthUser` extractor rejects them.
-pub async fn bot_scope_middleware(
-    State(state): State<AppState>,
-    req: Request,
-    next: Next,
-) -> Response {
-    let token = req
-        .headers()
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bot "))
-        .map(str::to_owned);
-    let Some(token) = token else {
-        return next.run(req).await;
-    };
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        server_id: String,
-        creator_id: String,
-        permissions: i64,
-    }
-    let row = sqlx::query_as::<_, Row>(
-        "SELECT server_id, creator_id, permissions FROM server_bots WHERE token_hash = ?",
-    )
-    .bind(hash_token(&token))
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten();
-
-    let scope = row.and_then(|r| {
-        Some(BotScope {
-            server_id: Uuid::parse_str(&r.server_id).ok()?,
-            creator_id: Uuid::parse_str(&r.creator_id).ok()?,
-            permissions: Permissions::from_bits_truncate(r.permissions as u64),
-        })
-    });
-    match scope {
-        Some(scope) => BOT_SCOPE.scope(scope, next.run(req)).await,
-        None => next.run(req).await,
-    }
-}
-
-#[derive(Clone)]
 pub struct AuthUser {
-    /// Human user id, or bot creator id when authenticated as a bot.
     pub id: Uuid,
-    pub bot: Option<BotContext>,
-}
-
-impl AuthUser {
-    pub fn ensure_human(&self) -> AppResult<()> {
-        if self.bot.is_some() {
-            return Err(AppError::Forbidden);
-        }
-        Ok(())
-    }
-
-    pub fn bot_server_scope(&self, server_id: Uuid) -> AppResult<()> {
-        if let Some(bot) = &self.bot {
-            if bot.server_id != server_id {
-                return Err(AppError::Forbidden);
-            }
-        }
-        Ok(())
-    }
-
-    pub fn is_bot(&self) -> bool {
-        self.bot.is_some()
-    }
-}
-
-/// Discord-style: bots use the same REST routes as users, but only server-scoped APIs.
-fn bot_may_access(method: &Method, path: &str) -> bool {
-    if path == "/api/bots/me" {
-        return *method == Method::GET;
-    }
-    if path.contains("/webhooks") || path.contains("/bots") {
-        return false;
-    }
-    if path == "/api/servers" {
-        return *method == Method::GET;
-    }
-    if path.starts_with("/api/servers/") {
-        return true;
-    }
-    if path.starts_with("/api/channels/") {
-        return true;
-    }
-    if path.starts_with("/api/messages/") {
-        return true;
-    }
-    if path == "/api/media/upload" || path == "/api/media/remote" {
-        return true;
-    }
-    if path == "/api/gifs/search" {
-        return true;
-    }
-    if path.starts_with("/api/voice/") {
-        return true;
-    }
-    if path.starts_with("/api/emojis/") {
-        return *method == Method::GET;
-    }
-    false
 }
 
 impl FromRequestParts<AppState> for AuthUser {
@@ -181,57 +41,7 @@ impl FromRequestParts<AppState> for AuthUser {
             if crate::db::is_user_disabled(&state.db, claims.sub).await? {
                 return Err(AppError::BadRequest("account disabled".into()));
             }
-            return Ok(AuthUser {
-                id: claims.sub,
-                bot: None,
-            });
-        }
-
-        if let Some(token) = auth.strip_prefix("Bot ") {
-            let path = parts.uri.path();
-            if !bot_may_access(&parts.method, path) {
-                return Err(AppError::Forbidden);
-            }
-            let token_hash = hash_token(token);
-
-            #[derive(sqlx::FromRow)]
-            struct Row {
-                id: String,
-                server_id: String,
-                name: String,
-                creator_id: String,
-                created_at: String,
-                permissions: i64,
-            }
-
-            let row = sqlx::query_as::<_, Row>(
-                "SELECT id, server_id, name, creator_id, created_at, permissions FROM server_bots WHERE token_hash = ?",
-            )
-            .bind(&token_hash)
-            .fetch_optional(&state.db)
-            .await?
-            .ok_or(AppError::Unauthorized)?;
-
-            let creator_id =
-                Uuid::parse_str(&row.creator_id).map_err(|_| AppError::Unauthorized)?;
-            if crate::db::is_user_disabled(&state.db, creator_id).await? {
-                return Err(AppError::BadRequest("account disabled".into()));
-            }
-
-            return Ok(AuthUser {
-                id: creator_id,
-                bot: Some(BotContext {
-                    id: Uuid::parse_str(&row.id).map_err(|_| AppError::Unauthorized)?,
-                    server_id: Uuid::parse_str(&row.server_id)
-                        .map_err(|_| AppError::Unauthorized)?,
-                    name: row.name,
-                    creator_id,
-                    created_at: chrono::DateTime::parse_from_rfc3339(&row.created_at)
-                        .map(|d| d.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
-                    permissions: Permissions::from_bits_truncate(row.permissions as u64),
-                }),
-            });
+            return Ok(AuthUser { id: claims.sub });
         }
 
         Err(AppError::Unauthorized)
@@ -289,42 +99,6 @@ pub fn hash_token(token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
     hex::encode(hasher.finalize())
-}
-
-#[derive(Clone)]
-pub struct AuthBot {
-    pub id: Uuid,
-    pub server_id: Uuid,
-    pub name: String,
-    pub creator_id: Uuid,
-    pub created_at: chrono::DateTime<Utc>,
-    pub permissions: Permissions,
-}
-
-impl From<&BotContext> for AuthBot {
-    fn from(bot: &BotContext) -> Self {
-        AuthBot {
-            id: bot.id,
-            server_id: bot.server_id,
-            name: bot.name.clone(),
-            creator_id: bot.creator_id,
-            created_at: bot.created_at,
-            permissions: bot.permissions,
-        }
-    }
-}
-
-impl FromRequestParts<AppState> for AuthBot {
-    type Rejection = AppError;
-
-    async fn from_request_parts(
-        parts: &mut Parts,
-        state: &AppState,
-    ) -> Result<Self, Self::Rejection> {
-        let user = AuthUser::from_request_parts(parts, state).await?;
-        let bot = user.bot.ok_or(AppError::Unauthorized)?;
-        Ok(AuthBot::from(&bot))
-    }
 }
 
 pub fn decode_token(token: &str, secret: &str) -> AppResult<Claims> {

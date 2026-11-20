@@ -4431,18 +4431,6 @@ html[data-compact="1"] .message {
   color: var(--text);
 }
 
-.bot-tag {
-  margin-left: 0.35rem;
-  padding: 0.05rem 0.35rem;
-  border-radius: 4px;
-  font-size: 0.65rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  vertical-align: middle;
-  background: var(--accent, #5865f2);
-  color: #fff;
-}
-
 .private-lock-card {
   margin-bottom: 0.75rem;
 }
@@ -8132,29 +8120,3 @@ html[data-underline-links="1"] .a11y-preview-msg a {
   border-color: var(--accent);
 }
 
-/* Bot permission editor (ChannelIntegrationsPanel) */
-.integration-row:has(.bot-perms-editor) {
-  flex-wrap: wrap;
-}
-
-.bot-perms-editor {
-  flex-basis: 100%;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-  gap: 0.35rem 0.75rem;
-  padding-top: 0.6rem;
-  border-top: 1px solid var(--border);
-}
-
-.bot-perms-editor > .row {
-  grid-column: 1 / -1;
-  gap: 0.5rem;
-}
-
-.bot-perm-row {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  font-size: 0.85rem;
-  cursor: pointer;
-}

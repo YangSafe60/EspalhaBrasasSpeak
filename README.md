@@ -153,10 +153,6 @@ In **User Settings → Appearance → Notification sounds**:
 - **Other files**: uploaded from your PC to **Litterbox** (temporary, 72 h); the API stores the link.
 - **GIFs**: Klipy links (`KLIPY_API_KEY` on the server).
 
-### Bots
-
-Bots post with their creator's account but are capped to their own permission bits — **creator ∩ bot**. See [docs/permissions.md](docs/permissions.md#bots).
-
 ### Private DM privacy (honest limits)
 
 - The API never sees DM plaintext — only ciphertext + metadata (who, when, size). GIFs and file attachments are not inside that ciphertext: the server stores the attachment URL, and the bytes live on the same public hosts used for channel uploads.
