@@ -523,3 +523,50 @@ async fn batched_channel_viewers_match_per_member_permissions() {
     .unwrap();
     check(1).await;
 }
+
+#[tokio::test]
+async fn memory_samples_are_stored_per_user_and_rate_limited() {
+    let app = test_app().await;
+    let alice = app.register("alice").await;
+    let bob = app.register("bob").await;
+    let sample = json!({
+        "total_mb": 612,
+        "app_version": "1.2.3",
+        "processes": [
+            { "kind": "Browser", "label": "", "mb": 98 },
+            { "kind": "Tab", "label": "voice-host", "mb": 180 },
+        ],
+    });
+    let path = "/api/diagnostics/memory";
+    for _ in 0..2 {
+        let r = app.call(Method::POST, path, Some(&alice), Some(sample.clone())).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    }
+    let r = app.call(Method::POST, path, Some(&alice), Some(sample.clone())).await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+
+    let r = app
+        .call(Method::POST, path, Some(&alice), Some(json!({ "total_mb": 1, "processes": [] })))
+        .await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+
+    let mine = app.call(Method::GET, path, Some(&alice), None).await;
+    assert_eq!(mine.status, StatusCode::OK);
+    let list = mine.body.as_array().unwrap();
+    assert_eq!(list.len(), 2);
+    assert_eq!(list[0]["total_mb"], 612);
+    assert_eq!(list[0]["processes"][1]["label"], "voice-host");
+
+    // Other users never see them.
+    let theirs = app.call(Method::GET, path, Some(&bob), None).await;
+    assert_eq!(theirs.body.as_array().unwrap().len(), 0);
+    let r = app
+        .call(Method::POST, path, Some(&bob), Some(json!({ "total_mb": 1, "processes": [] })))
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+
+    let r = app.call(Method::DELETE, path, Some(&alice), None).await;
+    assert_eq!(r.body["deleted"], 2);
+    let mine = app.call(Method::GET, path, Some(&alice), None).await;
+    assert_eq!(mine.body.as_array().unwrap().len(), 0);
+}

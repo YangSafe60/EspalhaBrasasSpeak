@@ -685,6 +685,8 @@ function registerIpc() {
   }));
 
   ipcMain.handle("app:update:get", () => lastUpdatePayload);
+  ipcMain.handle("diag:memory", () => memorySnapshot());
+  ipcMain.handle("diag:memory-env", () => process.env.SPEAKAPP_MEM_LOG === "1");
 
   ipcMain.handle("window:focus-main", () => {
     if (!mainWindow || mainWindow.isDestroyed()) return false;
@@ -1257,34 +1259,46 @@ function setupAutoUpdate() {
   }
 }
 
+/** Which window an OS process belongs to, for the memory snapshot. */
+function memoryLabelForPid(pid) {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue;
+    if (win.webContents.getOSProcessId() !== pid) continue;
+    if (win === mainWindow) return "main-window";
+    if (win === voiceHostWindow) return "voice-host";
+    for (const [sourceId, host] of screenHosts) {
+      if (host === win) return `screen-host:${sourceId.slice(0, 12)}`;
+    }
+    return "popout";
+  }
+  return "";
+}
+
 /**
- * Opt-in RAM log per process (SPEAKAPP_MEM_LOG=1). Lets you compare voice-only
- * vs. live memory across builds without guessing from Task Manager totals.
+ * RAM per Electron process (working set, MB). The renderer sends this to the
+ * API every 10 s when memory diagnostics are on (User Settings → Voice &
+ * Video), so the samples end up on the server.
  */
+function memorySnapshot() {
+  const metrics = app.getAppMetrics();
+  const processes = metrics.map((m) => ({
+    kind: `${m.type}${m.name ? `(${m.name})` : ""}`,
+    label: memoryLabelForPid(m.pid),
+    mb: Math.round((m.memory?.workingSetSize ?? 0) / 1024),
+  }));
+  const total = processes.reduce((sum, p) => sum + p.mb, 0);
+  return { total_mb: total, processes, app_version: app.getVersion() };
+}
+
+/** SPEAKAPP_MEM_LOG=1 also prints each snapshot to the terminal (dev runs). */
 function startMemoryLog() {
   if (process.env.SPEAKAPP_MEM_LOG !== "1") return;
-  const label = (pid) => {
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (win.isDestroyed()) continue;
-      if (win.webContents.getOSProcessId() !== pid) continue;
-      if (win === mainWindow) return "main-window";
-      if (win === voiceHostWindow) return "voice-host";
-      for (const [sourceId, host] of screenHosts) {
-        if (host === win) return `screen-host:${sourceId.slice(0, 12)}`;
-      }
-      return "popout";
-    }
-    return "";
-  };
   setInterval(() => {
-    const rows = app.getAppMetrics().map((m) => {
-      const mb = Math.round((m.memory?.workingSetSize ?? 0) / 1024);
-      return `${m.type}${m.name ? `(${m.name})` : ""}${label(m.pid) ? `[${label(m.pid)}]` : ""}=${mb}MB`;
-    });
-    const total = app
-      .getAppMetrics()
-      .reduce((sum, m) => sum + (m.memory?.workingSetSize ?? 0), 0);
-    console.log(`[mem] total=${Math.round(total / 1024)}MB ${rows.join(" ")}`);
+    const snap = memorySnapshot();
+    const rows = snap.processes.map(
+      (p) => `${p.kind}${p.label ? `[${p.label}]` : ""}=${p.mb}MB`,
+    );
+    console.log(`[mem] total=${snap.total_mb}MB ${rows.join(" ")}`);
   }, 10_000);
 }
 

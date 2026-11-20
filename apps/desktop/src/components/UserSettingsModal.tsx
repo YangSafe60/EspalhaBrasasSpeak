@@ -23,6 +23,7 @@ import { AccessibilitySettings } from "./AccessibilitySettings";
 import { ProfileMediaEditControl } from "./ProfileMediaEditControl";
 import { ThemeSettings } from "./ThemeSettings";
 import { VoiceVideoSettingsPanel } from "./VoiceVideoSettingsPanel";
+import { MemoryDiagnosticsSettings } from "./MemoryDiagnosticsSettings";
 
 type Tab = "account" | "voice" | "appearance" | "accessibility";
 type DangerAction = "disable" | "delete" | null;
@@ -654,7 +655,12 @@ export function UserSettingsModal() {
             </div>
           )}
 
-          {tab === "voice" && <VoiceVideoSettingsPanel />}
+          {tab === "voice" && (
+            <div className="stack">
+              <VoiceVideoSettingsPanel />
+              <MemoryDiagnosticsSettings />
+            </div>
+          )}
 
           {tab === "appearance" && (
             <div className="stack">

@@ -1,5 +1,6 @@
 mod auth_routes;
 mod channels;
+mod diagnostics;
 mod dms;
 mod emojis;
 pub(crate) mod friends;
@@ -300,6 +301,12 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/media/remote", post(media::register_remote))
         .route("/api/gifs/search", get(media::search_gifs))
+        .route(
+            "/api/diagnostics/memory",
+            get(diagnostics::list_samples)
+                .post(diagnostics::post_sample)
+                .delete(diagnostics::clear_samples),
+        )
         .route("/api/ws", get(ws_upgrade))
         .nest_service("/media", media)
         .layer(SetResponseHeaderLayer::overriding(

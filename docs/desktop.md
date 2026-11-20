@@ -77,18 +77,28 @@ frame is kept. Any level is capped at 30 fps.
 
 ### Measuring memory
 
-Start the app with `SPEAKAPP_MEM_LOG=1` to log the RAM of every process every
-10 s, labelled `main-window`, `voice-host`, `screen-host:<id>` or `popout`:
+Turn on **User Settings → Voice & Video → Memory diagnostics → Send memory
+samples**. Every 10 s the app sends the RAM of each process to the API,
+labelled `main-window`, `voice-host`, `screen-host:<id>` or `popout`
+(unlabelled rows are Electron's own processes: `Browser` is the main process,
+`GPU`, utilities…). Samples are kept 7 days and are visible only to you.
 
-```powershell
-$env:SPEAKAPP_MEM_LOG = "1"
-cd apps\desktop
-npm run desktop
-```
+Getting them back:
 
-```
-[mem] total=612MB Browser=98MB Tab[main-window]=210MB Tab[voice-host]=180MB ...
-```
+- **In the app:** same section → **Download CSV** (one row per sample, one
+  column per process). **Delete samples** clears yours.
+- **On the server:** each sample is also a `memlog` line in the API log:
+
+  ```bash
+  cd ~/espalha-brasas/deploy
+  docker compose logs api --since 1h | grep memlog
+  ```
+
+- **API:** `GET /api/diagnostics/memory?since=<RFC 3339>&limit=<n>` returns
+  your samples as JSON; `DELETE` clears them.
+
+Starting the app with `SPEAKAPP_MEM_LOG=1` turns sending on without the
+setting and also prints each sample to the terminal (`[mem] total=… …`).
 
 Use it to compare voice-only against a live, or one build against another.
 

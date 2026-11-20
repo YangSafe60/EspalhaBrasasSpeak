@@ -200,8 +200,14 @@ Once clients use HTTPS through Caddy:
 
 ## Desktop memory log
 
-`SPEAKAPP_MEM_LOG=1` (desktop app, not the server) logs the RAM of each
-Electron process every 10 s. See [desktop.md](desktop.md#measuring-memory).
+Users can turn on memory diagnostics in the desktop app; the API stores one
+sample every 10 s per user (table `memory_samples`, 7 days) and logs it:
+
+```bash
+docker compose logs api --since 1h | grep memlog
+```
+
+See [desktop.md](desktop.md#measuring-memory).
 
 ## RAM tips
 

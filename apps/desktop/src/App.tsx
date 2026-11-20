@@ -22,6 +22,7 @@ import { useDmCallRing } from "./hooks/useDmCallRing";
 import { useVoice } from "./hooks/useVoice";
 import { useVoiceWindowTitle } from "./hooks/useVoiceWindowTitle";
 import { useAutoIdlePresence } from "./hooks/useAutoIdlePresence";
+import { useMemoryDiagnostics } from "./hooks/useMemoryDiagnostics";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { requestDesktopNotifyPermission } from "./lib/desktopNotify";
 import { primeNotifyAudio } from "./lib/messageNotify";
@@ -201,6 +202,7 @@ function MainApp() {
 
   useWebSocket(!!user);
   useAutoIdlePresence(!!user);
+  useMemoryDiagnostics(!!user);
 
   async function joinVoice(channelId: string) {
     setMicBusy(true);

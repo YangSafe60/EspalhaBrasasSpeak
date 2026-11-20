@@ -8,6 +8,12 @@ export type DesktopShareSource = {
 /** How much the JPEG preview relays should work (see main.mjs screenPreviewLevel). */
 export type ScreenPreviewLevel = 0 | 1 | 2;
 
+export type MemorySnapshot = {
+  total_mb: number;
+  processes: { kind: string; label: string; mb: number }[];
+  app_version?: string;
+};
+
 export type ElectronAPI = {
   isElectron: true;
   /** Runtime override (SPEAKAPP_API_BASE / VITE_API_BASE). Empty = use Vite default. */
@@ -19,6 +25,10 @@ export type ElectronAPI = {
     versions: { electron: string; chrome: string; node: string };
   }>;
   getAppUpdate: () => Promise<AppUpdateEvent | null>;
+  /** RAM per Electron process, for memory diagnostics. */
+  getMemorySnapshot?: () => Promise<MemorySnapshot>;
+  /** True when the app was started with SPEAKAPP_MEM_LOG=1. */
+  memoryLogFromEnv?: () => Promise<boolean>;
   focusMain: () => Promise<boolean>;
   showNotification?: (opts: {
     tag?: string;
