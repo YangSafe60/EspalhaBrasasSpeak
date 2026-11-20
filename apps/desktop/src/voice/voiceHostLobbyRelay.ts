@@ -1,11 +1,18 @@
 import type { LocalScreen, RemoteScreen } from "../hooks/voice/types";
-import { jpegPreviewMaxWidth, startLatestJpegRelay } from "../lib/jpegRelay";
+import { previewProfile, startLatestJpegRelay } from "../lib/jpegRelay";
 
 type RelayEntry = {
   stop: () => void;
 };
 
 const relays = new Map<string, RelayEntry>();
+/** Current preview level from the main process (1 = grid, 2 = focused). */
+let previewLevel = 1;
+
+/** Change frame rate / size of running relays without restarting them. */
+export function setLobbyPreviewLevel(level: number) {
+  previewLevel = level;
+}
 const videos = new Map<string, HTMLVideoElement>();
 
 function mountHiddenVideo(): HTMLVideoElement {
@@ -63,8 +70,9 @@ function startRelay(
 
   const relay = startLatestJpegRelay({
     video,
-    maxWidth: jpegPreviewMaxWidth(),
-    fps: () => 8,
+    maxWidth: () => previewProfile(previewLevel).maxWidth,
+    quality: () => previewProfile(previewLevel).quality,
+    fps: () => previewProfile(previewLevel).fps,
     onFrame: (jpeg) => {
       window.electronAPI?.publishLobbyFrame?.({ trackSid, jpeg });
     },

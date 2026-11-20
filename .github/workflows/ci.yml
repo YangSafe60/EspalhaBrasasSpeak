@@ -13,6 +13,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build -p speakapp-server --release
       - run: cargo test -p speakapp-shared
+      - run: cargo test -p speakapp-server
 
   desktop:
     runs-on: ubuntu-latest

@@ -45,6 +45,19 @@ export class ApiError extends Error {
   }
 }
 
+/** Readable text for a 429, from the `Retry-After` header (seconds). */
+export function rateLimitMessage(retryAfter: string | null): string {
+  const secs = Math.max(1, Math.ceil(Number(retryAfter) || 0));
+  if (!retryAfter || !Number.isFinite(Number(retryAfter))) {
+    return "You're doing that too often. Please wait a moment and try again.";
+  }
+  const wait =
+    secs < 60
+      ? `${secs} second${secs === 1 ? "" : "s"}`
+      : `${Math.ceil(secs / 60)} minute${Math.ceil(secs / 60) === 1 ? "" : "s"}`;
+  return `You're doing that too often. Try again in ${wait}.`;
+}
+
 let refreshPromise: Promise<boolean> | null = null;
 
 async function tryRefresh(): Promise<boolean> {
@@ -58,6 +71,8 @@ async function tryRefresh(): Promise<boolean> {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refresh_token: refresh }),
       });
+      // Rate-limited: keep the session and let the caller retry later.
+      if (res.status === 429) return false;
       if (!res.ok) {
         clearTokens();
         return false;
@@ -143,6 +158,9 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
       typeof (errBody as { error: unknown }).error === "string"
         ? (errBody as { error: string }).error
         : res.statusText || `HTTP ${res.status}`;
+    if (res.status === 429) {
+      throw new ApiError(429, rateLimitMessage(res.headers.get("Retry-After")), errBody);
+    }
     throw new ApiError(res.status, msg, errBody);
   }
 

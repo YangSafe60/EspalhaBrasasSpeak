@@ -6,6 +6,7 @@ import {
   buildDefaultBotConfig,
   downloadJson,
 } from "../lib/defaultBotConfig";
+import { ROLE_PERM_GROUPS } from "../types";
 import type {
   ChannelType,
   ChannelWebhook,
@@ -13,6 +14,9 @@ import type {
   ServerBot,
   ServerBotCreated,
 } from "../types";
+
+/** Every permission a bot can be given, in the same order as role settings. */
+const BOT_PERM_OPTIONS = ROLE_PERM_GROUPS.flatMap((g) => g.perms);
 
 type Props = {
   channelId: string;
@@ -40,6 +44,9 @@ export function ChannelIntegrationsPanel({
   const [bots, setBots] = useState<ServerBot[]>([]);
   const [webhookName, setWebhookName] = useState("");
   const [botName, setBotName] = useState("");
+  /** Bot whose permissions are being edited, and the draft bits. */
+  const [editingBotId, setEditingBotId] = useState<string | null>(null);
+  const [editBits, setEditBits] = useState(0);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -152,6 +159,36 @@ export function ChannelIntegrationsPanel({
     }
   }
 
+  function startEditBot(bot: ServerBot) {
+    setEditingBotId(bot.id);
+    setEditBits(bot.permissions ?? 0);
+    setErr(null);
+    setMsg(null);
+  }
+
+  async function onSaveBotPerms(id: string) {
+    setBusy(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      const updated = await api<ServerBot>(`/api/bots/${id}`, {
+        method: "PATCH",
+        body: { permissions: editBits },
+      });
+      setBots((prev) => prev.map((b) => (b.id === id ? updated : b)));
+      setEditingBotId(null);
+      setMsg(
+        updated.permissions === editBits
+          ? "Bot permissions saved."
+          : "Bot permissions saved. Some were removed because you don’t have them yourself.",
+      );
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Saving bot permissions failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function onDeleteBot(id: string) {
     setBusy(true);
     setErr(null);
@@ -254,9 +291,9 @@ export function ChannelIntegrationsPanel({
         <h4>Bots</h4>
         <p className="muted">
           Bots use the same REST API as the app with{" "}
-          <code>Authorization: Bot {"{token}"}</code>. They can manage channels,
-          messages, members, roles, invites, emojis, voice, and more — limited
-          to this server and whatever permissions the bot creator has.
+          <code>Authorization: Bot {"{token}"}</code>. A bot only has the
+          permissions you give it below (never more than its creator has) and
+          only in this server. It can’t delete or leave the server.
         </p>
 
         {!canManageServer ? (
@@ -291,6 +328,18 @@ export function ChannelIntegrationsPanel({
                         type="button"
                         className="btn ghost"
                         disabled={busy}
+                        onClick={() =>
+                          editingBotId === b.id
+                            ? setEditingBotId(null)
+                            : startEditBot(b)
+                        }
+                      >
+                        Permissions
+                      </button>
+                      <button
+                        type="button"
+                        className="btn ghost"
+                        disabled={busy}
                         onClick={() => downloadBotConfig(b)}
                       >
                         Config
@@ -304,6 +353,43 @@ export function ChannelIntegrationsPanel({
                         Delete
                       </button>
                     </div>
+                    {editingBotId === b.id && (
+                      <div className="bot-perms-editor">
+                        {BOT_PERM_OPTIONS.map((p) => (
+                          <label key={p.bit} className="bot-perm-row" title={p.description}>
+                            <input
+                              type="checkbox"
+                              checked={(editBits & p.bit) !== 0}
+                              disabled={busy}
+                              onChange={(e) =>
+                                setEditBits((bits) =>
+                                  e.target.checked ? bits | p.bit : bits & ~p.bit,
+                                )
+                              }
+                            />
+                            <span>{p.label}</span>
+                          </label>
+                        ))}
+                        <div className="row">
+                          <button
+                            type="button"
+                            className="btn primary sm"
+                            disabled={busy}
+                            onClick={() => void onSaveBotPerms(b.id)}
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            className="btn ghost sm"
+                            disabled={busy}
+                            onClick={() => setEditingBotId(null)}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>

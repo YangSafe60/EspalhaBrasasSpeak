@@ -5,6 +5,9 @@ export type DesktopShareSource = {
   thumbnail: string;
 };
 
+/** How much the JPEG preview relays should work (see main.mjs screenPreviewLevel). */
+export type ScreenPreviewLevel = 0 | 1 | 2;
+
 export type ElectronAPI = {
   isElectron: true;
   /** Runtime override (SPEAKAPP_API_BASE / VITE_API_BASE). Empty = use Vite default. */
@@ -80,8 +83,6 @@ export type ElectronAPI = {
     filename: string;
     contentType: string;
     data: ArrayBuffer;
-    apiKey?: string;
-    forceImgbb?: boolean;
   }) => Promise<{
     url: string;
     size: number;
@@ -89,7 +90,10 @@ export type ElectronAPI = {
     contentType: string;
   }>;
   setScreenPreviewActive?: (active: boolean) => void;
-  onScreenPreview?: (handler: (active: boolean) => void) => () => void;
+  /** An expanded (in-app fullscreen) tile wants full frame rate / size. */
+  setScreenPreviewFocused?: (focused: boolean) => void;
+  /** 0 = nobody looking, 1 = lobby grid, 2 = pop-out or expanded tile. */
+  onScreenPreview?: (handler: (level: ScreenPreviewLevel) => void) => () => void;
   ensureVoiceHost?: () => Promise<boolean>;
   destroyVoiceHost?: () => Promise<boolean>;
   sendVoiceCommand?: (cmd: import("../voice/voiceIpc").VoiceHostCommand) => void;

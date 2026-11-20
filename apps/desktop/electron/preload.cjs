@@ -52,8 +52,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("media:upload-notify-sound", payload),
   uploadImage: (payload) => ipcRenderer.invoke("media:upload-image", payload),
   setScreenPreviewActive: (active) => ipcRenderer.send("voice:set-preview", active),
+  setScreenPreviewFocused: (focused) =>
+    ipcRenderer.send("voice:set-preview-focus", Boolean(focused)),
+  /** Level 0 = hidden, 1 = lobby grid, 2 = pop-out / expanded tile. */
   onScreenPreview: (handler) => {
-    const listener = (_event, active) => handler(Boolean(active));
+    const listener = (_event, level) => {
+      const n = typeof level === "number" ? level : level ? 1 : 0;
+      handler(Math.max(0, Math.min(2, n)));
+    };
     ipcRenderer.on("voice:preview", listener);
     return () => ipcRenderer.removeListener("voice:preview", listener);
   },

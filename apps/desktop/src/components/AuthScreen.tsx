@@ -67,6 +67,9 @@ export function AuthScreen() {
                 autoComplete="username"
                 required
                 minLength={2}
+                maxLength={32}
+                pattern="[A-Za-z0-9_.\-]+"
+                title="Letters, numbers, _ . and - only"
               />
             </label>
             <label>
@@ -75,6 +78,7 @@ export function AuthScreen() {
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
                 placeholder="Optional"
+                maxLength={32}
               />
             </label>
             <label>
@@ -85,6 +89,7 @@ export function AuthScreen() {
                 onChange={(e) => setEmail(e.target.value)}
                 autoComplete="email"
                 required
+                maxLength={254}
               />
             </label>
           </>

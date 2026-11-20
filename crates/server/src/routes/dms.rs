@@ -1,7 +1,10 @@
 use crate::auth::AuthUser;
 use crate::db;
 use crate::error::{AppError, AppResult};
-use crate::livekit::{dm_call_room_name, mint_participant_token, screen_publisher_identity};
+use crate::livekit::{
+    dm_call_room_name, mint_participant_token, mint_participant_token_with_sources,
+    screen_publisher_identity, SRC_SCREEN, SRC_SCREEN_AUDIO,
+};
 use crate::routes::friends::{ensure_dm_with_peer, is_blocked, load_dm_for_user};
 use crate::routes::voice::VoiceTokenResponse;
 use crate::state::AppState;
@@ -298,6 +301,13 @@ pub async fn create_message(
     }
     let sender_public_key = normalize_public_key(body.sender_public_key)?;
     let recipient_public_key = normalize_public_key(body.recipient_public_key)?;
+    super::messages::check_message_rate(&state, &user)?;
+
+    // Message, attachment links and un-hiding commit together; the events
+    // are sent only after the commit.
+    let mut tx = state.db.begin().await?;
+    let attachment_ids =
+        super::messages::validate_attachments(&mut tx, &body.attachment_ids, user.id).await?;
 
     let msg_id = Uuid::new_v4();
     let now = Utc::now().to_rfc3339();
@@ -313,28 +323,17 @@ pub async fn create_message(
     .bind(recipient_public_key.as_deref())
     .bind(body.reply_to_id.map(|r| r.to_string()))
     .bind(&now)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
 
-    for aid in &body.attachment_ids {
-        let res = sqlx::query(
-            "UPDATE attachments SET message_id = ? WHERE id = ? AND message_id IS NULL AND uploader_id = ?",
-        )
-        .bind(msg_id.to_string())
-        .bind(aid.to_string())
-        .bind(user.id.to_string())
-        .execute(&state.db)
-        .await?;
-        if res.rows_affected() == 0 {
-            return Err(AppError::Forbidden);
-        }
-    }
+    super::messages::link_attachments(&mut tx, &attachment_ids, msg_id, user.id).await?;
 
     // Re-open for both sides so a closed DM reappears when someone writes.
     sqlx::query("UPDATE dm_participants SET hidden = 0 WHERE dm_channel_id = ?")
         .bind(id.to_string())
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
 
     let message = load_dm_message(&state.db, msg_id).await?;
     let author = db::user_public(&state.db, user.id).await?;
@@ -604,7 +603,13 @@ pub async fn screen_call_token(
     Path(id): Path<Uuid>,
     Json(body): Json<crate::routes::voice::ScreenTokenReq>,
 ) -> AppResult<Json<VoiceTokenResponse>> {
+    user.ensure_human()?;
     require_participant(&state.db, id, user.id).await?;
+    let peer = peer_of_dm(&state.db, id, user.id).await?;
+    if is_blocked(&state.db, user.id, peer).await? {
+        return Err(AppError::Forbidden);
+    }
+    require_can_message_peer(&state.db, user.id, peer).await?;
     let in_call: Option<String> = sqlx::query_scalar(
         "SELECT dm_channel_id FROM voice_states WHERE user_id = ?",
     )
@@ -617,14 +622,15 @@ pub async fn screen_call_token(
     }
     let profile = db::user_public(&state.db, user.id).await?;
     let room = dm_call_room_name(id);
-    let token = mint_participant_token(
+    // Screen-only identity: may publish the share (+ its audio), nothing else.
+    let token = mint_participant_token_with_sources(
         &state.config.livekit_api_key,
         &state.config.livekit_api_secret,
         &room,
         &screen_publisher_identity(user.id, &body.source_id),
         &profile.display_name,
-        true,
         false,
+        Some(&[SRC_SCREEN, SRC_SCREEN_AUDIO][..]),
     )?;
     Ok(Json(VoiceTokenResponse {
         token,

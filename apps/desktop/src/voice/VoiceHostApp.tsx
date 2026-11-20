@@ -2,7 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { useVoiceEngine } from "../hooks/useVoiceEngine";
 import { useAppStore } from "../store/appStore";
 import type { VoiceHostCommand, VoiceHostEvent } from "./voiceIpc";
-import { startVoiceHostLobbyRelay, stopVoiceHostLobbyRelay } from "./voiceHostLobbyRelay";
+import {
+  setLobbyPreviewLevel,
+  startVoiceHostLobbyRelay,
+  stopVoiceHostLobbyRelay,
+} from "./voiceHostLobbyRelay";
 
 function stripScreens(engine: ReturnType<typeof useVoiceEngine>): VoiceHostEvent {
   return {
@@ -38,8 +42,9 @@ export function VoiceHostApp() {
 
   useEffect(() => {
     window.electronAPI?.notifyVoiceHostReady?.();
-    return window.electronAPI?.onScreenPreview?.((active) => {
-      setPreviewWanted(active);
+    return window.electronAPI?.onScreenPreview?.((level) => {
+      setLobbyPreviewLevel(level);
+      setPreviewWanted(level > 0);
     });
   }, []);
 

@@ -429,7 +429,7 @@ export function UserSettingsModal() {
                   <input
                     value={displayName}
                     onChange={(e) => setDisplayName(e.target.value)}
-                    maxLength={64}
+                    maxLength={32}
                     required
                   />
                 </label>
@@ -543,7 +543,17 @@ export function UserSettingsModal() {
                     onClick={async () => {
                       if (!user) return;
                       setE2eBackupMsg(null);
-                      const blob = await loadStoredIdentity(user.id);
+                      let blob;
+                      try {
+                        blob = await loadStoredIdentity(user.id);
+                      } catch (e) {
+                        setErr(
+                          e instanceof Error
+                            ? e.message
+                            : "Could not read encryption keys on this device.",
+                        );
+                        return;
+                      }
                       if (!blob) {
                         setErr("No encryption keys found on this device.");
                         return;

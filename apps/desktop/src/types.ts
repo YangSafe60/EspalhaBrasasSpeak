@@ -131,6 +131,8 @@ export interface ServerBot {
   name: string;
   creator_id: string;
   created_at: string;
+  /** Bot's own permission bits; effective = creator's ∩ these. */
+  permissions?: number;
 }
 
 export type ServerBotCreated = ServerBot & { token: string };

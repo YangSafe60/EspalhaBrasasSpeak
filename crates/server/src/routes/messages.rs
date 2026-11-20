@@ -11,6 +11,79 @@ use serde::Deserialize;
 use speakapp_shared::{Message, Permissions, Server, WsEvent};
 use uuid::Uuid;
 
+/// Max characters in a channel message, edit or webhook message.
+pub const MAX_MESSAGE_CHARS: usize = 4000;
+
+pub(crate) fn check_message_len(content: &str) -> AppResult<()> {
+    if content.chars().count() > MAX_MESSAGE_CHARS {
+        return Err(AppError::BadRequest(format!(
+            "message too long (max {MAX_MESSAGE_CHARS} characters)"
+        )));
+    }
+    Ok(())
+}
+
+/// Per-sender message rate limit, shared by channels, DMs and webhooks.
+pub(crate) fn check_message_rate(state: &AppState, user: &AuthUser) -> AppResult<()> {
+    let key = match &user.bot {
+        Some(bot) => format!("bot:{}", bot.id),
+        None => format!("user:{}", user.id),
+    };
+    state.limits.check(crate::ratelimit::MESSAGE, &key)
+}
+
+/// Removes duplicates and checks every attachment was uploaded by `uploader`
+/// and is not yet linked to a message. Runs inside the caller's transaction.
+pub(crate) async fn validate_attachments(
+    conn: &mut sqlx::SqliteConnection,
+    ids: &[Uuid],
+    uploader: Uuid,
+) -> AppResult<Vec<Uuid>> {
+    let mut unique: Vec<Uuid> = Vec::with_capacity(ids.len());
+    for id in ids {
+        if !unique.contains(id) {
+            unique.push(*id);
+        }
+    }
+    for aid in &unique {
+        let ok: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM attachments WHERE id = ? AND message_id IS NULL AND uploader_id = ?",
+        )
+        .bind(aid.to_string())
+        .bind(uploader.to_string())
+        .fetch_optional(&mut *conn)
+        .await?;
+        if ok.is_none() {
+            return Err(AppError::Forbidden);
+        }
+    }
+    Ok(unique)
+}
+
+/// Links validated attachments to a new message. The `message_id IS NULL`
+/// guard makes a concurrent claim fail instead of stealing the upload.
+pub(crate) async fn link_attachments(
+    conn: &mut sqlx::SqliteConnection,
+    ids: &[Uuid],
+    message_id: Uuid,
+    uploader: Uuid,
+) -> AppResult<()> {
+    for aid in ids {
+        let res = sqlx::query(
+            "UPDATE attachments SET message_id = ? WHERE id = ? AND message_id IS NULL AND uploader_id = ?",
+        )
+        .bind(message_id.to_string())
+        .bind(aid.to_string())
+        .bind(uploader.to_string())
+        .execute(&mut *conn)
+        .await?;
+        if res.rows_affected() == 0 {
+            return Err(AppError::Forbidden);
+        }
+    }
+    Ok(())
+}
+
 #[derive(Deserialize)]
 pub struct ListQuery {
     pub before: Option<Uuid>,
@@ -122,6 +195,7 @@ pub async fn create(
     if content.is_empty() && !has_attachments {
         return Err(AppError::BadRequest("empty message".into()));
     }
+    check_message_len(content)?;
     if has_attachments {
         db::require_perm(
             &state.db,
@@ -132,6 +206,18 @@ pub async fn create(
         )
         .await?;
     }
+
+    check_message_rate(&state, &user)?;
+
+    // Message + attachment links commit together, so a bad attachment never
+    // leaves a message behind; the WebSocket event goes out only after commit.
+    let mut tx = state.db.begin().await?;
+    let attachment_ids = validate_attachments(
+        &mut tx,
+        body.attachment_ids.as_deref().unwrap_or(&[]),
+        user.id,
+    )
+    .await?;
 
     let msg_id = Uuid::new_v4();
     let now = Utc::now().to_rfc3339();
@@ -147,7 +233,7 @@ pub async fn create(
         .bind(&now)
         .bind(bot.id.to_string())
         .bind(&bot.name)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
     } else {
         sqlx::query(
@@ -159,26 +245,12 @@ pub async fn create(
         .bind(content)
         .bind(body.reply_to_id.map(|r| r.to_string()))
         .bind(&now)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
     }
 
-    if let Some(ids) = body.attachment_ids {
-        for aid in ids {
-            // Only the uploader may attach their own orphaned upload.
-            let res = sqlx::query(
-                "UPDATE attachments SET message_id = ? WHERE id = ? AND message_id IS NULL AND uploader_id = ?",
-            )
-            .bind(msg_id.to_string())
-            .bind(aid.to_string())
-            .bind(user.id.to_string())
-            .execute(&state.db)
-            .await?;
-            if res.rows_affected() == 0 {
-                return Err(AppError::Forbidden);
-            }
-        }
-    }
+    link_attachments(&mut tx, &attachment_ids, msg_id, user.id).await?;
+    tx.commit().await?;
 
     let message = db::load_message(&state.db, msg_id, user.id).await?;
     let author = db::user_public(&state.db, user.id).await?;
@@ -238,9 +310,11 @@ pub async fn update(
         )
         .await?;
     }
+    let content = body.content.trim();
+    check_message_len(content)?;
     let now = Utc::now().to_rfc3339();
     sqlx::query("UPDATE messages SET content = ?, edited_at = ? WHERE id = ?")
-        .bind(body.content.trim())
+        .bind(content)
         .bind(&now)
         .bind(id.to_string())
         .execute(&state.db)

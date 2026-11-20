@@ -314,8 +314,8 @@ pub async fn delete(
     user: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
-    user.bot_server_scope(id)?;
-    user.bot_server_scope(id)?;
+    // Bots act with their creator's id: never let one delete the server.
+    user.ensure_human()?;
     let server = db::get_server(&state.db, id).await?;
     if server.owner_id != user.id {
         return Err(AppError::Forbidden);
@@ -466,6 +466,8 @@ pub async fn leave_server(
     user: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
+    // A bot would otherwise remove its creator from the server.
+    user.ensure_human()?;
     let server = db::get_server(&state.db, id).await?;
     if server.owner_id == user.id {
         return Err(AppError::BadRequest(
@@ -1118,7 +1120,7 @@ pub async fn create_role(
             .fetch_one(&state.db)
             .await?;
     // New roles sit below the actor's highest role (unless owner).
-    let actor_pos = if user.id == server.owner_id {
+    let actor_pos = if user.id == server.owner_id && !user.is_bot() {
         max_pos.0 + 1
     } else {
         db::member_highest_position(&state.db, id, user.id).await? as i64
@@ -1291,7 +1293,7 @@ pub async fn set_member_roles(
         }
     }
     let roles = db::server_roles(&state.db, id).await?;
-    let actor_pos = if user.id == server.owner_id {
+    let actor_pos = if user.id == server.owner_id && !user.is_bot() {
         i32::MAX
     } else {
         db::member_highest_position(&state.db, id, user.id).await?

@@ -10,6 +10,11 @@ export function applyLobbyJpeg(
   trackSid: string,
   jpeg: ArrayBuffer | Uint8Array,
 ): void {
+  // No tile is showing this live: don't build a Blob + URL per frame.
+  if (!listeners.has(trackSid)) {
+    dropLobbyFrame(trackSid);
+    return;
+  }
   const next = URL.createObjectURL(
     new Blob([jpegBytes(jpeg)], { type: "image/jpeg" }),
   );

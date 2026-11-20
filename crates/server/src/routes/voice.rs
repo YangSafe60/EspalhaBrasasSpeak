@@ -1,7 +1,10 @@
 use crate::auth::AuthUser;
 use crate::db;
 use crate::error::{AppError, AppResult};
-use crate::livekit::{mint_participant_token, screen_publisher_identity, voice_room_name};
+use crate::livekit::{
+    mint_participant_token_with_sources, screen_publisher_identity, voice_room_name, SRC_CAMERA,
+    SRC_MICROPHONE, SRC_SCREEN, SRC_SCREEN_AUDIO,
+};
 use crate::state::AppState;
 use axum::{
     extract::{Path, Query, State},
@@ -92,8 +95,14 @@ pub async fn screen_token(
     Json(body): Json<ScreenTokenReq>,
 ) -> AppResult<Json<VoiceTokenResponse>> {
     let channel = db::get_channel(&state.db, id).await?;
+    user.bot_server_scope(channel.server_id)?;
     if channel.channel_type != ChannelType::Voice {
         return Err(AppError::BadRequest("not a voice channel".into()));
+    }
+    let server = db::get_server(&state.db, channel.server_id).await?;
+    db::require_perm(&state.db, &server, Some(id), user.id, Permissions::STREAM).await?;
+    if !user.is_bot() {
+        db::require_not_timed_out(&state.db, server.id, user.id).await?;
     }
     let in_channel: Option<String> = sqlx::query_scalar(
         "SELECT channel_id FROM voice_states WHERE user_id = ?",
@@ -107,14 +116,15 @@ pub async fn screen_token(
     }
     let profile = db::user_public(&state.db, user.id).await?;
     let room = voice_room_name(id);
-    let token = mint_participant_token(
+    // Screen-only identity: may publish the share (+ its audio), nothing else.
+    let token = mint_participant_token_with_sources(
         &state.config.livekit_api_key,
         &state.config.livekit_api_secret,
         &room,
         &screen_publisher_identity(user.id, &body.source_id),
         &profile.display_name,
-        true,
         false,
+        Some(&[SRC_SCREEN, SRC_SCREEN_AUDIO][..]),
     )?;
     Ok(Json(VoiceTokenResponse {
         token,
@@ -159,19 +169,26 @@ pub async fn token(
         }
     }
 
-    let can_speak = db::effective_permissions(&state.db, &server, Some(id), user.id)
-        .await?
-        .has(Permissions::SPEAK);
+    let perms = db::effective_permissions(&state.db, &server, Some(id), user.id).await?;
+    // Mic / camera need SPEAK; a screen published from this connection
+    // (browser fallback) needs STREAM. Desktop lives use `screen_token`.
+    let mut sources: Vec<&str> = Vec::new();
+    if perms.has(Permissions::SPEAK) {
+        sources.extend([SRC_MICROPHONE, SRC_CAMERA]);
+    }
+    if perms.has(Permissions::STREAM) {
+        sources.extend([SRC_SCREEN, SRC_SCREEN_AUDIO]);
+    }
     let profile = db::user_public(&state.db, user.id).await?;
     let room = voice_room_name(id);
-    let token = mint_participant_token(
+    let token = mint_participant_token_with_sources(
         &state.config.livekit_api_key,
         &state.config.livekit_api_secret,
         &room,
         &user.id.to_string(),
         &profile.display_name,
-        can_speak,
         true,
+        Some(sources.as_slice()),
     )?;
 
     // Upsert voice state join — keep mute/deafen/streaming across lobby switches.

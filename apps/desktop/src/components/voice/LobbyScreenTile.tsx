@@ -95,6 +95,13 @@ export function LobbyScreenTile({
   }, [trackSid, useRelayPreview]);
 
   useEffect(() => {
+    if (!expanded || !useRelayPreview) return;
+    // Expanded tile = full-size preview: ask the relays for full frame rate.
+    window.electronAPI?.setScreenPreviewFocused?.(true);
+    return () => window.electronAPI?.setScreenPreviewFocused?.(false);
+  }, [expanded, useRelayPreview]);
+
+  useEffect(() => {
     if (!expanded) return;
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";

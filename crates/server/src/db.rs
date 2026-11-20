@@ -508,7 +508,47 @@ fn map_overwrite_row(
     }
 }
 
+/// Effective permissions of `user_id` in `server` (and `channel_id`).
+///
+/// During a request made with a bot token, `user_id` for the bot is its
+/// creator's id. For that id the result is capped to the bot's own bits, so a
+/// bot never gets more than `creator ∩ bot` — and nothing outside its server.
 pub async fn effective_permissions(
+    db: &SqlitePool,
+    server: &Server,
+    channel_id: Option<Uuid>,
+    user_id: Uuid,
+) -> AppResult<Permissions> {
+    let perms = human_permissions(db, server, channel_id, user_id).await?;
+    Ok(apply_bot_scope(
+        crate::auth::current_bot_scope(),
+        server.id,
+        user_id,
+        perms,
+    ))
+}
+
+/// Cap `perms` for the bot acting in this request (pure, unit-tested).
+fn apply_bot_scope(
+    scope: Option<crate::auth::BotScope>,
+    server_id: Uuid,
+    user_id: Uuid,
+    perms: Permissions,
+) -> Permissions {
+    match scope {
+        Some(bot) if bot.creator_id == user_id => {
+            if bot.server_id != server_id {
+                return Permissions::empty();
+            }
+            // `all()` (owner / admin) intersected with the bot bits gives just
+            // the bot bits; ADMINISTRATOR only survives if the bot has it.
+            perms & bot.permissions
+        }
+        _ => perms,
+    }
+}
+
+async fn human_permissions(
     db: &SqlitePool,
     server: &Server,
     channel_id: Option<Uuid>,
@@ -1029,4 +1069,61 @@ pub async fn list_messages(
     }
     out.reverse();
     Ok(out)
+}
+
+#[cfg(test)]
+mod bot_scope_tests {
+    use super::apply_bot_scope;
+    use crate::auth::BotScope;
+    use speakapp_shared::Permissions;
+    use uuid::Uuid;
+
+    fn scope(server: Uuid, creator: Uuid, bits: Permissions) -> BotScope {
+        BotScope { server_id: server, creator_id: creator, permissions: bits }
+    }
+
+    #[test]
+    fn owner_bot_is_capped_to_bot_bits() {
+        let (server, creator) = (Uuid::new_v4(), Uuid::new_v4());
+        let bot = Permissions::SEND_MESSAGES | Permissions::VIEW_CHANNEL;
+        let got = apply_bot_scope(Some(scope(server, creator, bot)), server, creator, Permissions::all());
+        assert_eq!(got, bot);
+        assert!(!got.has(Permissions::BAN_MEMBERS));
+    }
+
+    #[test]
+    fn bot_never_exceeds_creator() {
+        let (server, creator) = (Uuid::new_v4(), Uuid::new_v4());
+        let got = apply_bot_scope(
+            Some(scope(server, creator, Permissions::all())),
+            server,
+            creator,
+            Permissions::VIEW_CHANNEL,
+        );
+        assert_eq!(got, Permissions::VIEW_CHANNEL);
+    }
+
+    #[test]
+    fn other_server_is_empty() {
+        let (server, other, creator) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let got = apply_bot_scope(
+            Some(scope(server, creator, Permissions::all())),
+            other,
+            creator,
+            Permissions::all(),
+        );
+        assert!(got.is_empty());
+    }
+
+    #[test]
+    fn other_users_are_untouched() {
+        let (server, creator, someone) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let got = apply_bot_scope(
+            Some(scope(server, creator, Permissions::empty())),
+            server,
+            someone,
+            Permissions::VIEW_CHANNEL,
+        );
+        assert_eq!(got, Permissions::VIEW_CHANNEL);
+    }
 }

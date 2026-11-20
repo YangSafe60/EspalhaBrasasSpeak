@@ -1,9 +1,12 @@
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use axum::{
-    extract::FromRequestParts,
+    extract::{FromRequestParts, Request, State},
     http::{request::Parts, Method},
+    middleware::Next,
+    response::Response,
 };
+use speakapp_shared::Permissions;
 use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
@@ -25,6 +28,72 @@ pub struct BotContext {
     pub name: String,
     pub creator_id: Uuid,
     pub created_at: chrono::DateTime<Utc>,
+    pub permissions: Permissions,
+}
+
+/// Set for the duration of a request made with a `Bot` token. `AuthUser.id`
+/// is the creator's id for bots, so permission checks use this to cap the
+/// creator's permissions to the bot's own bits (see `db::effective_permissions`).
+#[derive(Clone, Copy)]
+pub struct BotScope {
+    pub server_id: Uuid,
+    pub creator_id: Uuid,
+    pub permissions: Permissions,
+}
+
+tokio::task_local! {
+    pub static BOT_SCOPE: BotScope;
+}
+
+/// The active bot scope for this request, if it was made with a bot token.
+pub fn current_bot_scope() -> Option<BotScope> {
+    BOT_SCOPE.try_with(|b| *b).ok()
+}
+
+/// Middleware: when the request carries `Authorization: Bot <token>`, run the
+/// rest of the request inside a `BOT_SCOPE`. Unknown tokens pass through; the
+/// `AuthUser` extractor rejects them.
+pub async fn bot_scope_middleware(
+    State(state): State<AppState>,
+    req: Request,
+    next: Next,
+) -> Response {
+    let token = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bot "))
+        .map(str::to_owned);
+    let Some(token) = token else {
+        return next.run(req).await;
+    };
+
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        server_id: String,
+        creator_id: String,
+        permissions: i64,
+    }
+    let row = sqlx::query_as::<_, Row>(
+        "SELECT server_id, creator_id, permissions FROM server_bots WHERE token_hash = ?",
+    )
+    .bind(hash_token(&token))
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+
+    let scope = row.and_then(|r| {
+        Some(BotScope {
+            server_id: Uuid::parse_str(&r.server_id).ok()?,
+            creator_id: Uuid::parse_str(&r.creator_id).ok()?,
+            permissions: Permissions::from_bits_truncate(r.permissions as u64),
+        })
+    });
+    match scope {
+        Some(scope) => BOT_SCOPE.scope(scope, next.run(req)).await,
+        None => next.run(req).await,
+    }
 }
 
 #[derive(Clone)]
@@ -76,7 +145,7 @@ fn bot_may_access(method: &Method, path: &str) -> bool {
     if path.starts_with("/api/messages/") {
         return true;
     }
-    if path == "/api/media/upload" || path == "/api/media/remote" || path == "/api/media/imgbb-key" {
+    if path == "/api/media/upload" || path == "/api/media/remote" {
         return true;
     }
     if path == "/api/gifs/search" {
@@ -132,10 +201,11 @@ impl FromRequestParts<AppState> for AuthUser {
                 name: String,
                 creator_id: String,
                 created_at: String,
+                permissions: i64,
             }
 
             let row = sqlx::query_as::<_, Row>(
-                "SELECT id, server_id, name, creator_id, created_at FROM server_bots WHERE token_hash = ?",
+                "SELECT id, server_id, name, creator_id, created_at, permissions FROM server_bots WHERE token_hash = ?",
             )
             .bind(&token_hash)
             .fetch_optional(&state.db)
@@ -159,6 +229,7 @@ impl FromRequestParts<AppState> for AuthUser {
                     created_at: chrono::DateTime::parse_from_rfc3339(&row.created_at)
                         .map(|d| d.with_timezone(&Utc))
                         .unwrap_or_else(|_| Utc::now()),
+                    permissions: Permissions::from_bits_truncate(row.permissions as u64),
                 }),
             });
         }
@@ -227,6 +298,7 @@ pub struct AuthBot {
     pub name: String,
     pub creator_id: Uuid,
     pub created_at: chrono::DateTime<Utc>,
+    pub permissions: Permissions,
 }
 
 impl From<&BotContext> for AuthBot {
@@ -237,6 +309,7 @@ impl From<&BotContext> for AuthBot {
             name: bot.name.clone(),
             creator_id: bot.creator_id,
             created_at: bot.created_at,
+            permissions: bot.permissions,
         }
     }
 }

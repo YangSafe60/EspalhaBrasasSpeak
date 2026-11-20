@@ -15,6 +15,8 @@ import {
 } from "../lib/serverPerms";
 import { matchCustomEmojiToken } from "../lib/customEmoji";
 import { mediaUrl } from "../lib/mediaUrl";
+import { MAX_MESSAGE_CHARS, messageLength } from "../lib/messageLimits";
+import { CharCounter } from "./CharCounter";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { EmojiPickerButton } from "./EmojiPickerButton";
 import { GifPickerButton, type GifHit } from "./GifPickerButton";
@@ -101,6 +103,7 @@ export function MessageView() {
   );
 
   const [draft, setDraft] = useState("");
+  const draftTooLong = messageLength(draft) > MAX_MESSAGE_CHARS;
   const [pendingFiles, setPendingFiles] = useState<
     { id: string; url: string; name: string; preview: boolean }[]
   >([]);
@@ -109,6 +112,7 @@ export function MessageView() {
   const [busy, setBusy] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
+  const [editErr, setEditErr] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Message | null>(null);
   const [pendingBulkDelete, setPendingBulkDelete] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
@@ -267,6 +271,7 @@ export function MessageView() {
     e?.preventDefault();
     if (!activeChannelId || fileUploading) return;
     if (!draft.trim() && !pendingFiles.length) return;
+    if (draftTooLong) return;
     setBusy(true);
     setComposerErr(null);
     try {
@@ -385,15 +390,20 @@ export function MessageView() {
   function startEdit(m: Message) {
     setEditingId(m.id);
     setEditDraft(m.content);
+    setEditErr(null);
   }
 
   async function saveEdit() {
     if (!editingId || !editDraft.trim()) return;
+    if (messageLength(editDraft) > MAX_MESSAGE_CHARS) return;
     setBusy(true);
+    setEditErr(null);
     try {
       await editMessage(editingId, editDraft.trim());
       setEditingId(null);
       setEditDraft("");
+    } catch (error) {
+      setEditErr(error instanceof Error ? error.message : "Failed to edit message");
     } finally {
       setBusy(false);
     }
@@ -601,7 +611,9 @@ export function MessageView() {
                         Cancel
                       </button>
                       <span className="muted tiny">esc to cancel · enter to save</span>
+                      <CharCounter text={editDraft} />
                     </div>
+                    {editErr && <p className="form-error tiny">{editErr}</p>}
                   </div>
                 ) : (
                   <>
@@ -894,6 +906,7 @@ export function MessageView() {
           <p className="muted tiny pending-upload-status">Uploading…</p>
         )}
         {composerErr && <p className="form-error composer-error">{composerErr}</p>}
+        <CharCounter text={draft} className="composer-char-counter" />
         <form className="composer" onSubmit={(e) => void onSubmit(e)}>
           <button
             type="button"
@@ -931,7 +944,11 @@ export function MessageView() {
           />
           <EmojiPickerButton onPick={insertEmoji} />
           <GifPickerButton onPick={(g) => void onPickGif(g)} />
-          <button type="submit" className="btn primary sm" disabled={busy || fileUploading}>
+          <button
+            type="submit"
+            className="btn primary sm"
+            disabled={busy || fileUploading || draftTooLong}
+          >
             Send
           </button>
         </form>

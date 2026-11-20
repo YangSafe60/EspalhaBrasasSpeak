@@ -98,7 +98,7 @@ Or from the repo root: `npm run desktop:dist`
 | NSIS installer | `apps/desktop/release/Espalha Brasas-0.1.0-Setup.exe` |
 | Unpacked app (no install) | `apps/desktop/release/win-unpacked/Espalha Brasas.exe` |
 
-Open the Setup `.exe` to install. Running a **newer** Setup again upgrades over the existing install (same `appId`) — close the app first. There is no auto-update in the background yet.
+Open the Setup `.exe` to install. Installed apps update themselves from GitHub Releases (checked on startup, installed when you quit); running a newer Setup by hand also upgrades in place.
 
 See [docs/desktop.md](docs/desktop.md) for packaging details.
 
@@ -135,6 +135,7 @@ See [docs/self-host.md](docs/self-host.md) for Oracle sizing, TLS, backups, GitH
 - LiveKit voice (mute / deafen)
 - Multi screen share: in-app picker, opt-in watch, system audio, volume, pop-out / fullscreen
 - Screen share quality: **720p**, **1080p**, or **Source** (native up to 4K) at **30/60 FPS**
+- Rate limits and input limits on the API (see [docs/self-host.md](docs/self-host.md#api-limits))
 - Notification sounds: per-type on/off (server messages, DMs, friend requests), plus an optional custom **.mp3** up to **1 MB**
 
 ### Custom notification sound
@@ -146,10 +147,20 @@ In **User Settings → Appearance → Notification sounds**:
 - The desktop app uploads the file the same way as other non-image files: from your PC to a public host, under a random link (`https://files.catbox.moe/…`), not onto the API disk and not into a browsable folder. This device stores only that link (`localStorage`). It is not synced to other devices.
 - Chat files still use short-lived Litterbox hosting. The notification sound uses Catbox so the link does not expire after 72 hours.
 
+### Where uploads go
+
+- **Images** (chat, avatars, banners, server icons, emojis): the desktop app uploads them straight to **Catbox** from your PC and the API stores only the link. If that fails, the image goes to the API, which re-uploads it to **ImgBB** with its own `IMGBB_API_KEY` — the key never leaves the server.
+- **Other files**: uploaded from your PC to **Litterbox** (temporary, 72 h); the API stores the link.
+- **GIFs**: Klipy links (`KLIPY_API_KEY` on the server).
+
+### Bots
+
+Bots post with their creator's account but are capped to their own permission bits — **creator ∩ bot**. See [docs/permissions.md](docs/permissions.md#bots).
+
 ### Private DM privacy (honest limits)
 
 - The API never sees DM plaintext — only ciphertext + metadata (who, when, size). GIFs and file attachments are not inside that ciphertext: the server stores the attachment URL, and the bytes live on the same public hosts used for channel uploads.
-- Identity private keys live on this device (`localStorage`). Clearing app data without a backup means you cannot decrypt old DMs.
+- Identity private keys live on this device, encrypted with the OS keystore through Electron `safeStorage` (DPAPI / Keychain / libsecret). Clearing app data without a backup means you cannot decrypt old DMs.
 - Not Signal Protocol: no Double Ratchet / multi-device sync in v1. Compare fingerprints in the DM header to verify the peer.
 
 ## Repo layout

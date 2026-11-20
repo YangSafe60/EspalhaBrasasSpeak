@@ -3,6 +3,7 @@ use crate::auth::{
     AuthUser,
 };
 use crate::db;
+use crate::ratelimit::{self, ClientIp};
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use axum::{extract::State, Json};
@@ -65,14 +66,91 @@ pub struct AuthResponse {
     pub user: speakapp_shared::UserPublic,
 }
 
+pub const MAX_DISPLAY_NAME: usize = 32;
+pub const MAX_EMAIL: usize = 254;
+
+/// 2-32 ASCII letters, digits, `_`, `.` or `-`.
+pub fn validate_username(raw: &str) -> AppResult<String> {
+    let username = raw.trim();
+    if username.len() < 2 || username.len() > 32 {
+        return Err(AppError::BadRequest("username must be 2-32 characters".into()));
+    }
+    if !username
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+    {
+        return Err(AppError::BadRequest(
+            "username may only contain letters, numbers, _, . and -".into(),
+        ));
+    }
+    Ok(username.to_string())
+}
+
+/// 1-32 characters, no control characters.
+pub fn validate_display_name(raw: &str) -> AppResult<String> {
+    let name = raw.trim();
+    let len = name.chars().count();
+    if len == 0 || len > MAX_DISPLAY_NAME {
+        return Err(AppError::BadRequest(format!(
+            "display name must be 1-{MAX_DISPLAY_NAME} characters"
+        )));
+    }
+    if name.chars().any(char::is_control) {
+        return Err(AppError::BadRequest(
+            "display name must not contain control characters".into(),
+        ));
+    }
+    Ok(name.to_string())
+}
+
+/// Pragmatic `local@domain.tld` check (not full RFC 5322), max 254 chars.
+/// Returns the trimmed, lower-cased address.
+pub fn validate_email(raw: &str) -> AppResult<String> {
+    let invalid = || AppError::BadRequest("invalid email".into());
+    let email = raw.trim().to_lowercase();
+    if email.is_empty() || email.len() > MAX_EMAIL {
+        return Err(invalid());
+    }
+    let (local, domain) = email.split_once('@').ok_or_else(invalid)?;
+    if local.is_empty()
+        || local.len() > 64
+        || local.starts_with('.')
+        || local.ends_with('.')
+        || local.contains("..")
+        || !local
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "!#$%&'*+/=?^_`{|}~.-".contains(c))
+    {
+        return Err(invalid());
+    }
+    let labels: Vec<&str> = domain.split('.').collect();
+    if labels.len() < 2 {
+        return Err(invalid());
+    }
+    for label in &labels {
+        if label.is_empty()
+            || label.len() > 63
+            || label.starts_with('-')
+            || label.ends_with('-')
+            || !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        {
+            return Err(invalid());
+        }
+    }
+    if labels.last().is_some_and(|tld| tld.len() < 2) {
+        return Err(invalid());
+    }
+    Ok(email)
+}
+
 pub async fn register(
     State(state): State<AppState>,
+    ClientIp(ip): ClientIp,
     Json(body): Json<RegisterReq>,
 ) -> AppResult<Json<AuthResponse>> {
-    let username = body.username.trim().to_string();
-    if username.len() < 2 || username.len() > 32 {
-        return Err(AppError::BadRequest("username must be 2-32 chars".into()));
-    }
+    let username = validate_username(&body.username)?;
+    let email = validate_email(&body.email)?;
+    let display = validate_display_name(body.display_name.as_deref().unwrap_or(&username))?;
     if body.password.len() < 8 {
         return Err(AppError::BadRequest(
             "password must be at least 8 characters".into(),
@@ -80,11 +158,8 @@ pub async fn register(
     }
     let id = Uuid::new_v4();
     let now = Utc::now().to_rfc3339();
-    let display = body
-        .display_name
-        .unwrap_or_else(|| username.clone())
-        .trim()
-        .to_string();
+    // Counted only once the request is well-formed, so typos don't burn the quota.
+    state.limits.check(ratelimit::REGISTER, &ip.to_string())?;
     let hash = hash_password(&body.password)?;
 
     let res = sqlx::query(
@@ -93,7 +168,7 @@ pub async fn register(
     .bind(id.to_string())
     .bind(&username)
     .bind(&display)
-    .bind(body.email.trim())
+    .bind(&email)
     .bind(&hash)
     .bind(&now)
     .execute(&state.db)
@@ -111,18 +186,21 @@ pub async fn register(
 
 pub async fn login(
     State(state): State<AppState>,
+    ClientIp(ip): ClientIp,
     Json(body): Json<LoginReq>,
 ) -> AppResult<Json<AuthResponse>> {
+    state.limits.check(ratelimit::LOGIN, &ip.to_string())?;
     #[derive(sqlx::FromRow)]
     struct Row {
         id: String,
         password_hash: String,
     }
     let row = sqlx::query_as::<_, Row>(
-        "SELECT id, password_hash FROM users WHERE username = ? OR email = ?",
+        // Emails registered before validation may be mixed-case.
+        "SELECT id, password_hash FROM users WHERE username = ? OR lower(email) = ?",
     )
     .bind(body.login.trim())
-    .bind(body.login.trim())
+    .bind(body.login.trim().to_lowercase())
     .fetch_optional(&state.db)
     .await?
     .ok_or(AppError::Unauthorized)?;
@@ -139,8 +217,10 @@ pub async fn login(
 
 pub async fn refresh(
     State(state): State<AppState>,
+    ClientIp(ip): ClientIp,
     Json(body): Json<RefreshReq>,
 ) -> AppResult<Json<AuthResponse>> {
+    state.limits.check(ratelimit::REFRESH, &ip.to_string())?;
     let th = hash_token(&body.refresh_token);
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -180,12 +260,7 @@ pub async fn update_me(
     Json(body): Json<UpdateMeReq>,
 ) -> AppResult<Json<db::UserMe>> {
     if let Some(name) = body.display_name {
-        let name = name.trim();
-        if name.is_empty() || name.len() > 64 {
-            return Err(AppError::BadRequest(
-                "display name must be 1-64 characters".into(),
-            ));
-        }
+        let name = validate_display_name(&name)?;
         sqlx::query("UPDATE users SET display_name = ? WHERE id = ?")
             .bind(name)
             .bind(user.id.to_string())
@@ -193,10 +268,7 @@ pub async fn update_me(
             .await?;
     }
     if let Some(email) = body.email {
-        let email = email.trim().to_lowercase();
-        if !email.contains('@') || email.len() > 254 {
-            return Err(AppError::BadRequest("invalid email".into()));
-        }
+        let email = validate_email(&email)?;
         let res = sqlx::query("UPDATE users SET email = ? WHERE id = ?")
             .bind(&email)
             .bind(user.id.to_string())

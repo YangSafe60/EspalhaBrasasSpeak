@@ -5,75 +5,103 @@ export type StoredIdentityBlob = {
   privateKey: string;
 };
 
-const STORAGE_PREFIX = "speakapp_e2e_identity_";
+/**
+ * Old builds kept the private key in localStorage in plain text. It is only
+ * read here to migrate it into the encrypted desktop store, then removed.
+ */
+const LEGACY_PREFIX = "speakapp_e2e_identity_";
 
-function storageKey(userId: string): string {
-  return `${STORAGE_PREFIX}${userId}`;
+function legacyKey(userId: string): string {
+  return `${LEGACY_PREFIX}${userId}`;
 }
 
-function readLocalStorage(userId: string): StoredIdentityBlob | null {
-  const stored = localStorage.getItem(storageKey(userId));
-  if (!stored) return null;
+function isBlob(value: unknown): value is StoredIdentityBlob {
+  const v = value as StoredIdentityBlob | null;
+  return (
+    !!v && typeof v.publicKey === "string" && typeof v.privateKey === "string"
+  );
+}
+
+function readLegacy(userId: string): StoredIdentityBlob | null {
   try {
-    const parsed = JSON.parse(stored) as StoredIdentityBlob;
-    if (
-      typeof parsed.publicKey !== "string" ||
-      typeof parsed.privateKey !== "string"
-    ) {
-      return null;
-    }
-    return parsed;
+    const raw = localStorage.getItem(legacyKey(userId));
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    return isBlob(parsed) ? parsed : null;
   } catch {
     return null;
   }
 }
 
-function writeLocalStorage(userId: string, blob: StoredIdentityBlob): void {
-  localStorage.setItem(storageKey(userId), JSON.stringify(blob));
+function removeLegacy(userId: string): void {
+  try {
+    localStorage.removeItem(legacyKey(userId));
+  } catch {
+    /* storage unavailable */
+  }
 }
 
-/** Load identity from durable Electron store, migrating legacy localStorage if needed. */
+function hasDesktopStore(): boolean {
+  const electron = getElectronAPI();
+  return !!(electron?.loadE2eIdentity && electron.saveE2eIdentity);
+}
+
+/**
+ * Load the identity from the encrypted desktop store (Electron safeStorage).
+ * A legacy plaintext localStorage copy is moved into that store and deleted;
+ * it is only deleted after the encrypted copy was written successfully.
+ */
 export async function loadStoredIdentity(
   userId: string,
 ): Promise<StoredIdentityBlob | null> {
   const electron = getElectronAPI();
-  if (electron?.loadE2eIdentity) {
-    try {
-      const fromDisk = await electron.loadE2eIdentity(userId);
-      if (fromDisk?.publicKey && fromDisk?.privateKey) {
-        writeLocalStorage(userId, fromDisk);
-        return fromDisk;
-      }
-    } catch {
-      /* fall through */
-    }
+  if (!electron || !hasDesktopStore()) {
+    // Browser preview only (the app requires Electron): nothing safer exists.
+    return readLegacy(userId);
   }
 
-  const legacy = readLocalStorage(userId);
-  if (legacy && electron?.saveE2eIdentity) {
-    try {
-      await electron.saveE2eIdentity(userId, legacy);
-    } catch {
-      /* keep localStorage copy */
-    }
+  let diskError: unknown = null;
+  const fromDisk = await electron.loadE2eIdentity!(userId).catch((err) => {
+    diskError = err;
+    return null;
+  });
+  if (isBlob(fromDisk)) {
+    removeLegacy(userId);
+    return fromDisk;
+  }
+
+  const legacy = readLegacy(userId);
+  if (!legacy) {
+    // A key file exists but the OS keystore can't open it: fail loudly so the
+    // caller doesn't create (and save over it) a brand-new identity.
+    if (diskError) throw diskError;
+    return null;
+  }
+  try {
+    await electron.saveE2eIdentity!(userId, legacy);
+    removeLegacy(userId);
+  } catch {
+    // Keep the legacy copy rather than lose the only key we have.
   }
   return legacy;
 }
 
-/** Persist identity to Electron userData (encrypted) and localStorage backup. */
+/** Persist the identity in the encrypted desktop store only. */
 export async function saveStoredIdentity(
   userId: string,
   blob: StoredIdentityBlob,
 ): Promise<void> {
-  writeLocalStorage(userId, blob);
   const electron = getElectronAPI();
-  if (electron?.saveE2eIdentity) {
-    await electron.saveE2eIdentity(userId, blob);
+  if (!electron || !hasDesktopStore()) {
+    localStorage.setItem(legacyKey(userId), JSON.stringify(blob));
+    return;
   }
+  await electron.saveE2eIdentity!(userId, blob);
+  removeLegacy(userId);
 }
 
 export async function deleteStoredIdentity(userId: string): Promise<void> {
-  localStorage.removeItem(storageKey(userId));
+  removeLegacy(userId);
   const electron = getElectronAPI();
   if (electron?.deleteE2eIdentity) {
     await electron.deleteE2eIdentity(userId);

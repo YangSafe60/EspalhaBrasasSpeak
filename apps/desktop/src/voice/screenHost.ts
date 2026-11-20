@@ -1,6 +1,6 @@
 import { api } from "../api/client";
 import { normalizeLivekitUrl } from "../hooks/voice/livekitHelpers";
-import { startLatestJpegRelay } from "../lib/jpegRelay";
+import { previewProfile, startLatestJpegRelay } from "../lib/jpegRelay";
 import { getLivekit, loadLivekit } from "../lib/livekit";
 import {
   captureElectronSource,
@@ -51,11 +51,21 @@ export async function startScreenHost(): Promise<void> {
   let stopped = false;
   let stopCapture: (() => Promise<void>) | null = null;
   let stopRelay: (() => void) | null = null;
+  /** Preview level from main; can arrive before the live is published. */
+  let previewLevel = 0;
+  let onPreviewLevel: ((level: number) => void) | null = null;
+  let offPreview: (() => void) | null =
+    window.electronAPI?.onScreenPreview?.((level) => {
+      previewLevel = level;
+      onPreviewLevel?.(level);
+    }) ?? null;
   let room: import("livekit-client").Room | null = null;
 
   const shutdown = async () => {
     if (stopped) return;
     stopped = true;
+    offPreview?.();
+    offPreview = null;
     stopRelay?.();
     stopRelay = null;
     if (stopCapture) {
@@ -138,30 +148,47 @@ export async function startScreenHost(): Promise<void> {
       (pub) => pub.source === getLivekit().Track.Source.ScreenShare && pub.trackSid,
     );
     const trackSid = publication?.trackSid || "";
-    const video = document.createElement("video");
-    video.muted = true;
-    video.playsInline = true;
-    captured.videoTrack.attach(video);
-    void video.play().catch(() => undefined);
-    const relay = startLatestJpegRelay({
-      video,
-      maxWidth: 1280,
-      fps: () => 8,
-      onFrame: (jpeg) => {
-        if (!trackSid) return;
-        window.electronAPI?.publishLobbyFrame?.({ trackSid, jpeg });
-      },
-    });
-    stopRelay = () => {
-      relay.stop();
-      try {
-        captured.videoTrack.detach(video);
-      } catch {
-        /* ignore */
+    // Streamer's own preview. Only encode while a lobby tile or pop-out is
+    // on screen (level > 0); the old version encoded all the time.
+    let video: HTMLVideoElement | null = null;
+    let relay: { stop: () => void } | null = null;
+    const stopPreview = () => {
+      relay?.stop();
+      relay = null;
+      if (video) {
+        try {
+          captured.videoTrack.detach(video);
+        } catch {
+          /* ignore */
+        }
+        video.srcObject = null;
+        video.remove();
+        video = null;
       }
-      video.srcObject = null;
-      video.remove();
     };
+    const startPreview = () => {
+      if (relay || stopped || !trackSid) return;
+      video = document.createElement("video");
+      video.muted = true;
+      video.playsInline = true;
+      captured.videoTrack.attach(video);
+      void video.play().catch(() => undefined);
+      relay = startLatestJpegRelay({
+        video,
+        maxWidth: () => previewProfile(previewLevel).maxWidth,
+        quality: () => previewProfile(previewLevel).quality,
+        fps: () => previewProfile(previewLevel).fps,
+        onFrame: (jpeg) => {
+          window.electronAPI?.publishLobbyFrame?.({ trackSid, jpeg });
+        },
+      });
+    };
+    stopRelay = stopPreview;
+    onPreviewLevel = (level) => {
+      if (level > 0) startPreview();
+      else stopPreview();
+    };
+    onPreviewLevel(previewLevel);
 
     void window.electronAPI?.reportScreenPublisher?.({
       ok: true,

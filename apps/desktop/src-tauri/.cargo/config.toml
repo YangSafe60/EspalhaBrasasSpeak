@@ -1,4 +1,0 @@
-# MinGW ld/rust-lld hit PE's 65535 export limit with windows-rs + cdylib.
-# Exclude auto-exports so only #[no_mangle] / explicitly kept symbols ship.
-[target.x86_64-pc-windows-gnu]
-rustflags = ["-C", "link-arg=-Wl,--exclude-all-symbols"]

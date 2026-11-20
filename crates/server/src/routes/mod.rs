@@ -16,7 +16,7 @@ use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::ws;
 use axum::{
-    extract::{Query, State, WebSocketUpgrade},
+    extract::{DefaultBodyLimit, Query, State, WebSocketUpgrade},
     http::{header, HeaderValue, Method},
     response::IntoResponse,
     routing::{delete, get, patch, post, put},
@@ -27,6 +27,9 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
+
+/// Global request body cap; image uploads get `MAX_UPLOAD_BYTES` instead.
+pub const JSON_BODY_LIMIT: usize = 1024 * 1024;
 
 fn build_cors(public_url: &str) -> CorsLayer {
     let mut origins: Vec<HeaderValue> = Vec::new();
@@ -80,8 +83,16 @@ fn build_cors(public_url: &str) -> CorsLayer {
 }
 
 pub fn router(state: AppState) -> Router {
+    let bot_scope = axum::middleware::from_fn_with_state(
+        state.clone(),
+        crate::auth::bot_scope_middleware,
+    );
     let media = ServeDir::new(&state.config.media_dir);
     let cors = build_cors(&state.config.public_url);
+    // Multipart overhead (boundaries, headers) on top of the file itself.
+    let upload_limit = usize::try_from(state.config.max_upload_bytes)
+        .unwrap_or(usize::MAX)
+        .saturating_add(64 * 1024);
 
     Router::new()
         .route("/health", get(|| async { "ok" }))
@@ -273,7 +284,7 @@ pub fn router(state: AppState) -> Router {
             "/api/servers/{id}/bots",
             get(bots::list).post(bots::create),
         )
-        .route("/api/bots/{id}", delete(bots::delete))
+        .route("/api/bots/{id}", patch(bots::update).delete(bots::delete))
         .route("/api/bots/me", get(bots::me))
         .route(
             "/api/channels/{id}/messages",
@@ -294,8 +305,10 @@ pub fn router(state: AppState) -> Router {
             post(voice::screen_token),
         )
         .route("/api/voice/state", put(voice::update_state).get(voice::list_states))
-        .route("/api/media/upload", post(media::upload))
-        .route("/api/media/imgbb-key", get(media::imgbb_upload_key))
+        .route(
+            "/api/media/upload",
+            post(media::upload).layer(DefaultBodyLimit::max(upload_limit)),
+        )
         .route("/api/media/remote", post(media::register_remote))
         .route("/api/gifs/search", get(media::search_gifs))
         .route("/api/ws", get(ws_upgrade))
@@ -312,6 +325,10 @@ pub fn router(state: AppState) -> Router {
             header::REFERRER_POLICY,
             HeaderValue::from_static("no-referrer"),
         ))
+        // JSON bodies: 1 MB. The upload route overrides this above.
+        .layer(DefaultBodyLimit::max(JSON_BODY_LIMIT))
+        // Caps permission checks for requests made with a bot token.
+        .layer(bot_scope)
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state)

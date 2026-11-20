@@ -43,23 +43,6 @@ pub struct GifSearchResponse {
     pub gifs: Vec<GifHit>,
 }
 
-#[derive(Serialize)]
-pub struct ImgbbKeyResponse {
-    pub key: String,
-}
-
-pub async fn imgbb_upload_key(
-    State(state): State<AppState>,
-    _user: AuthUser,
-) -> AppResult<Json<ImgbbKeyResponse>> {
-    let key = state.config.imgbb_api_key.as_deref().ok_or_else(|| {
-        AppError::BadRequest("image upload is not configured (set IMGBB_API_KEY)".into())
-    })?;
-    Ok(Json(ImgbbKeyResponse {
-        key: key.to_string(),
-    }))
-}
-
 pub async fn upload(
     State(state): State<AppState>,
     user: AuthUser,

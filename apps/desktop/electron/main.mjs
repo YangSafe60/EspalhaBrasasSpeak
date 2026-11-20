@@ -77,23 +77,6 @@ function imageFileExt(filename, contentType) {
   return "png";
 }
 
-function isDirectImgbbUrl(url) {
-  try {
-    const host = new URL(url).hostname.toLowerCase();
-    return host === "i.ibb.co";
-  } catch {
-    return false;
-  }
-}
-
-function pickImgbbDirectUrl(body) {
-  const candidates = [body?.data?.image?.url, body?.data?.url, body?.data?.display_url];
-  for (const raw of candidates) {
-    if (typeof raw === "string" && isDirectImgbbUrl(raw)) return raw;
-  }
-  return "";
-}
-
 async function uploadImageToCatbox(buf, filename, contentType) {
   const ext = imageFileExt(filename, contentType);
   const safe = `image.${ext === "jpeg" ? "jpg" : ext}`;
@@ -120,35 +103,6 @@ async function uploadImageToCatbox(buf, filename, contentType) {
     );
   }
   return text;
-}
-
-async function uploadImageToImgbb(buf, filename, contentType, apiKey) {
-  const form = new FormData();
-  form.append(
-    "image",
-    new Blob([new Uint8Array(buf)], { type: contentType || "image/png" }),
-    filename,
-  );
-  const res = await fetch(
-    `https://api.imgbb.com/1/upload?key=${encodeURIComponent(apiKey)}`,
-    { method: "POST", body: form },
-  );
-  let body;
-  try {
-    body = await res.json();
-  } catch {
-    throw new Error(`ImgBB upload failed (${res.status})`);
-  }
-  if (!res.ok || body?.success !== true) {
-    const detail =
-      typeof body?.error?.message === "string" ? body.error.message : `HTTP ${res.status}`;
-    throw new Error(`ImgBB upload failed: ${detail}`);
-  }
-  const url = pickImgbbDirectUrl(body);
-  if (!url) {
-    throw new Error("ImgBB did not return a direct image link");
-  }
-  return url;
 }
 
 function notifyAppIconUrl() {
@@ -336,10 +290,28 @@ function flushPendingVoiceCommands() {
 }
 
 let screenPreviewWanted = false;
+let screenPreviewFocused = false;
+
+/**
+ * Preview level for the JPEG relays that feed lobby tiles and pop-outs:
+ * 0 = nobody is looking (relays stop), 1 = lobby grid visible,
+ * 2 = a pop-out or an expanded tile is open (full frame rate / size).
+ */
+function screenPreviewLevel() {
+  if (popouts.size > 0 || (screenPreviewWanted && screenPreviewFocused)) return 2;
+  return screenPreviewWanted ? 1 : 0;
+}
 
 function pushScreenPreview() {
-  const active = screenPreviewWanted || popouts.size > 0;
-  sendToVoiceHostRenderer("voice:preview", active);
+  const level = screenPreviewLevel();
+  sendToVoiceHostRenderer("voice:preview", level);
+  // Each live's own process makes the streamer's preview; it must follow the
+  // same level so it stops encoding when the lobby is not on screen.
+  for (const win of screenHosts.values()) {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send("voice:preview", level);
+    }
+  }
 }
 
 function markVoiceHostReady() {
@@ -909,6 +881,12 @@ function registerIpc() {
       }
       sendToVoiceHostRenderer("screen:closed", { sourceId });
     });
+    // Tell the new live process whether anyone is looking at the preview.
+    win.webContents.once("did-finish-load", () => {
+      if (!win.isDestroyed()) {
+        win.webContents.send("voice:preview", screenPreviewLevel());
+      }
+    });
     const ready = new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         screenOpenWaiters.delete(sourceId);
@@ -1023,6 +1001,12 @@ function registerIpc() {
 
   ipcMain.on("voice:set-preview", (_evt, active) => {
     screenPreviewWanted = Boolean(active);
+    if (!screenPreviewWanted) screenPreviewFocused = false;
+    pushScreenPreview();
+  });
+
+  ipcMain.on("voice:set-preview-focus", (_evt, focused) => {
+    screenPreviewFocused = Boolean(focused);
     pushScreenPreview();
   });
 
@@ -1143,7 +1127,7 @@ function registerIpc() {
     return { url: text, size: buf.length, filename };
   });
 
-  /** Images go to Catbox as a direct file URL. ImgBB is only a fallback. */
+  /** Images go to Catbox as a direct file URL. If it fails, the renderer falls back to /api/media/upload (the server holds the ImgBB key). */
   ipcMain.handle("media:upload-image", async (_evt, payload = {}) => {
     const filename = String(payload.filename || "image.png").replace(/[/\\]/g, "_");
     const contentType = String(payload.contentType || "image/png");
@@ -1162,24 +1146,10 @@ function registerIpc() {
       throw new Error("file too large (max 25 MB)");
     }
 
-    if (!payload.forceImgbb) {
-      try {
-        const url = await uploadImageToCatbox(buf, filename, contentType);
-        return { url, size: buf.length, filename, contentType };
-      } catch (err) {
-        if (!String(payload.apiKey || "").trim()) {
-          throw err;
-        }
-      }
-    }
-
-    const apiKey = String(payload.apiKey || "").trim();
-    if (!apiKey) {
-      throw new Error("image upload failed");
-    }
-    const url = await uploadImageToImgbb(buf, filename, contentType, apiKey);
+    const url = await uploadImageToCatbox(buf, filename, contentType);
     return { url, size: buf.length, filename, contentType };
   });
+
 }
 
 function sendAppUpdate(payload) {
@@ -1287,11 +1257,43 @@ function setupAutoUpdate() {
   }
 }
 
+/**
+ * Opt-in RAM log per process (SPEAKAPP_MEM_LOG=1). Lets you compare voice-only
+ * vs. live memory across builds without guessing from Task Manager totals.
+ */
+function startMemoryLog() {
+  if (process.env.SPEAKAPP_MEM_LOG !== "1") return;
+  const label = (pid) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed()) continue;
+      if (win.webContents.getOSProcessId() !== pid) continue;
+      if (win === mainWindow) return "main-window";
+      if (win === voiceHostWindow) return "voice-host";
+      for (const [sourceId, host] of screenHosts) {
+        if (host === win) return `screen-host:${sourceId.slice(0, 12)}`;
+      }
+      return "popout";
+    }
+    return "";
+  };
+  setInterval(() => {
+    const rows = app.getAppMetrics().map((m) => {
+      const mb = Math.round((m.memory?.workingSetSize ?? 0) / 1024);
+      return `${m.type}${m.name ? `(${m.name})` : ""}${label(m.pid) ? `[${label(m.pid)}]` : ""}=${mb}MB`;
+    });
+    const total = app
+      .getAppMetrics()
+      .reduce((sum, m) => sum + (m.memory?.workingSetSize ?? 0), 0);
+    console.log(`[mem] total=${Math.round(total / 1024)}MB ${rows.join(" ")}`);
+  }, 10_000);
+}
+
 app.whenReady().then(() => {
   installSessionHandlers();
   registerIpc();
   createMainWindow();
   setupAutoUpdate();
+  startMemoryLog();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();

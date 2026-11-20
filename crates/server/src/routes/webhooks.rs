@@ -8,6 +8,7 @@ use axum::{
 };
 use chrono::Utc;
 use serde::Deserialize;
+use subtle::ConstantTimeEq;
 use speakapp_shared::{
     ChannelWebhook, ChannelWebhookCreated, Message, Permissions, Server, WsEvent,
 };
@@ -30,6 +31,18 @@ pub struct ExecuteWebhookReq {
     pub content: String,
     #[serde(default)]
     pub username: Option<String>,
+}
+
+/// Max characters in a webhook's name or per-message `username`.
+const MAX_WEBHOOK_USERNAME: usize = 80;
+
+fn check_webhook_name(name: &str) -> AppResult<()> {
+    if name.chars().count() > MAX_WEBHOOK_USERNAME {
+        return Err(AppError::BadRequest(format!(
+            "name too long (max {MAX_WEBHOOK_USERNAME} characters)"
+        )));
+    }
+    Ok(())
 }
 
 fn parse_dt(s: &str) -> chrono::DateTime<Utc> {
@@ -141,6 +154,7 @@ pub async fn create(
     Json(body): Json<CreateWebhookReq>,
 ) -> AppResult<Json<ChannelWebhookCreated>> {
     let name = body.name.trim();
+    check_webhook_name(name)?;
     if name.is_empty() {
         return Err(AppError::BadRequest("name required".into()));
     }
@@ -229,6 +243,7 @@ pub async fn update(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or(row.name.as_str());
+    check_webhook_name(name)?;
     let avatar_url = body.avatar_url.or(row.avatar_url);
 
     sqlx::query("UPDATE channel_webhooks SET name = ?, avatar_url = ? WHERE id = ?")
@@ -305,7 +320,9 @@ pub async fn execute(
     .await?
     .ok_or(AppError::NotFound)?;
 
-    if hash_token(&token) != row.token_hash {
+    // Constant-time compare so response timing leaks nothing about the hash.
+    let presented = hash_token(&token);
+    if !bool::from(presented.as_bytes().ct_eq(row.token_hash.as_bytes())) {
         return Err(AppError::Unauthorized);
     }
 
@@ -313,6 +330,19 @@ pub async fn execute(
     if content.is_empty() {
         return Err(AppError::BadRequest("empty content".into()));
     }
+    super::messages::check_message_len(content)?;
+    if body
+        .username
+        .as_deref()
+        .is_some_and(|u| u.trim().chars().count() > MAX_WEBHOOK_USERNAME)
+    {
+        return Err(AppError::BadRequest(format!(
+            "username too long (max {MAX_WEBHOOK_USERNAME} characters)"
+        )));
+    }
+    state
+        .limits
+        .check(crate::ratelimit::MESSAGE, &format!("webhook:{id}"))?;
 
     let channel_id = Uuid::parse_str(&row.channel_id).unwrap();
     let channel = db::get_channel(&state.db, channel_id).await?;

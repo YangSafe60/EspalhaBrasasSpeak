@@ -10,48 +10,36 @@ export const createMediaSlice: AppStoreSlice = () => ({
       file.type || guessContentType(file.name) || "application/octet-stream";
     const isImage = contentType.toLowerCase().startsWith("image/");
 
-    // Images: direct file on Catbox. ImgBB is only used if that upload fails.
+    // Images: direct file on Catbox from this PC. If that fails, send the
+    // bytes to the API, which uploads to ImgBB with its own key — the key
+    // never leaves the server.
     if (isImage) {
-      const desktop = getElectronAPI();
-      if (desktop?.uploadImage) {
-        const payload =
-          file.type === contentType
-            ? file
-            : new File([file], file.name || "image.bin", { type: contentType });
-        let temp;
-        try {
-          temp = await desktop.uploadImage({
-            filename: payload.name || "image.png",
-            contentType,
-            data: await payload.arrayBuffer(),
-          });
-        } catch {
-          const { key } = await api<{ key: string }>("/api/media/imgbb-key");
-          temp = await desktop.uploadImage({
-            filename: payload.name || "image.png",
-            contentType,
-            data: await payload.arrayBuffer(),
-            apiKey: key,
-            forceImgbb: true,
-          });
-        }
-        return api<{ id: string; url: string }>("/api/media/remote", {
-          method: "POST",
-          body: {
-            url: temp.url,
-            filename: temp.filename || payload.name,
-            content_type: temp.contentType || contentType,
-            size: temp.size ?? payload.size,
-          },
-        });
-      }
-
-      // Browser / fallback: stream through API → ImgBB.
-      const fd = new FormData();
       const payload =
         file.type === contentType
           ? file
           : new File([file], file.name || "image.bin", { type: contentType });
+      const desktop = getElectronAPI();
+      if (desktop?.uploadImage) {
+        try {
+          const temp = await desktop.uploadImage({
+            filename: payload.name || "image.png",
+            contentType,
+            data: await payload.arrayBuffer(),
+          });
+          return api<{ id: string; url: string }>("/api/media/remote", {
+            method: "POST",
+            body: {
+              url: temp.url,
+              filename: temp.filename || payload.name,
+              content_type: temp.contentType || contentType,
+              size: temp.size ?? payload.size,
+            },
+          });
+        } catch {
+          /* fall through to the server-side upload */
+        }
+      }
+      const fd = new FormData();
       fd.append("file", payload);
       return api<{ id: string; url: string }>("/api/media/upload", {
         method: "POST",

@@ -14,7 +14,16 @@ struct VideoGrant {
     can_publish: bool,
     can_subscribe: bool,
     can_publish_data: bool,
+    /// LiveKit source names this participant may publish
+    /// ("microphone", "camera", "screen_share", "screen_share_audio").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    can_publish_sources: Option<Vec<String>>,
 }
+
+pub const SRC_MICROPHONE: &str = "microphone";
+pub const SRC_CAMERA: &str = "camera";
+pub const SRC_SCREEN: &str = "screen_share";
+pub const SRC_SCREEN_AUDIO: &str = "screen_share_audio";
 
 #[derive(Serialize)]
 struct Claims {
@@ -36,6 +45,29 @@ pub fn mint_participant_token(
     can_publish: bool,
     can_subscribe: bool,
 ) -> AppResult<String> {
+    mint_participant_token_with_sources(
+        api_key,
+        api_secret,
+        room,
+        identity,
+        name,
+        can_subscribe,
+        if can_publish { None } else { Some(&[][..]) },
+    )
+}
+
+/// Like `mint_participant_token`, but limited to the given publish sources.
+/// `None` = any source; `Some(&[])` = cannot publish at all.
+pub fn mint_participant_token_with_sources(
+    api_key: &str,
+    api_secret: &str,
+    room: &str,
+    identity: &str,
+    name: &str,
+    can_subscribe: bool,
+    sources: Option<&[&str]>,
+) -> AppResult<String> {
+    let can_publish = sources.map(|s| !s.is_empty()).unwrap_or(true);
     let now = Utc::now();
     let claims = Claims {
         exp: (now + Duration::hours(6)).timestamp(),
@@ -49,6 +81,9 @@ pub fn mint_participant_token(
             can_publish,
             can_subscribe,
             can_publish_data: true,
+            can_publish_sources: sources
+                .filter(|s| !s.is_empty())
+                .map(|s| s.iter().map(|x| x.to_string()).collect()),
         },
         metadata: String::new(),
     };

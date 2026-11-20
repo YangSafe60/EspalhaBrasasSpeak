@@ -2033,6 +2033,23 @@ html[data-compact="1"] .message {
   margin: 0 0 0.45rem;
 }
 
+.char-counter {
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.char-counter.over {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.composer-char-counter {
+  display: block;
+  text-align: right;
+  margin: 0 0.25rem 0.3rem;
+}
+
 .composer {
   display: grid;
   grid-template-columns: auto 1fr auto auto auto;
@@ -8113,4 +8130,31 @@ html[data-underline-links="1"] .a11y-preview-msg a {
 
 .a11y-related:hover {
   border-color: var(--accent);
+}
+
+/* Bot permission editor (ChannelIntegrationsPanel) */
+.integration-row:has(.bot-perms-editor) {
+  flex-wrap: wrap;
+}
+
+.bot-perms-editor {
+  flex-basis: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 0.35rem 0.75rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+}
+
+.bot-perms-editor > .row {
+  grid-column: 1 / -1;
+  gap: 0.5rem;
+}
+
+.bot-perm-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.85rem;
+  cursor: pointer;
 }

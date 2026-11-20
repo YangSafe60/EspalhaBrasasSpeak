@@ -3,9 +3,13 @@ mod config;
 mod db;
 mod error;
 mod livekit;
+mod ratelimit;
 mod routes;
 mod state;
 mod ws;
+
+#[cfg(test)]
+mod tests;
 
 use crate::config::Config;
 use crate::state::AppState;
@@ -31,7 +35,11 @@ async fn main() -> anyhow::Result<()> {
         )
     })?;
     tracing::info!("Espalha Brasas server listening on {}", config.bind);
-    axum::serve(listener, app)
+    // Peer address feeds the per-IP rate limits (see ratelimit::ClientIp).
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
         .await
         .map_err(|e| anyhow::anyhow!("server stopped: {e}"))?;
     tracing::info!("Espalha Brasas server shut down cleanly");

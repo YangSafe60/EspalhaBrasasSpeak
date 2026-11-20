@@ -58,7 +58,7 @@ Repo → **Settings → Secrets and variables → Actions**:
 | `LIVEKIT_API_KEY` | no* | same key on API **and** LiveKit container |
 | `LIVEKIT_API_SECRET` | no* | ≥32 chars; same secret on API **and** LiveKit container |
 | `MAX_UPLOAD_BYTES` | no | `26214400` |
-| `IMGBB_API_KEY` | yes for images | ImgBB API key (chat, avatars, icons) |
+| `IMGBB_API_KEY` | recommended | ImgBB key, used **only by the server** as the fallback when the desktop app cannot upload an image to Catbox |
 | `KLIPY_API_KEY` | yes for GIFs | Klipy API key ([partner.klipy.com](https://partner.klipy.com)) |
 
 \*If these are missing or empty, the deploy script and Compose keep **localhost / local-dev defaults** (same as `.env.example`). Set them for a real public VPS.
@@ -142,7 +142,9 @@ VITE_API_BASE=https://your.domain npm run desktop
 
 ## Backups
 
-Images go to ImgBB (`IMGBB_API_KEY`). GIFs stay on Klipy (`KLIPY_API_KEY`); the VPS only stores the URL.
+Media is not on the VPS: images go to Catbox from the desktop app (ImgBB through the server as fallback), other files to Litterbox, GIFs stay on Klipy. The database only stores the URLs.
+
+E2E DM keys are **not** on the server either — they live on each user's PC, encrypted with the OS keystore (Electron `safeStorage`). Users back them up from the app; the server has only public keys and ciphertext.
 
 SQLite lives in the `speakapp-data` volume:
 
@@ -151,6 +153,55 @@ docker compose exec api sqlite3 /data/speakapp.db ".backup '/data/speakapp-backu
 docker run --rm -v speakapp_speakapp-data:/data -v $PWD:/out alpine \
   tar czf /out/speakapp-backup.tgz -C /data .
 ```
+
+## API limits
+
+| What | Limit |
+|------|-------|
+| Login | 5 per minute per IP |
+| Register | 3 per hour per IP |
+| Token refresh | 30 per minute per IP |
+| Messages | 10 per 10 s per sender, shared by channels and DMs (per bot for bots, per webhook for webhooks) |
+| Message / edit / webhook text | 4000 characters; webhook name 80 |
+| JSON request body | 1 MB (image upload: `MAX_UPLOAD_BYTES`, 25 MB by default) |
+| Username | 2–32 of `A-Z a-z 0-9 _ . -` |
+| Display name | 1–32 characters, no control characters |
+| Email | valid format, at most 254 characters |
+
+Over a rate limit the API answers `429 Too Many Requests` with `Retry-After`
+(seconds); the desktop app shows how long to wait.
+
+Limits are kept in memory, per API process, and reset on restart.
+
+### Real client IP behind Caddy
+
+Per-IP limits need the real client address. The API reads `X-Forwarded-For`
+**only when the connection comes from a trusted proxy**, and then takes the
+right-most entry (the one Caddy itself added), so a client cannot fake its IP.
+
+- `TRUSTED_PROXIES` — comma-separated IPs/CIDRs. Default: loopback and private
+  networks (`127.0.0.0/8, ::1, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
+  fc00::/7`), which covers Caddy on the same Docker network.
+- As long as port 8080 is published to the internet, Docker may hand the API
+  outside connections from its bridge gateway (a private IP), which would
+  then be trusted. Closing 8080 (below) removes that path: only Caddy can
+  reach the API.
+
+### Closing port 8080
+
+Once clients use HTTPS through Caddy:
+
+1. Check that `https://your.domain/health` answers `ok` and `PUBLIC_URL` is that URL.
+2. Ship an installer built with `VITE_API_BASE=https://your.domain` and wait
+   for users to auto-update.
+3. In `deploy/docker-compose.yml` change the API port to
+   `"127.0.0.1:8080:8080"` (later remove the `ports:` entry altogether).
+4. Remove 8080 from the Oracle security list and the VPS firewall.
+
+## Desktop memory log
+
+`SPEAKAPP_MEM_LOG=1` (desktop app, not the server) logs the RAM of each
+Electron process every 10 s. See [desktop.md](desktop.md#measuring-memory).
 
 ## RAM tips
 
