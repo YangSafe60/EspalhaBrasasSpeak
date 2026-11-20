@@ -9,6 +9,7 @@ import {
   saveServerNotify,
   serverNotifyOf,
 } from "../../lib/serverNotifyPrefs";
+import { saveChannelNotify } from "../../lib/channelNotifyPrefs";
 import type { AppStoreSlice } from "./sliceTypes";
 
 export const createUiSlice: AppStoreSlice = (set, get) => ({
@@ -143,6 +144,18 @@ export const createUiSlice: AppStoreSlice = (set, get) => ({
       };
       saveServerNotify(serverNotify);
       return { serverNotify };
+    });
+  },
+  setChannelNotifyLevel: (channelId, level) => {
+    set((s) => {
+      const { [channelId]: _old, ...rest } = s.channelNotify;
+      const channelNotify = level ? { ...rest, [channelId]: level } : rest;
+      saveChannelNotify(channelNotify);
+      const unreadByChannel =
+        level === "nothing" && s.unreadByChannel[channelId]
+          ? { ...s.unreadByChannel, [channelId]: 0 }
+          : s.unreadByChannel;
+      return { channelNotify, unreadByChannel };
     });
   },
   patchServerNotify: (serverId, patch) => {

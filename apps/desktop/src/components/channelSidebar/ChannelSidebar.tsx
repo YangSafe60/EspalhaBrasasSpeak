@@ -18,6 +18,8 @@ import {
   sameId,
 } from "../../lib/serverPerms";
 import { useAppStore } from "../../store/appStore";
+import { channelNotifyOf, NOTIFY_LEVEL_LABELS } from "../../lib/channelNotifyPrefs";
+import { serverNotifyOf } from "../../lib/serverNotifyPrefs";
 import type { Channel, VoiceStateView } from "../../types";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu";
 import { useMemberContextMenu } from "../MemberUserMenu";
@@ -99,6 +101,9 @@ export function ChannelSidebar({
   const muteChannel = useAppStore((s) => s.muteChannel);
   const unmuteChannel = useAppStore((s) => s.unmuteChannel);
   const pruneChannelMutes = useAppStore((s) => s.pruneChannelMutes);
+  const serverNotify = useAppStore((s) => s.serverNotify);
+  const channelNotify = useAppStore((s) => s.channelNotify);
+  const setChannelNotifyLevel = useAppStore((s) => s.setChannelNotifyLevel);
   const { openForUserId, menuPortal } = useMemberContextMenu(voiceHandlers);
 
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -623,6 +628,25 @@ export function ChannelSidebar({
                   label: d.label,
                   onClick: () => muteChannel(ch.id, d.ms),
                 })),
+              });
+              // Same levels as the server menu; "default" follows the server.
+              const own = channelNotifyOf(channelNotify, ch.id);
+              const serverLevel = serverNotifyOf(serverNotify, ch.server_id).level;
+              items.push({
+                label: "Notification Settings",
+                children: [
+                  {
+                    label: `Use Server Default (${NOTIFY_LEVEL_LABELS[serverLevel]})`,
+                    checked: own === null,
+                    onClick: () => setChannelNotifyLevel(ch.id, null),
+                  },
+                  { label: "", divider: true },
+                  ...(["all", "mentions", "nothing"] as const).map((level) => ({
+                    label: NOTIFY_LEVEL_LABELS[level],
+                    checked: own === level,
+                    onClick: () => setChannelNotifyLevel(ch.id, level),
+                  })),
+                ],
               });
             }
             if (canManageChannelRow(server, roles, me, user?.id, overwritesFor(ch.id))) {

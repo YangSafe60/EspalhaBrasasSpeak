@@ -120,6 +120,8 @@ export interface AppState {
   channelMutes: ChannelMuteMap;
   serverMutes: ServerMuteMap;
   serverNotify: ServerNotifyMap;
+  /** Per text channel notification level; absent = follow the server. */
+  channelNotify: import("../lib/channelNotifyPrefs").ChannelNotifyMap;
   /** Unread text-message counts (suppressed while muted). */
   unreadByChannel: Record<string, number>;
   messageToasts: MessageToast[];
@@ -152,6 +154,8 @@ export interface AppState {
   unmuteServer: (serverId: string) => void;
   pruneServerMutes: () => void;
   setServerNotifyLevel: (serverId: string, level: ServerNotifyLevel) => void;
+  /** `null` = use the server's setting. */
+  setChannelNotifyLevel: (channelId: string, level: ServerNotifyLevel | null) => void;
   patchServerNotify: (
     serverId: string,
     patch: Partial<Omit<ServerNotifyPref, "level">>,

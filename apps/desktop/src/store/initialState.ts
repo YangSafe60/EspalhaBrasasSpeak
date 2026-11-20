@@ -1,6 +1,7 @@
 import { loadChannelMutes } from "../lib/channelMutePrefs";
 import { loadServerMutes } from "../lib/serverMutePrefs";
 import { loadServerNotify } from "../lib/serverNotifyPrefs";
+import { loadChannelNotify } from "../lib/channelNotifyPrefs";
 
 export function createInitialState() {
   return {
@@ -57,6 +58,7 @@ export function createInitialState() {
     channelMutes: loadChannelMutes(),
     serverMutes: loadServerMutes(),
     serverNotify: loadServerNotify(),
+    channelNotify: loadChannelNotify(),
     unreadByChannel: {},
     messageToasts: [],
     bootstrapped: false,

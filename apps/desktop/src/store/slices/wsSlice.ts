@@ -1,5 +1,6 @@
 /** WebSocket event handler: real-time sync for messages, presence, voice, and social. */
 import { channelIsMuted } from "../../lib/channelMutePrefs";
+import { channelNotifyOf, effectiveNotify } from "../../lib/channelNotifyPrefs";
 import { serverIsMuted } from "../../lib/serverMutePrefs";
 import {
   serverMessageShouldAlert,
@@ -50,7 +51,10 @@ export const createWsSlice: AppStoreSlice = (set, get) => ({
           ? serverIsMuted(state.serverMutes, channel.server_id)
           : false;
         const notifyPref = channel
-          ? serverNotifyOf(state.serverNotify, channel.server_id)
+          ? effectiveNotify(
+              serverNotifyOf(state.serverNotify, channel.server_id),
+              channelNotifyOf(state.channelNotify, cid),
+            )
           : null;
         const hideUnread = muted || serverMuted || notifyPref?.level === "nothing";
         const memberKey = channel
