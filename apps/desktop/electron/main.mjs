@@ -3,6 +3,7 @@ import {
   BrowserWindow,
   desktopCapturer,
   ipcMain,
+  MessageChannelMain,
   screen,
   session,
   shell,
@@ -233,6 +234,63 @@ function voiceHostPageUrl() {
 }
 
 const screenHosts = new Map();
+
+/*
+ * Direct frame ports. Preview JPEGs go straight from the windows that make
+ * them (voice host, one screen host per live) to the windows that show them
+ * (main window, pop-outs) over MessageChannelMain ports, instead of being
+ * copied through this process. The old `voice:lobby-frame` IPC path is still
+ * used by a publisher until it has a port to the main window.
+ */
+function framePublishers() {
+  const out = [];
+  if (voiceHostWindow && !voiceHostWindow.isDestroyed()) out.push(["voice-host", voiceHostWindow]);
+  for (const [sourceId, win] of screenHosts) {
+    if (win && !win.isDestroyed()) out.push([`screen:${sourceId}`, win]);
+  }
+  return out;
+}
+
+function frameConsumers() {
+  const out = [];
+  if (mainWindow && !mainWindow.isDestroyed()) out.push(["main", mainWindow, null]);
+  for (const [key, win] of popouts) {
+    if (!key.startsWith("screen-") || !win || win.isDestroyed()) continue;
+    const trackSid = key.slice("screen-".length);
+    out.push([`popout:${trackSid}`, win, trackSid]);
+  }
+  return out;
+}
+
+function wireFramePort(pubId, pubWin, conId, conWin, trackSid) {
+  if (pubWin === conWin) return;
+  // A window still loading gets wired from its own did-finish-load.
+  if (pubWin.webContents.isLoading() || conWin.webContents.isLoading()) return;
+  const { port1, port2 } = new MessageChannelMain();
+  pubWin.webContents.postMessage(
+    "frames:port",
+    { id: conId, role: "publisher", trackSid: trackSid || null },
+    [port1],
+  );
+  conWin.webContents.postMessage("frames:port", { id: pubId, role: "consumer" }, [port2]);
+}
+
+/** Register a window in the frame bus; (re)wires on every load, unwires on close. */
+function trackFrameWindow(win, role, id, trackSid = null) {
+  win.webContents.on("did-finish-load", () => {
+    if (role === "publisher") {
+      for (const [cid, cwin, sid] of frameConsumers()) wireFramePort(id, win, cid, cwin, sid);
+    } else {
+      for (const [pid, pwin] of framePublishers()) wireFramePort(pid, pwin, id, win, trackSid);
+    }
+  });
+  win.on("closed", () => {
+    for (const other of BrowserWindow.getAllWindows()) {
+      if (other === win || other.isDestroyed()) continue;
+      other.webContents.send("frames:port-close", { id });
+    }
+  });
+}
 const screenOpenWaiters = new Map();
 
 function destroyScreenHostWindow(sourceId) {
@@ -522,6 +580,7 @@ function ensureVoiceHostWindow() {
   });
 
   voiceHostWindow.setTitle(`${DEFAULT_APP_TITLE} Voice Host`);
+  trackFrameWindow(voiceHostWindow, "publisher", "voice-host");
 
   voiceHostWindow.on("closed", () => {
     voiceHostWindow = null;
@@ -574,6 +633,7 @@ function createMainWindow() {
   });
 
   mainWindow.once("ready-to-show", () => mainWindow?.show());
+  trackFrameWindow(mainWindow, "consumer", "main");
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("http:") || url.startsWith("https:")) {
@@ -784,6 +844,7 @@ function registerIpc() {
     });
 
     popouts.set(key, win);
+    trackFrameWindow(win, "consumer", `popout:${trackSid}`, trackSid);
     pushScreenPreview();
     win.on("closed", () => {
       popouts.delete(key);
@@ -873,6 +934,7 @@ function registerIpc() {
       },
     });
     screenHosts.set(sourceId, win);
+    trackFrameWindow(win, "publisher", `screen:${sourceId}`);
     win.on("closed", () => {
       screenHosts.delete(sourceId);
       const waiter = screenOpenWaiters.get(sourceId);

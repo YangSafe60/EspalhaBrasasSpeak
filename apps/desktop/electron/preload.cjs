@@ -4,6 +4,60 @@ const apiBase = String(
   process.env.SPEAKAPP_API_BASE || process.env.VITE_API_BASE || "",
 ).replace(/\/$/, "");
 
+/*
+ * Preview frames over direct MessagePorts (wired by the main process, see
+ * trackFrameWindow in main.mjs), so JPEGs don't pass through the main process.
+ * A publisher (voice host, screen host) holds one port per consumer window; a
+ * consumer (main window, pop-out) holds one port per publisher.
+ */
+const framePortsOut = new Map(); // consumer id -> { port, trackSid }
+const framePortsIn = new Map(); // publisher id -> port
+const frameListeners = new Set();
+
+ipcRenderer.on("frames:port", (event, info) => {
+  const port = event.ports && event.ports[0];
+  if (!port || !info || !info.id) return;
+  if (info.role === "publisher") {
+    const old = framePortsOut.get(info.id);
+    if (old) old.port.close();
+    framePortsOut.set(info.id, { port, trackSid: info.trackSid || null });
+  } else {
+    const old = framePortsIn.get(info.id);
+    if (old) old.close();
+    port.onmessage = (e) => {
+      for (const handler of frameListeners) handler(e.data);
+    };
+    framePortsIn.set(info.id, port);
+  }
+});
+
+ipcRenderer.on("frames:port-close", (_event, info) => {
+  const id = info && info.id;
+  if (!id) return;
+  const out = framePortsOut.get(id);
+  if (out) {
+    out.port.close();
+    framePortsOut.delete(id);
+  }
+  const inPort = framePortsIn.get(id);
+  if (inPort) {
+    inPort.close();
+    framePortsIn.delete(id);
+  }
+});
+
+function publishFrame(frame) {
+  // Until the main window's port arrives, use the old IPC relay.
+  if (!framePortsOut.has("main")) {
+    ipcRenderer.send("voice:lobby-frame", frame);
+    return;
+  }
+  const sid = frame && frame.trackSid;
+  for (const { port, trackSid } of framePortsOut.values()) {
+    if (!trackSid || trackSid === sid) port.postMessage(frame);
+  }
+}
+
 contextBridge.exposeInMainWorld("electronAPI", {
   isElectron: true,
   apiBase,
@@ -40,7 +94,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onFrame: (handler) => {
     const listener = (_event, payload) => handler(payload);
     ipcRenderer.on("relay:frame", listener);
-    return () => ipcRenderer.removeListener("relay:frame", listener);
+    frameListeners.add(handler);
+    return () => {
+      ipcRenderer.removeListener("relay:frame", listener);
+      frameListeners.delete(handler);
+    };
   },
   onAppUpdate: (handler) => {
     const listener = (_event, payload) => handler(payload);
@@ -69,7 +127,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   destroyVoiceHost: () => ipcRenderer.invoke("voice:destroy-host"),
   sendVoiceCommand: (cmd) => ipcRenderer.send("voice:cmd", cmd),
   publishVoiceEvent: (evt) => ipcRenderer.send("voice:evt", evt),
-  publishLobbyFrame: (frame) => ipcRenderer.send("voice:lobby-frame", frame),
+  publishLobbyFrame: (frame) => publishFrame(frame),
   notifyVoiceHostReady: () => ipcRenderer.send("voice:host-ready"),
   onVoiceCommand: (handler) => {
     const listener = (_event, cmd) => handler(cmd);
@@ -84,7 +142,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onLobbyFrame: (handler) => {
     const listener = (_event, frame) => handler(frame);
     ipcRenderer.on("voice:lobby-frame", listener);
-    return () => ipcRenderer.removeListener("voice:lobby-frame", listener);
+    frameListeners.add(handler);
+    return () => {
+      ipcRenderer.removeListener("voice:lobby-frame", listener);
+      frameListeners.delete(handler);
+    };
   },
   openScreenPublisher: (payload) => ipcRenderer.invoke("screen:open", payload),
   closeScreenPublisher: (sourceId) => ipcRenderer.invoke("screen:close", sourceId),
