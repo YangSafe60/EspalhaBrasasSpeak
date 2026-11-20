@@ -122,6 +122,12 @@ html.has-titlebar .app-frame {
   text-overflow: ellipsis;
 }
 
+/* Only the server rail joins the title bar; the sidebar, chat and member
+   list sit below a border line, like Discord. */
+html.has-titlebar .app-shell > :not(.server-rail) {
+  border-top: 1px solid var(--border);
+}
+
 /* Full-window layers start below the strip so it stays draggable and the
    window buttons never cover their content. */
 html.has-titlebar .lobby-screen-tile.is-expanded,
