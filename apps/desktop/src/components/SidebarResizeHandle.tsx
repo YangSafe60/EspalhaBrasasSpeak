@@ -1,7 +1,9 @@
 import { useEffect, useState, type PointerEvent as ReactPointerEvent } from "react";
 
 const STORAGE_KEY = "eb_channel_sidebar_width";
-const MIN_WIDTH = 180;
+// Below this, voice rows with a limit pill and a timer have almost no room
+// left for the room name.
+const MIN_WIDTH = 220;
 const MAX_WIDTH = 480;
 
 function loadWidth(): number | null {

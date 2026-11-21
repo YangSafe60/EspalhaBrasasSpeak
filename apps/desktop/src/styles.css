@@ -1271,6 +1271,13 @@ html[data-theme="light"] .rail-brand.rail-home {
   opacity: 1;
 }
 
+/* Hidden buttons take no room, so idle rows give that width to the name
+   (they used to reserve ~60px even while invisible). */
+.channel-row:not(:hover):not(.active):not(:focus-within) .channel-gear,
+.channel-row:not(:hover):not(.active):not(:focus-within) .channel-invite {
+  display: none;
+}
+
 .channel-gear:hover,
 .channel-invite:hover {
   background: rgba(255, 255, 255, 0.08);
@@ -8555,11 +8562,11 @@ html[data-image-descriptions="1"] .attachments a:not(:has(img)) {
 }
 
 html[data-ui-density="compact"] .app-shell {
-  grid-template-columns: 58px var(--channel-sidebar-width, 200px) 1fr auto;
+  grid-template-columns: 58px var(--channel-sidebar-width, 220px) 1fr auto;
 }
 
 html[data-ui-density="compact"] .app-shell.friends-layout {
-  grid-template-columns: 58px var(--channel-sidebar-width, 200px) 1fr;
+  grid-template-columns: 58px var(--channel-sidebar-width, 220px) 1fr;
 }
 
 html[data-ui-density="compact"] .channel-btn,
