@@ -159,6 +159,24 @@ export function VoicePanel({ voice }: Props) {
     if (!streaming) setLiveMenuOpen(false);
   }, [streaming]);
 
+  // The dock now spans the server rail too; tell the rail how tall it is so
+  // its last icons stay above it.
+  const dockRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = dockRef.current;
+    const shell = el?.closest(".app-shell") as HTMLElement | null;
+    if (!el || !shell) return;
+    const update = () =>
+      shell.style.setProperty("--user-dock-height", `${Math.ceil(el.getBoundingClientRect().height)}px`);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      shell.style.removeProperty("--user-dock-height");
+    };
+  }, []);
+
   function openSharePicker(mode: ShareMode) {
     setLiveMenuOpen(false);
     setShareMode(mode);
@@ -174,7 +192,7 @@ export function VoicePanel({ voice }: Props) {
   }
 
   return (
-    <div className="user-voice-dock">
+    <div className="user-voice-dock" ref={dockRef}>
       {inVoice && (channel || dmCall) && (
         <div className="voice-connection-dock">
           <div className="voice-connection-bar">
