@@ -1,4 +1,6 @@
 import { Fragment, memo, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { MessageMoreMenu, ReplyIcon } from "./MessageMoreMenu";
+import type { ContextMenuItem } from "./ContextMenu";
 import logoMark from "../assets/logo-mark.png";
 import { messageMentionsMe, type MentionContext } from "../lib/mentions";
 import { effectiveChannelPerms, effectiveServerPerms, hasPerm, Perm } from "../lib/serverPerms";
@@ -460,6 +462,7 @@ const MessageRow = memo(function MessageRow({
 }: RowProps) {
   const displayName = author?.display_name || "Unknown";
   const onReact = (emoji: string) => actions.react(m, emoji);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   return (
     <article
@@ -553,15 +556,7 @@ const MessageRow = memo(function MessageRow({
           </div>
         )}
 
-        <div className="message-actions">
-          <button
-            type="button"
-            className="msg-action"
-            title="Reply"
-            onClick={() => actions.reply(m)}
-          >
-            Reply
-          </button>
+        <div className={`message-actions${menuOpen ? " is-open" : ""}`}>
           {QUICK_EMOJIS.map((emoji) => (
             <button
               key={emoji}
@@ -580,36 +575,32 @@ const MessageRow = memo(function MessageRow({
             placement="auto"
             onPick={onReact}
           />
-          {/* Only the author edits; moderators may delete anyone's message. */}
-          {mine && !editing && (
-            <button
-              type="button"
-              className="msg-action"
-              title="Edit"
-              onClick={() => actions.startEdit(m.id)}
-            >
-              Edit
-            </button>
-          )}
-          {canPin && !editing && (
-            <button
-              type="button"
-              className="msg-action"
-              title={m.pinned_at ? "Unpin message" : "Pin message"}
-              onClick={() => actions.togglePin(m)}
-            >
-              {m.pinned_at ? "Unpin" : "Pin"}
-            </button>
-          )}
-          {canDelete && !editing && (
-            <button
-              type="button"
-              className="msg-action danger"
-              title={mine ? "Delete" : "Delete (moderator)"}
-              onClick={() => actions.remove(m)}
-            >
-              Delete
-            </button>
+          <button
+            type="button"
+            className="msg-action msg-action-icon"
+            title="Reply"
+            aria-label="Reply"
+            onClick={() => actions.reply(m)}
+          >
+            <ReplyIcon />
+          </button>
+          {!editing && (
+            <MessageMoreMenu
+              onOpenChange={setMenuOpen}
+              items={[
+                // Only the author edits; moderators may delete anyone's message.
+                ...(mine ? [{ label: "Edit message", onClick: () => actions.startEdit(m.id) }] : []),
+                ...(canPin
+                  ? [{ label: m.pinned_at ? "Unpin message" : "Pin message", onClick: () => actions.togglePin(m) }]
+                  : []),
+                ...(m.content
+                  ? [{ label: "Copy text", onClick: () => void navigator.clipboard?.writeText(m.content) }]
+                  : []),
+                ...(canDelete
+                  ? [{ label: mine ? "Delete message" : "Delete message (moderator)", danger: true, onClick: () => actions.remove(m) }]
+                  : []),
+              ] satisfies ContextMenuItem[]}
+            />
           )}
         </div>
 

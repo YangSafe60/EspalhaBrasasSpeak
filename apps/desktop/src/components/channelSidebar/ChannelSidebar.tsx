@@ -361,7 +361,7 @@ export function ChannelSidebar({
         : null;
     const limitLabel =
       ch.channel_type === "voice" && ch.user_limit > 0
-        ? ` · ${voiceUsers(ch.id).length}/${ch.user_limit}`
+        ? `${voiceUsers(ch.id).length}/${ch.user_limit}`
         : "";
     const isDragOver =
       dnd.dropHint?.zone === "channel-before" && dnd.dropHint.channelId === ch.id;

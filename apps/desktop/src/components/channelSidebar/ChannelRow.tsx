@@ -55,6 +55,8 @@ export type ChannelRowProps = {
   /** Unread messages mentioning me: shown instead of the unread count. */
   mentions?: number;
   muteLabel: string | null;
+  /** Voice user limit as "2/5" ("" = no limit). Its own pill, so it stays
+   *  visible when a narrow sidebar truncates the name. */
   limitLabel: string;
   locked: boolean;
   canManageChannels: boolean;
@@ -167,10 +169,18 @@ export function ChannelRow({
             </svg>
           ) : null}
         </span>
-        <span className="channel-name">
+        <span className="channel-name" title={ch.name}>
           {ch.name}
-          {limitLabel}
         </span>
+        {limitLabel && (
+          <span
+            className={`voice-limit${voiceUsers.length >= ch.user_limit ? " is-full" : ""}`}
+            title={`${voiceUsers.length} of ${ch.user_limit} people`}
+            aria-label={`${voiceUsers.length} of ${ch.user_limit} people`}
+          >
+            {limitLabel}
+          </span>
+        )}
         {ch.channel_type === "voice" && voiceUsers.length > 0 && voiceStartedAt != null && (
           <VoiceChannelTimer startedAt={voiceStartedAt} />
         )}

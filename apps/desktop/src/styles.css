@@ -1142,7 +1142,26 @@ html[data-theme="light"] .rail-brand.rail-home {
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
+  /* The user limit pill and the call timer never shrink; the name gives way. */
   min-width: 0;
+}
+
+.voice-limit {
+  flex-shrink: 0;
+  margin-left: 0.3rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-dim);
+  font-size: 0.68rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+
+.voice-limit.is-full {
+  background: rgba(227, 27, 35, 0.18);
+  color: #ff8a8a;
 }
 
 .voice-channel-timer {
@@ -1951,8 +1970,21 @@ html[data-underline-links="1"] .message-content a {
   z-index: 2;
 }
 
-.message:hover .message-actions {
+.message:hover .message-actions,
+.message-actions.is-open {
   display: flex;
+}
+
+.msg-action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.25rem 0.35rem;
+}
+
+.msg-action-icon.active {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
 }
 
 .msg-action {

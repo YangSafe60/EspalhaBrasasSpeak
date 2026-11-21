@@ -1,6 +1,7 @@
 import { GroupDmPicker } from "./GroupDmPicker";
 import { dmTitle, otherCallers } from "../lib/dmDisplay";
 import { memo, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent } from "react";
+import { MessageMoreMenu } from "./MessageMoreMenu";
 import logoMark from "../assets/logo-mark.png";
 import { insertAtCursor } from "../lib/emojis";
 import { mediaUrl } from "../lib/mediaUrl";
@@ -410,6 +411,7 @@ const DmMessageRow = memo(function DmMessageRow({
   selected,
   actions,
 }: DmRowProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
   return (
     <article
       className={`message ${isGroupStart ? "group-start" : "grouped"}${selected ? " selected" : ""}`}
@@ -479,14 +481,22 @@ const DmMessageRow = memo(function DmMessageRow({
           </div>
         )}
 
-        {mine && canEdit && !editing && (
-          <div className="message-actions">
-            <button type="button" className="msg-action" onClick={() => actions.startEdit(m.id)}>
-              Edit
-            </button>
-            <button type="button" className="msg-action danger" onClick={() => actions.remove(m)}>
-              Delete
-            </button>
+        {!editing && (mine || m.content) && (
+          <div className={`message-actions${menuOpen ? " is-open" : ""}`}>
+            <MessageMoreMenu
+              onOpenChange={setMenuOpen}
+              items={[
+                ...(mine && canEdit
+                  ? [{ label: "Edit message", onClick: () => actions.startEdit(m.id) }]
+                  : []),
+                ...(m.content
+                  ? [{ label: "Copy text", onClick: () => void navigator.clipboard?.writeText(m.content) }]
+                  : []),
+                ...(mine && canEdit
+                  ? [{ label: "Delete message", danger: true, onClick: () => actions.remove(m) }]
+                  : []),
+              ]}
+            />
           </div>
         )}
       </div>
