@@ -126,6 +126,10 @@ export interface AppState {
   channelNotify: import("../lib/channelNotifyPrefs").ChannelNotifyMap;
   /** Unread text-message counts (suppressed while muted). */
   unreadByChannel: Record<string, number>;
+  /** Unread messages that mention me (@me, my roles, @everyone/@here). */
+  mentionsByChannel: Record<string, number>;
+  /** Where the "New messages" divider goes in the channel just opened. */
+  unreadMarker: { channelId: string; count: number } | null;
   messageToasts: MessageToast[];
   bootstrapped: boolean;
   connecting: boolean;
@@ -271,10 +275,15 @@ export interface AppState {
     channelId: string,
     content: string,
     attachmentIds?: string[],
+    replyToId?: string | null,
   ) => Promise<void>;
+  /** Message the composer is replying to, per channel. */
+  replyToByChannel: Record<string, string>;
+  setReplyTo: (channelId: string, messageId: string | null) => void;
   editMessage: (messageId: string, content: string) => Promise<void>;
   deleteMessage: (messageId: string, channelId: string) => Promise<void>;
   toggleReaction: (messageId: string, emoji: string, me: boolean) => Promise<void>;
+  setMessagePinned: (messageId: string, pinned: boolean) => Promise<void>;
   sendTyping: (channelId: string) => Promise<void>;
 
   openFriendsHome: () => Promise<void>;
@@ -320,6 +329,14 @@ export interface AppState {
   editDmMessage: (messageId: string, dmId: string, content: string) => Promise<void>;
   deleteDmMessage: (messageId: string, dmId: string) => Promise<void>;
   sendDmTyping: (dmId: string) => Promise<void>;
+  /** New group DM with these friends; returns its id. */
+  createGroupDm: (userIds: string[], name?: string) => Promise<string>;
+  addGroupDmMember: (dmId: string, userId: string) => Promise<void>;
+  /** Leave (my own id) or remove someone (owner only). */
+  removeGroupDmMember: (dmId: string, userId: string) => Promise<void>;
+  renameGroupDm: (dmId: string, name: string) => Promise<void>;
+  upsertDmChannel: (channel: DmChannel) => void;
+  dropDmChannel: (dmId: string) => void;
 
   uploadFile: (file: File) => Promise<{ id: string; url: string }>;
   attachRemoteMedia: (body: {

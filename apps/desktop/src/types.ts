@@ -108,6 +108,8 @@ export interface Message {
   created_at: string;
   attachments: Attachment[];
   reactions: ReactionSummary[];
+  /** Set while the message is pinned in its channel. */
+  pinned_at?: string | null;
 }
 
 export interface Invite {
@@ -180,9 +182,18 @@ export interface UserIdentityKeyHistory {
 export interface DmChannel {
   id: string;
   friendship_id: string | null;
+  /** 1:1: the other person. Group: some other member. */
   peer: UserPublic;
   created_at: string;
+  is_group?: boolean;
+  /** Group name; empty = show member names. */
+  name?: string | null;
+  owner_id?: string | null;
+  /** Group members, me included (empty for 1:1). */
+  members?: UserPublic[];
 }
+
+export type { DmKeyEnvelope } from "./lib/e2e";
 
 /** Wire ciphertext from the server. */
 export interface DmMessageWire {
@@ -193,6 +204,8 @@ export interface DmMessageWire {
   nonce: string;
   sender_public_key?: string | null;
   recipient_public_key?: string | null;
+  /** Group DMs: the content key wrapped for each member. */
+  key_envelopes?: import("./lib/e2e").DmKeyEnvelope[] | null;
   reply_to_id: string | null;
   edited_at: string | null;
   created_at: string;
@@ -320,6 +333,7 @@ export type WsEvent =
   | { type: "friend_update"; friendship: Friendship }
   | { type: "friend_removed"; friendship_id: string }
   | { type: "dm_channel_create"; channel: DmChannel }
+  | { type: "dm_channel_remove"; dm_channel_id: string }
   | { type: "dm_message_create"; message: DmMessageWire; author: UserPublic }
   | { type: "dm_message_update"; message: DmMessageWire }
   | { type: "dm_message_delete"; dm_channel_id: string; message_id: string }

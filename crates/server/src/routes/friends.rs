@@ -515,6 +515,7 @@ pub async fn find_dm_between_users(
            INNER JOIN dm_participants p1 ON p1.dm_channel_id = d.id AND p1.user_id = ?
            INNER JOIN dm_participants p2 ON p2.dm_channel_id = d.id AND p2.user_id = ?
            WHERE (SELECT COUNT(*) FROM dm_participants WHERE dm_channel_id = d.id) = 2
+             AND COALESCE(d.is_group, 0) = 0
            LIMIT 1"#,
     )
     .bind(a.to_string())
@@ -597,9 +598,12 @@ pub async fn load_dm_for_user(
         id: String,
         friendship_id: Option<String>,
         created_at: String,
+        is_group: i64,
+        name: Option<String>,
+        owner_id: Option<String>,
     }
     let row = sqlx::query_as::<_, Row>(
-        r#"SELECT d.id, d.friendship_id, d.created_at
+        r#"SELECT d.id, d.friendship_id, d.created_at, COALESCE(d.is_group, 0) AS is_group, d.name, d.owner_id
            FROM dm_channels d
            INNER JOIN dm_participants p ON p.dm_channel_id = d.id
            WHERE d.id = ? AND p.user_id = ?"#,
@@ -610,21 +614,50 @@ pub async fn load_dm_for_user(
     .await?
     .ok_or(AppError::NotFound)?;
 
-    let peer_id: String = sqlx::query_scalar(
-        "SELECT user_id FROM dm_participants WHERE dm_channel_id = ? AND user_id != ?",
+    let is_group = row.is_group != 0;
+    let peer_id: Option<String> = sqlx::query_scalar(
+        "SELECT user_id FROM dm_participants WHERE dm_channel_id = ? AND user_id != ? ORDER BY user_id LIMIT 1",
     )
     .bind(dm_id.to_string())
     .bind(viewer.to_string())
-    .fetch_one(&state.db)
+    .fetch_optional(&state.db)
     .await?;
+    // A group can be down to just the viewer.
+    let peer_id = match peer_id {
+        Some(p) => Uuid::parse_str(&p).map_err(|_| AppError::NotFound)?,
+        None if is_group => viewer,
+        None => return Err(AppError::NotFound),
+    };
+    let members = if is_group {
+        let ids: Vec<String> = sqlx::query_scalar(
+            "SELECT user_id FROM dm_participants WHERE dm_channel_id = ?",
+        )
+        .bind(dm_id.to_string())
+        .fetch_all(&state.db)
+        .await?;
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Ok(uid) = Uuid::parse_str(&id) {
+                out.push(db::user_public(&state.db, uid).await?);
+            }
+        }
+        out.sort_by(|a, b| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()));
+        out
+    } else {
+        Vec::new()
+    };
 
     Ok(DmChannel {
         id: Uuid::parse_str(&row.id).unwrap(),
         friendship_id: row
             .friendship_id
             .and_then(|s| Uuid::parse_str(&s).ok()),
-        peer: db::user_public(&state.db, Uuid::parse_str(&peer_id).unwrap()).await?,
+        peer: db::user_public(&state.db, peer_id).await?,
         created_at: parse_dt(&row.created_at),
+        is_group,
+        name: row.name,
+        owner_id: row.owner_id.and_then(|s| Uuid::parse_str(&s).ok()),
+        members,
     })
 }
 

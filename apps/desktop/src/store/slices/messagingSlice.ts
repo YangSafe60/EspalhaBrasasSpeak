@@ -16,12 +16,19 @@ export const createMessagingSlice: AppStoreSlice = (set, get) => ({
     }));
   },
 
-  sendMessage: async (channelId, content, attachmentIds) => {
+  setReplyTo: (channelId, messageId) =>
+    set((s) => {
+      const { [channelId]: _old, ...rest } = s.replyToByChannel;
+      return { replyToByChannel: messageId ? { ...rest, [channelId]: messageId } : rest };
+    }),
+
+  sendMessage: async (channelId, content, attachmentIds, replyToId) => {
     const message = await api<Message>(`/api/channels/${channelId}/messages`, {
       method: "POST",
       body: {
         content,
         attachment_ids: attachmentIds,
+        reply_to_id: replyToId || undefined,
       },
     });
     const user = get().user;
@@ -60,6 +67,18 @@ export const createMessagingSlice: AppStoreSlice = (set, get) => ({
         [channelId]: (s.messagesByChannel[channelId] || []).filter(
           (m) => m.id !== messageId,
         ),
+      },
+    }));
+  },
+
+  setMessagePinned: async (messageId, pinned) => {
+    const message = await api<Message>(`/api/messages/${messageId}/pin`, {
+      method: pinned ? "PUT" : "DELETE",
+    });
+    set((s) => ({
+      messagesByChannel: {
+        ...s.messagesByChannel,
+        [message.channel_id]: upsertMessage(s.messagesByChannel[message.channel_id] || [], message),
       },
     }));
   },

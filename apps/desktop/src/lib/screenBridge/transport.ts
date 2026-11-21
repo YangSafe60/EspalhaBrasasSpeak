@@ -1,3 +1,4 @@
+import { onFrame as onPortFrame } from "../framePorts";
 import { getElectronAPI } from "../desktop";
 import { isPreviewFrame } from "../previewFrames";
 import type {
@@ -73,6 +74,11 @@ export async function subscribeFrames(
   if (electron) {
     cleanups.push(
       electron.onFrame((payload) => {
+        if (isPreviewFrame(payload)) handler(payload);
+      }),
+    );
+    cleanups.push(
+      onPortFrame((payload) => {
         if (isPreviewFrame(payload)) handler(payload);
       }),
     );

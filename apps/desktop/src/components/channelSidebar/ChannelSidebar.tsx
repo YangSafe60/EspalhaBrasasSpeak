@@ -97,6 +97,7 @@ export function ChannelSidebar({
   const applyChannelOrder = useAppStore((s) => s.applyChannelOrder);
   const channelMutes = useAppStore((s) => s.channelMutes);
   const unreadByChannel = useAppStore((s) => s.unreadByChannel);
+  const mentionsByChannel = useAppStore((s) => s.mentionsByChannel);
   const overwritesByChannel = useAppStore((s) => s.overwritesByChannel);
   const muteChannel = useAppStore((s) => s.muteChannel);
   const unmuteChannel = useAppStore((s) => s.unmuteChannel);
@@ -353,6 +354,7 @@ export function ChannelSidebar({
       ch.channel_type === "text" && channelIsMuted(channelMutes, ch.id);
     const unread =
       ch.channel_type === "text" && !muted ? unreadByChannel[ch.id] || 0 : 0;
+    const mentions = ch.channel_type === "text" ? mentionsByChannel[ch.id] || 0 : 0;
     const muteLabel =
       muted && ch.id in channelMutes
         ? formatMuteRemaining(channelMutes[ch.id])
@@ -386,6 +388,7 @@ export function ChannelSidebar({
         inVoice={inVoice}
         muted={muted}
         unread={unread}
+        mentions={mentions}
         muteLabel={muteLabel}
         limitLabel={limitLabel}
         locked={locked}

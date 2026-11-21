@@ -1,13 +1,12 @@
 import { createPreviewHub } from "./previewDecoder";
 import type { PreviewFrame } from "./previewFrames";
+import { requestKeyFrame } from "./framePorts";
 
 /**
  * Main-window previews of lives (lobby tiles). Frames come from the voice
  * host and screen hosts over direct ports and are drawn onto canvases.
  */
-const hub = createPreviewHub((trackSid) =>
-  window.electronAPI?.requestPreviewKeyFrame?.(trackSid),
-);
+const hub = createPreviewHub(requestKeyFrame);
 
 export function applyLobbyFrame(frame: PreviewFrame): void {
   hub.push(frame);

@@ -336,10 +336,14 @@ function frameConsumers() {
   return out;
 }
 
-function wireFramePort(pubId, pubWin, conId, conWin, trackSid) {
+function wireFramePort(pubId, pubWin, conId, conWin, trackSid, readyWin = null) {
   if (pubWin === conWin) return;
-  // A window still loading gets wired from its own did-finish-load.
-  if (pubWin.webContents.isLoading() || conWin.webContents.isLoading()) return;
+  // A window still loading gets wired from its own did-finish-load. The one
+  // that just fired did-finish-load (`readyWin`) can still report
+  // isLoading() === true at that moment, so it is not checked; skipping it
+  // here used to leave every live preview on the IPC fallback.
+  const loading = (w) => w !== readyWin && w.webContents.isLoading();
+  if (loading(pubWin) || loading(conWin)) return;
   const { port1, port2 } = new MessageChannelMain();
   pubWin.webContents.postMessage(
     "frames:port",
@@ -353,9 +357,9 @@ function wireFramePort(pubId, pubWin, conId, conWin, trackSid) {
 function trackFrameWindow(win, role, id, trackSid = null) {
   win.webContents.on("did-finish-load", () => {
     if (role === "publisher") {
-      for (const [cid, cwin, sid] of frameConsumers()) wireFramePort(id, win, cid, cwin, sid);
+      for (const [cid, cwin, sid] of frameConsumers()) wireFramePort(id, win, cid, cwin, sid, win);
     } else {
-      for (const [pid, pwin] of framePublishers()) wireFramePort(pid, pwin, id, win, trackSid);
+      for (const [pid, pwin] of framePublishers()) wireFramePort(pid, pwin, id, win, trackSid, win);
     }
   });
   win.on("closed", () => {

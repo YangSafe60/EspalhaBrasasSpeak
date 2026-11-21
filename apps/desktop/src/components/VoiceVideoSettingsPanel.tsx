@@ -1,3 +1,4 @@
+import { keyLabel } from "../hooks/usePushToTalk";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   audioConstraintsFromSettings,
@@ -160,6 +161,30 @@ export function VoiceVideoSettingsPanel() {
   const setVoiceLocal = useAppStore((s) => s.setVoiceLocal);
 
   const [settings, setSettings] = useState<MediaSettings>(() => loadMediaSettings());
+  const [recordingKey, setRecordingKey] = useState(false);
+  useEffect(() => {
+    if (!recordingKey) return;
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.code !== "Escape") patch({ pttKey: e.code });
+      setRecordingKey(false);
+    };
+    const onMouse = (e: MouseEvent) => {
+      if (e.button === 3 || e.button === 4) {
+        e.preventDefault();
+        patch({ pttKey: e.button === 3 ? "Mouse4" : "Mouse5" });
+        setRecordingKey(false);
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("mousedown", onMouse, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("mousedown", onMouse, true);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recordingKey]);
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
   const [audioOutputs, setAudioOutputs] = useState<MediaDeviceInfo[]>([]);
   const [videoInputs, setVideoInputs] = useState<MediaDeviceInfo[]>([]);
@@ -309,6 +334,53 @@ export function VoiceVideoSettingsPanel() {
             {testingOutput ? "Playing…" : "Test speakers"}
           </button>
         </div>
+      </div>
+
+      <div className="settings-section">
+        <h4>Input Mode</h4>
+        <label className="toggle-row">
+          <span className="input-mode-label">
+            Voice Activity
+            <em className="muted tiny">Your mic is on whenever you talk.</em>
+          </span>
+          <input
+            type="radio"
+            name="input-mode"
+            checked={settings.inputMode !== "ptt"}
+            onChange={() => patch({ inputMode: "voice" })}
+          />
+        </label>
+        <label className="toggle-row">
+          <span className="input-mode-label">
+            Push to Talk
+            <em className="muted tiny">
+              Your mic is on only while you hold the key (with the app window focused).
+            </em>
+          </span>
+          <input
+            type="radio"
+            name="input-mode"
+            checked={settings.inputMode === "ptt"}
+            onChange={() => patch({ inputMode: "ptt" })}
+          />
+        </label>
+        {settings.inputMode === "ptt" && (
+          <div className="ptt-key-row">
+            <span>
+              Shortcut: <strong>{recordingKey ? "Press a key…" : keyLabel(settings.pttKey)}</strong>
+            </span>
+            <button
+              type="button"
+              className="btn ghost sm"
+              onClick={() => setRecordingKey(true)}
+            >
+              {settings.pttKey ? "Change" : "Record keybind"}
+            </button>
+            {!settings.pttKey && !recordingKey && (
+              <p className="form-error tiny">Choose a key, or your mic stays on.</p>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="settings-section">

@@ -6,6 +6,7 @@ import { api } from "../api/client";
 import { ensureScreenBridgeHost, teardownScreenBridgeForVoiceLeave } from "../lib/screenBridge";
 import { closeAllScreenPopouts } from "../lib/popout";
 import { clearLobbyFrames, dropLobbyFrame, applyLobbyFrame } from "../lib/lobbyFrames";
+import { onFrame as onPortFrame } from "../lib/framePorts";
 import { requestRendererMemoryTrim } from "../lib/voiceCleanup";
 import { playVoiceJoinSound, playVoiceLeaveSound } from "../lib/voiceSounds";
 import { useAppStore } from "../store/appStore";
@@ -250,9 +251,11 @@ export function useVoiceClient() {
     const offFrame = api.onLobbyFrame?.((frame) => {
       applyLobbyFrame(frame);
     });
+    const offPortFrame = onPortFrame(applyLobbyFrame);
     return () => {
       offEvt();
       offFrame?.();
+      offPortFrame();
     };
   }, [applyHostState, resetVoiceSession, teardownVoiceHostProcess]);
 
@@ -380,6 +383,11 @@ export function useVoiceClient() {
     setVoiceLocal({ muted: !state.muted });
   }, [setVoiceLocal, voiceSessionActive]);
 
+  /** Push-to-talk gate in the voice host (no-op outside a voice session). */
+  const setMicGate = useCallback((open: boolean) => {
+    send({ op: "mic-gate", open });
+  }, []);
+
   const toggleDeafen = useCallback(async () => {
     if (voiceSessionActive()) {
       send({ op: "toggle-deafen" });
@@ -504,6 +512,7 @@ export function useVoiceClient() {
     joinDm,
     leave,
     toggleMute,
+    setMicGate,
     toggleDeafen,
     toggleCamera,
     shareScreen,

@@ -14,7 +14,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use speakapp_shared::{DmChannel, DmMessage, WsEvent};
+use speakapp_shared::{DmChannel, DmKeyEnvelope, DmMessage, WsEvent};
 use uuid::Uuid;
 
 fn parse_dt(s: &str) -> DateTime<Utc> {
@@ -46,11 +46,9 @@ async fn peer_of_dm(
     dm_id: Uuid,
     viewer: Uuid,
 ) -> AppResult<Uuid> {
-    let _: String = sqlx::query_scalar("SELECT id FROM dm_channels WHERE id = ?")
-        .bind(dm_id.to_string())
-        .fetch_optional(db)
-        .await?
-        .ok_or(AppError::NotFound)?;
+    if is_group_dm(db, dm_id).await? {
+        return Err(AppError::BadRequest("not available in group DMs".into()));
+    }
     let peer_id: String = sqlx::query_scalar(
         "SELECT user_id FROM dm_participants WHERE dm_channel_id = ? AND user_id != ?",
     )
@@ -59,6 +57,41 @@ async fn peer_of_dm(
     .fetch_one(db)
     .await?;
     Ok(Uuid::parse_str(&peer_id).unwrap())
+}
+
+/// Max people in a group DM.
+pub const MAX_GROUP_MEMBERS: usize = 10;
+
+async fn is_group_dm(db: &sqlx::SqlitePool, dm_id: Uuid) -> AppResult<bool> {
+    let g: Option<i64> =
+        sqlx::query_scalar("SELECT COALESCE(is_group, 0) FROM dm_channels WHERE id = ?")
+            .bind(dm_id.to_string())
+            .fetch_optional(db)
+            .await?;
+    Ok(g.ok_or(AppError::NotFound)? != 0)
+}
+
+/// A group message must carry exactly one envelope per current member, so
+/// nobody in the group is silently left unable to read it.
+fn validate_envelopes(
+    envelopes: Option<Vec<DmKeyEnvelope>>,
+    participants: &[Uuid],
+) -> AppResult<String> {
+    let envelopes = envelopes.ok_or(AppError::BadRequest("key_envelopes required".into()))?;
+    let bad = || AppError::BadRequest("key_envelopes must cover every member once".into());
+    if envelopes.len() != participants.len() {
+        return Err(bad());
+    }
+    let mut seen = std::collections::HashSet::new();
+    for e in &envelopes {
+        if !participants.contains(&e.user_id) || !seen.insert(e.user_id) {
+            return Err(bad());
+        }
+        if e.public_key.len() > 256 || e.wrapped_key.len() > 256 || e.nonce.len() > 128 {
+            return Err(AppError::BadRequest("invalid key envelope".into()));
+        }
+    }
+    serde_json::to_string(&envelopes).map_err(|_| bad())
 }
 
 async fn require_can_message_peer(db: &sqlx::SqlitePool, a: Uuid, b: Uuid) -> AppResult<()> {
@@ -88,6 +121,7 @@ fn row_to_message(
     nonce: String,
     sender_public_key: Option<String>,
     recipient_public_key: Option<String>,
+    key_envelopes: Option<String>,
     reply_to_id: Option<String>,
     edited_at: Option<String>,
     created_at: String,
@@ -100,6 +134,7 @@ fn row_to_message(
         nonce,
         sender_public_key,
         recipient_public_key,
+        key_envelopes: key_envelopes.and_then(|j| serde_json::from_str(&j).ok()),
         reply_to_id: reply_to_id.and_then(|s| Uuid::parse_str(&s).ok()),
         edited_at: edited_at.map(|s| parse_dt(&s)),
         created_at: parse_dt(&created_at),
@@ -117,12 +152,13 @@ async fn load_dm_message(db: &sqlx::SqlitePool, id: Uuid) -> AppResult<DmMessage
         nonce: String,
         sender_public_key: Option<String>,
         recipient_public_key: Option<String>,
+        key_envelopes: Option<String>,
         reply_to_id: Option<String>,
         edited_at: Option<String>,
         created_at: String,
     }
     let row = sqlx::query_as::<_, Row>(
-        "SELECT id, dm_channel_id, author_id, ciphertext, nonce, sender_public_key, recipient_public_key, reply_to_id, edited_at, created_at FROM dm_messages WHERE id = ?",
+        "SELECT id, dm_channel_id, author_id, ciphertext, nonce, sender_public_key, recipient_public_key, key_envelopes, reply_to_id, edited_at, created_at FROM dm_messages WHERE id = ?",
     )
     .bind(id.to_string())
     .fetch_optional(db)
@@ -136,6 +172,7 @@ async fn load_dm_message(db: &sqlx::SqlitePool, id: Uuid) -> AppResult<DmMessage
         row.nonce,
         row.sender_public_key,
         row.recipient_public_key,
+        row.key_envelopes,
         row.reply_to_id,
         row.edited_at,
         row.created_at,
@@ -189,6 +226,7 @@ pub async fn list_messages(
         nonce: String,
         sender_public_key: Option<String>,
         recipient_public_key: Option<String>,
+        key_envelopes: Option<String>,
         reply_to_id: Option<String>,
         edited_at: Option<String>,
         created_at: String,
@@ -202,7 +240,7 @@ pub async fn list_messages(
                 .await?
                 .ok_or(AppError::BadRequest("invalid before cursor".into()))?;
         sqlx::query_as::<_, Row>(
-            r#"SELECT id, dm_channel_id, author_id, ciphertext, nonce, sender_public_key, recipient_public_key, reply_to_id, edited_at, created_at
+            r#"SELECT id, dm_channel_id, author_id, ciphertext, nonce, sender_public_key, recipient_public_key, key_envelopes, reply_to_id, edited_at, created_at
                FROM dm_messages
                WHERE dm_channel_id = ? AND created_at < ?
                ORDER BY created_at DESC
@@ -215,7 +253,7 @@ pub async fn list_messages(
         .await?
     } else {
         sqlx::query_as::<_, Row>(
-            r#"SELECT id, dm_channel_id, author_id, ciphertext, nonce, sender_public_key, recipient_public_key, reply_to_id, edited_at, created_at
+            r#"SELECT id, dm_channel_id, author_id, ciphertext, nonce, sender_public_key, recipient_public_key, key_envelopes, reply_to_id, edited_at, created_at
                FROM dm_messages
                WHERE dm_channel_id = ?
                ORDER BY created_at DESC
@@ -237,6 +275,7 @@ pub async fn list_messages(
             r.nonce,
             r.sender_public_key,
             r.recipient_public_key,
+            r.key_envelopes,
             r.reply_to_id,
             r.edited_at,
             r.created_at,
@@ -259,6 +298,8 @@ pub struct CreateDmMessageReq {
     pub nonce: String,
     pub sender_public_key: Option<String>,
     pub recipient_public_key: Option<String>,
+    #[serde(default)]
+    pub key_envelopes: Option<Vec<DmKeyEnvelope>>,
     pub reply_to_id: Option<Uuid>,
     #[serde(default)]
     pub attachment_ids: Vec<Uuid>,
@@ -285,11 +326,15 @@ pub async fn create_message(
     Json(body): Json<CreateDmMessageReq>,
 ) -> AppResult<Json<DmMessage>> {
     require_participant(&state.db, id, user.id).await?;
-    let peer = peer_of_dm(&state.db, id, user.id).await?;
-    if is_blocked(&state.db, user.id, peer).await? {
-        return Err(AppError::Forbidden);
+    let group = is_group_dm(&state.db, id).await?;
+    let participants = dm_participant_ids(&state.db, id).await?;
+    let mut envelopes_json = None;
+    if group {
+        envelopes_json = Some(validate_envelopes(body.key_envelopes, &participants)?);
+    } else {
+        let peer = peer_of_dm(&state.db, id, user.id).await?;
+        require_can_message_peer(&state.db, user.id, peer).await?;
     }
-    require_can_message_peer(&state.db, user.id, peer).await?;
 
     let ct = body.ciphertext.trim();
     let nonce = body.nonce.trim();
@@ -312,7 +357,7 @@ pub async fn create_message(
     let msg_id = Uuid::new_v4();
     let now = Utc::now().to_rfc3339();
     sqlx::query(
-        "INSERT INTO dm_messages (id, dm_channel_id, author_id, ciphertext, nonce, sender_public_key, recipient_public_key, reply_to_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO dm_messages (id, dm_channel_id, author_id, ciphertext, nonce, sender_public_key, recipient_public_key, key_envelopes, reply_to_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(msg_id.to_string())
     .bind(id.to_string())
@@ -321,6 +366,7 @@ pub async fn create_message(
     .bind(nonce)
     .bind(sender_public_key.as_deref())
     .bind(recipient_public_key.as_deref())
+    .bind(envelopes_json.as_deref())
     .bind(body.reply_to_id.map(|r| r.to_string()))
     .bind(&now)
     .execute(&mut *tx)
@@ -337,14 +383,11 @@ pub async fn create_message(
 
     let message = load_dm_message(&state.db, msg_id).await?;
     let author = db::user_public(&state.db, user.id).await?;
-    let participants = dm_participant_ids(&state.db, id).await?;
-    let channel_for_peer = load_dm_for_user(&state, id, peer).await?;
-    state.hub.send_to_user(
-        peer,
-        &WsEvent::DmChannelCreate {
-            channel: channel_for_peer,
-        },
-    );
+    // Un-hidden for everyone: send each other member their view of the DM.
+    for &other in participants.iter().filter(|&&p| p != user.id) {
+        let channel = load_dm_for_user(&state, id, other).await?;
+        state.hub.send_to_user(other, &WsEvent::DmChannelCreate { channel });
+    }
     state.hub.broadcast_users(
         &participants,
         &WsEvent::DmMessageCreate {
@@ -435,6 +478,8 @@ pub struct UpdateDmMessageReq {
     pub nonce: String,
     pub sender_public_key: Option<String>,
     pub recipient_public_key: Option<String>,
+    #[serde(default)]
+    pub key_envelopes: Option<Vec<DmKeyEnvelope>>,
 }
 
 pub async fn update_message(
@@ -462,8 +507,14 @@ pub async fn update_message(
         return Err(AppError::Forbidden);
     }
     require_participant(&state.db, dm_id, user.id).await?;
-    let peer = peer_of_dm(&state.db, dm_id, user.id).await?;
-    require_can_message_peer(&state.db, user.id, peer).await?;
+    let mut envelopes_json = None;
+    if is_group_dm(&state.db, dm_id).await? {
+        let participants = dm_participant_ids(&state.db, dm_id).await?;
+        envelopes_json = Some(validate_envelopes(body.key_envelopes, &participants)?);
+    } else {
+        let peer = peer_of_dm(&state.db, dm_id, user.id).await?;
+        require_can_message_peer(&state.db, user.id, peer).await?;
+    }
 
     let ct = body.ciphertext.trim();
     let nonce = body.nonce.trim();
@@ -475,12 +526,13 @@ pub async fn update_message(
 
     let now = Utc::now().to_rfc3339();
     sqlx::query(
-        "UPDATE dm_messages SET ciphertext = ?, nonce = ?, sender_public_key = COALESCE(?, sender_public_key), recipient_public_key = COALESCE(?, recipient_public_key), edited_at = ? WHERE id = ?",
+        "UPDATE dm_messages SET ciphertext = ?, nonce = ?, sender_public_key = COALESCE(?, sender_public_key), recipient_public_key = COALESCE(?, recipient_public_key), key_envelopes = COALESCE(?, key_envelopes), edited_at = ? WHERE id = ?",
     )
     .bind(ct)
     .bind(nonce)
     .bind(sender_public_key.as_deref())
     .bind(recipient_public_key.as_deref())
+    .bind(envelopes_json.as_deref())
     .bind(&now)
     .bind(id.to_string())
     .execute(&state.db)
@@ -541,11 +593,20 @@ pub async fn typing(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<()>> {
     require_participant(&state.db, id, user.id).await?;
-    let peer = peer_of_dm(&state.db, id, user.id).await?;
-    require_can_message_peer(&state.db, user.id, peer).await?;
+    let targets: Vec<Uuid> = if is_group_dm(&state.db, id).await? {
+        dm_participant_ids(&state.db, id)
+            .await?
+            .into_iter()
+            .filter(|&p| p != user.id)
+            .collect()
+    } else {
+        let peer = peer_of_dm(&state.db, id, user.id).await?;
+        require_can_message_peer(&state.db, user.id, peer).await?;
+        vec![peer]
+    };
     let author = db::user_public(&state.db, user.id).await?;
-    state.hub.send_to_user(
-        peer,
+    state.hub.broadcast_users(
+        &targets,
         &WsEvent::DmTypingStart {
             dm_channel_id: id,
             user_id: user.id,
@@ -802,4 +863,201 @@ pub async fn call_state(
         deafened,
         streaming,
     }))
+}
+
+// ---------------------------------------------------------------- group DMs
+
+fn clean_group_name(name: Option<String>) -> AppResult<Option<String>> {
+    let Some(name) = name else { return Ok(None) };
+    let name = name.trim();
+    if name.is_empty() {
+        return Ok(None);
+    }
+    if name.chars().count() > 100 {
+        return Err(AppError::BadRequest("group name is too long (max 100)".into()));
+    }
+    Ok(Some(name.to_string()))
+}
+
+/// Only friends (not blocked) can be put in a group.
+async fn require_friend_for_group(db: &sqlx::SqlitePool, me: Uuid, other: Uuid) -> AppResult<()> {
+    if is_blocked(db, me, other).await?
+        || !crate::routes::friends::are_friends(db, me, other).await?
+    {
+        return Err(AppError::BadRequest("you can only add friends to a group".into()));
+    }
+    Ok(())
+}
+
+/// Send every member their own view of the group (`peer` differs per viewer).
+async fn broadcast_group(state: &AppState, dm_id: Uuid) -> AppResult<()> {
+    for member in dm_participant_ids(&state.db, dm_id).await? {
+        let channel = load_dm_for_user(state, dm_id, member).await?;
+        state.hub.send_to_user(member, &WsEvent::DmChannelCreate { channel });
+    }
+    Ok(())
+}
+
+async fn require_group(state: &AppState, dm_id: Uuid, user: Uuid) -> AppResult<()> {
+    require_participant(&state.db, dm_id, user).await?;
+    if !is_group_dm(&state.db, dm_id).await? {
+        return Err(AppError::BadRequest("not a group DM".into()));
+    }
+    Ok(())
+}
+
+#[derive(Deserialize)]
+pub struct CreateGroupReq {
+    pub user_ids: Vec<Uuid>,
+    pub name: Option<String>,
+}
+
+pub async fn create_group(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Json(body): Json<CreateGroupReq>,
+) -> AppResult<Json<DmChannel>> {
+    let mut others: Vec<Uuid> = Vec::new();
+    for id in body.user_ids {
+        if id != user.id && !others.contains(&id) {
+            others.push(id);
+        }
+    }
+    if others.is_empty() {
+        return Err(AppError::BadRequest("pick at least one friend".into()));
+    }
+    if others.len() + 1 > MAX_GROUP_MEMBERS {
+        return Err(AppError::BadRequest(format!(
+            "a group can have at most {MAX_GROUP_MEMBERS} people"
+        )));
+    }
+    for &o in &others {
+        require_friend_for_group(&state.db, user.id, o).await?;
+    }
+    let name = clean_group_name(body.name)?;
+
+    let dm_id = Uuid::new_v4();
+    let mut tx = state.db.begin().await?;
+    sqlx::query(
+        "INSERT INTO dm_channels (id, friendship_id, created_at, is_group, name, owner_id) VALUES (?, NULL, ?, 1, ?, ?)",
+    )
+    .bind(dm_id.to_string())
+    .bind(Utc::now().to_rfc3339())
+    .bind(name.as_deref())
+    .bind(user.id.to_string())
+    .execute(&mut *tx)
+    .await?;
+    for uid in std::iter::once(user.id).chain(others.iter().copied()) {
+        sqlx::query("INSERT INTO dm_participants (dm_channel_id, user_id) VALUES (?, ?)")
+            .bind(dm_id.to_string())
+            .bind(uid.to_string())
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+
+    broadcast_group(&state, dm_id).await?;
+    Ok(Json(load_dm_for_user(&state, dm_id, user.id).await?))
+}
+
+#[derive(Deserialize)]
+pub struct RenameGroupReq {
+    pub name: Option<String>,
+}
+
+pub async fn rename_group(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<RenameGroupReq>,
+) -> AppResult<Json<DmChannel>> {
+    require_group(&state, id, user.id).await?;
+    let name = clean_group_name(body.name)?;
+    sqlx::query("UPDATE dm_channels SET name = ? WHERE id = ?")
+        .bind(name.as_deref())
+        .bind(id.to_string())
+        .execute(&state.db)
+        .await?;
+    broadcast_group(&state, id).await?;
+    Ok(Json(load_dm_for_user(&state, id, user.id).await?))
+}
+
+#[derive(Deserialize)]
+pub struct AddGroupMemberReq {
+    pub user_id: Uuid,
+}
+
+/// Any member can add one of their friends.
+pub async fn add_group_member(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<AddGroupMemberReq>,
+) -> AppResult<Json<DmChannel>> {
+    require_group(&state, id, user.id).await?;
+    let members = dm_participant_ids(&state.db, id).await?;
+    if members.contains(&body.user_id) {
+        return Ok(Json(load_dm_for_user(&state, id, user.id).await?));
+    }
+    if members.len() >= MAX_GROUP_MEMBERS {
+        return Err(AppError::BadRequest(format!(
+            "a group can have at most {MAX_GROUP_MEMBERS} people"
+        )));
+    }
+    require_friend_for_group(&state.db, user.id, body.user_id).await?;
+    sqlx::query("INSERT INTO dm_participants (dm_channel_id, user_id) VALUES (?, ?)")
+        .bind(id.to_string())
+        .bind(body.user_id.to_string())
+        .execute(&state.db)
+        .await?;
+    broadcast_group(&state, id).await?;
+    Ok(Json(load_dm_for_user(&state, id, user.id).await?))
+}
+
+/// Leave (yourself) or remove someone (group owner only). Ownership passes on
+/// when the owner leaves; an empty group is deleted.
+pub async fn remove_group_member(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path((id, target)): Path<(Uuid, Uuid)>,
+) -> AppResult<Json<()>> {
+    require_group(&state, id, user.id).await?;
+    let owner: Option<String> =
+        sqlx::query_scalar("SELECT owner_id FROM dm_channels WHERE id = ?")
+            .bind(id.to_string())
+            .fetch_one(&state.db)
+            .await?;
+    let owner = owner.and_then(|s| Uuid::parse_str(&s).ok());
+    if target != user.id && owner != Some(user.id) {
+        return Err(AppError::Forbidden);
+    }
+    let res = sqlx::query("DELETE FROM dm_participants WHERE dm_channel_id = ? AND user_id = ?")
+        .bind(id.to_string())
+        .bind(target.to_string())
+        .execute(&state.db)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(AppError::NotFound);
+    }
+    state
+        .hub
+        .send_to_user(target, &WsEvent::DmChannelRemove { dm_channel_id: id });
+
+    let left = dm_participant_ids(&state.db, id).await?;
+    if left.is_empty() {
+        sqlx::query("DELETE FROM dm_channels WHERE id = ?")
+            .bind(id.to_string())
+            .execute(&state.db)
+            .await?;
+        return Ok(Json(()));
+    }
+    if owner == Some(target) || owner.is_none() {
+        sqlx::query("UPDATE dm_channels SET owner_id = ? WHERE id = ?")
+            .bind(left[0].to_string())
+            .bind(id.to_string())
+            .execute(&state.db)
+            .await?;
+    }
+    broadcast_group(&state, id).await?;
+    Ok(Json(()))
 }

@@ -1,3 +1,4 @@
+import { requestKeyFrame } from "../framePorts";
 /**
  * Cross-window screen pop-out bridge.
  * Electron: IPC relay between BrowserWindows.
@@ -110,7 +111,7 @@ export async function consumeScreenInPopout(
   target: HTMLCanvasElement,
   onFrame?: () => void,
 ): Promise<() => void> {
-  const hub = createPreviewHub((sid) => getElectronAPI()?.requestPreviewKeyFrame?.(sid));
+  const hub = createPreviewHub(requestKeyFrame);
   const detach = hub.attach(trackSid, target, onFrame);
   const unsub = await subscribeFrames((msg) => {
     if (msg.trackSid === trackSid) hub.push(msg);

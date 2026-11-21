@@ -15,13 +15,12 @@ use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::ws;
 use axum::{
-    extract::{DefaultBodyLimit, Query, State, WebSocketUpgrade},
+    extract::{DefaultBodyLimit, State, WebSocketUpgrade},
     http::{header, HeaderMap, HeaderValue, Method},
     response::IntoResponse,
     routing::{delete, get, patch, post, put},
     Router,
 };
-use serde::Deserialize;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
@@ -137,6 +136,13 @@ pub fn router(state: AppState) -> Router {
         .route("/api/friends/{id}/mute", post(friends::mute_friend))
         .route("/api/friends/{id}/block", post(friends::block_friend))
         .route("/api/dms", get(dms::list_dms))
+        .route("/api/dms/groups", post(dms::create_group))
+        .route("/api/dms/{id}/group", axum::routing::patch(dms::rename_group))
+        .route("/api/dms/{id}/members", post(dms::add_group_member))
+        .route(
+            "/api/dms/{id}/members/{user_id}",
+            axum::routing::delete(dms::remove_group_member),
+        )
         .route(
             "/api/dms/{id}/messages",
             get(dms::list_messages).post(dms::create_message),
@@ -272,6 +278,12 @@ pub fn router(state: AppState) -> Router {
             patch(messages::update).delete(messages::delete),
         )
         .route(
+            "/api/messages/{id}/pin",
+            put(messages::pin).delete(messages::unpin),
+        )
+        .route("/api/channels/{id}/pins", get(messages::list_pins))
+        .route("/api/servers/{id}/search", get(messages::search))
+        .route(
             "/api/messages/{id}/reactions/{emoji}",
             put(messages::add_reaction).delete(messages::remove_reaction),
         )
@@ -315,12 +327,6 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-#[derive(Deserialize)]
-struct WsQuery {
-    /// Legacy: clients before the subprotocol change sent the token in the URL.
-    token: Option<String>,
-}
-
 /// WebSocket subprotocol that carries the access token, so it is not in the
 /// URL (URLs end up in proxy and access logs). The client offers
 /// `speakapp.auth, <token>` and the server answers with `speakapp.auth`.
@@ -345,13 +351,9 @@ async fn ws_upgrade(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
     headers: HeaderMap,
-    Query(q): Query<WsQuery>,
 ) -> AppResult<impl IntoResponse> {
-    let from_protocol = ws_token_from_protocols(&headers);
-    let uses_protocol = from_protocol.is_some();
-    let token = from_protocol
-        .or(q.token)
-        .ok_or(AppError::Unauthorized)?;
+    // Only the subprotocol is accepted: a token in the URL ends up in logs.
+    let token = ws_token_from_protocols(&headers).ok_or(AppError::Unauthorized)?;
     let claims = decode_token(&token, &state.config.jwt_secret)?;
     if claims.typ != "access" {
         return Err(AppError::Unauthorized);
@@ -360,18 +362,12 @@ async fn ws_upgrade(
     if crate::db::is_user_disabled(&state.db, user_id).await? {
         return Err(AppError::BadRequest("account disabled".into()));
     }
-    // Prime server membership cache
-    let servers = crate::db::user_servers(&state.db, user_id).await?;
-    for s in &servers {
-        let members = crate::db::server_member_ids(&state.db, s.id).await?;
-        state.hub.set_server_members(s.id, members);
+    // Prime the server membership cache (one query for all the user's servers).
+    for (server_id, members) in crate::db::member_ids_of_users_servers(&state.db, user_id).await? {
+        state.hub.set_server_members(server_id, members);
     }
     // Echo the auth subprotocol, or browsers reject the connection.
-    let ws = if uses_protocol {
-        ws.protocols([WS_AUTH_PROTOCOL])
-    } else {
-        ws
-    };
+    let ws = ws.protocols([WS_AUTH_PROTOCOL]);
     Ok(ws.on_upgrade(move |socket| ws::handle_socket(socket, user_id, state)))
 }
 

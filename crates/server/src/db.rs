@@ -301,6 +301,26 @@ pub async fn server_member_ids(db: &SqlitePool, server_id: Uuid) -> AppResult<Ve
         .collect())
 }
 
+/// Members of every server `user_id` belongs to, grouped by server.
+pub async fn member_ids_of_users_servers(
+    db: &SqlitePool,
+    user_id: Uuid,
+) -> AppResult<std::collections::HashMap<Uuid, Vec<Uuid>>> {
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT m.server_id, m.user_id FROM members m          WHERE m.server_id IN (SELECT server_id FROM members WHERE user_id = ?)",
+    )
+    .bind(user_id.to_string())
+    .fetch_all(db)
+    .await?;
+    let mut out: std::collections::HashMap<Uuid, Vec<Uuid>> = std::collections::HashMap::new();
+    for (sid, uid) in rows {
+        if let (Ok(sid), Ok(uid)) = (Uuid::parse_str(&sid), Uuid::parse_str(&uid)) {
+            out.entry(sid).or_default().push(uid);
+        }
+    }
+    Ok(out)
+}
+
 #[derive(sqlx::FromRow)]
 struct RoleRow {
     id: String,
@@ -799,9 +819,10 @@ pub async fn load_message(db: &SqlitePool, id: Uuid, viewer_id: Uuid) -> AppResu
         reply_to_id: Option<String>,
         edited_at: Option<String>,
         created_at: String,
+        pinned_at: Option<String>,
     }
     let row = sqlx::query_as::<_, MRow>(
-        "SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at FROM messages WHERE id = ?",
+        "SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, pinned_at FROM messages WHERE id = ?",
     )
     .bind(id.to_string())
     .fetch_optional(db)
@@ -827,7 +848,13 @@ pub async fn load_message(db: &SqlitePool, id: Uuid, viewer_id: Uuid) -> AppResu
             .unwrap_or_else(|_| Utc::now()),
         attachments,
         reactions,
+        pinned_at: parse_opt_dt(row.pinned_at.as_deref()),
     })
+}
+
+fn parse_opt_dt(s: Option<&str>) -> Option<DateTime<Utc>> {
+    s.and_then(|v| DateTime::parse_from_rfc3339(v).ok())
+        .map(|d| d.with_timezone(&Utc))
 }
 
 pub async fn message_attachments(db: &SqlitePool, message_id: Uuid) -> AppResult<Vec<Attachment>> {
@@ -990,10 +1017,11 @@ pub async fn list_messages(
         reply_to_id: Option<String>,
         edited_at: Option<String>,
         created_at: String,
+        pinned_at: Option<String>,
     }
     let rows: Vec<MRow> = if let Some(before_id) = before {
         sqlx::query_as(
-            r#"SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at
+            r#"SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, pinned_at
                FROM messages
                WHERE channel_id = ? AND created_at < (SELECT created_at FROM messages WHERE id = ?)
                ORDER BY created_at DESC LIMIT ?"#,
@@ -1005,7 +1033,7 @@ pub async fn list_messages(
         .await?
     } else {
         sqlx::query_as(
-            r#"SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at
+            r#"SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, pinned_at
                FROM messages WHERE channel_id = ? ORDER BY created_at DESC LIMIT ?"#,
         )
         .bind(channel_id.to_string())
@@ -1036,6 +1064,7 @@ pub async fn list_messages(
                 .unwrap_or_else(|_| Utc::now()),
             attachments: attachments.get(&id_key).cloned().unwrap_or_default(),
             reactions: reactions.get(&id_key).cloned().unwrap_or_default(),
+            pinned_at: parse_opt_dt(row.pinned_at.as_deref()),
         });
     }
     out.reverse();

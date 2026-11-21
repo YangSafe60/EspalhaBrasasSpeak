@@ -37,6 +37,14 @@ export function ChannelComposer({ channel, mentionCtx, canMentionEveryone }: Pro
   const authors = useAppStore((s) => s.authors);
   const pendingComposerInsert = useAppStore((s) => s.pendingComposerInsert);
   const clearPendingComposerInsert = useAppStore((s) => s.clearPendingComposerInsert);
+  const replyToId = useAppStore((s) => s.replyToByChannel[channel.id] ?? null);
+  const setReplyTo = useAppStore((s) => s.setReplyTo);
+  const replyTarget = useAppStore((s) =>
+    replyToId ? s.messagesByChannel[channel.id]?.find((m) => m.id === replyToId) : undefined,
+  );
+  const replyAuthor = useAppStore((s) =>
+    replyTarget ? s.authors[replyTarget.author_id] : undefined,
+  );
 
   const [draft, setDraft] = useState("");
   const draftTooLong = messageLength(draft) > MAX_MESSAGE_CHARS;
@@ -108,7 +116,9 @@ export function ChannelComposer({ channel, mentionCtx, canMentionEveryone }: Pro
         channelId,
         draft.trim(),
         pendingFiles.map((f) => f.id),
+        replyToId,
       );
+      setReplyTo(channelId, null);
       setDraft("");
       setPendingFiles([]);
       setMentionQuery(null);
@@ -143,6 +153,11 @@ export function ChannelComposer({ channel, mentionCtx, canMentionEveryone }: Pro
         setMentionQuery(null);
         return;
       }
+    }
+    if (e.key === "Escape" && replyToId) {
+      e.preventDefault();
+      setReplyTo(channelId, null);
+      return;
     }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -278,6 +293,22 @@ export function ChannelComposer({ channel, mentionCtx, canMentionEveryone }: Pro
         </div>
       )}
       <TypingIndicator channelId={channelId} />
+      {replyToId && (
+        <div className="composer-reply-bar">
+          <span>
+            Replying to <strong>{replyAuthor?.display_name || "a message"}</strong>
+          </span>
+          <button
+            type="button"
+            className="icon-btn composer-reply-cancel"
+            title="Cancel reply (Esc)"
+            aria-label="Cancel reply"
+            onClick={() => setReplyTo(channelId, null)}
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {pendingFiles.length > 0 && (
         <div className="pending-files">
           {pendingFiles.map((f) => (

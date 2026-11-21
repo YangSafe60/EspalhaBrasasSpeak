@@ -1,3 +1,5 @@
+import { GroupDmPicker } from "./GroupDmPicker";
+import { dmTitle } from "../lib/dmDisplay";
 import { memo, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent } from "react";
 import logoMark from "../assets/logo-mark.png";
 import { insertAtCursor } from "../lib/emojis";
@@ -77,6 +79,10 @@ export function DmMessageView() {
   const e2eIdentityMissing = useAppStore((s) => s.e2eIdentityMissing);
   const setModal = useAppStore((s) => s.setModal);
 
+  const [groupPicker, setGroupPicker] = useState(false);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const renameGroupDm = useAppStore((s) => s.renameGroupDm);
+  const removeGroupDmMember = useAppStore((s) => s.removeGroupDmMember);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<DmMessage | null>(null);
   const [pendingBulkDelete, setPendingBulkDelete] = useState(false);
@@ -198,11 +204,71 @@ export function DmMessageView() {
   return (
     <main className="message-view dm-message-view">
       <header className="message-header dm-header">
-        <div>
-          <h2>@{channel.peer.username}</h2>
-          <p className="topic">{channel.peer.display_name}</p>
-        </div>
+        {channel.is_group ? (
+          <div className="dm-group-title">
+            {renaming !== null ? (
+              <input
+                className="dm-group-rename"
+                value={renaming}
+                maxLength={100}
+                autoFocus
+                placeholder="Group name"
+                onChange={(e) => setRenaming(e.target.value)}
+                onBlur={() => {
+                  const next = renaming;
+                  setRenaming(null);
+                  if (next.trim() !== (channel.name || "")) void renameGroupDm(channel.id, next);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                  if (e.key === "Escape") setRenaming(null);
+                }}
+              />
+            ) : (
+              <h2
+                className="dm-group-name"
+                title="Rename group"
+                onClick={() => setRenaming(channel.name || "")}
+              >
+                {dmTitle(channel, user?.id)}
+              </h2>
+            )}
+            <p className="topic">
+              {(channel.members || []).map((m) => m.display_name || m.username).join(", ")}
+            </p>
+          </div>
+        ) : (
+          <div>
+            <h2>@{channel.peer.username}</h2>
+            <p className="topic">{channel.peer.display_name}</p>
+          </div>
+        )}
         <div className="dm-header-actions">
+          <button
+            type="button"
+            className="icon-btn"
+            title={channel.is_group ? "Add friends to the group" : "Create a group with this person"}
+            aria-label="Add friends"
+            onClick={() => setGroupPicker(true)}
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden fill="currentColor">
+              <path d="M15 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm-9-2V7H4v3H1v2h3v3h2v-3h3v-2zm9 4c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+            </svg>
+          </button>
+          {channel.is_group && user && (
+            <button
+              type="button"
+              className="icon-btn"
+              title="Leave group"
+              aria-label="Leave group"
+              onClick={() => void removeGroupDmMember(channel.id, user.id)}
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden fill="currentColor">
+                <path d="M10.09 15.59 11.5 17l5-5-5-5-1.41 1.41L12.67 11H3v2h9.67zM19 3H5a2 2 0 0 0-2 2v4h2V5h14v14H5v-4H3v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2z" />
+              </svg>
+            </button>
+          )}
+          {!channel.is_group && (
           <button
             type="button"
             className={`icon-btn dm-call-btn${selfInCall ? " active" : ""}`}
@@ -214,6 +280,7 @@ export function DmMessageView() {
               <path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.01-.24c1.12.37 2.33.57 3.58.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.85 21 3 13.15 3 3a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.46.57 3.58a1 1 0 0 1-.24 1.01l-2.2 2.2z" />
             </svg>
           </button>
+          )}
           <span className="dm-e2e-badge" title="End-to-end encrypted" aria-label="End-to-end encrypted">
             E2E
           </span>
@@ -235,7 +302,15 @@ export function DmMessageView() {
         </div>
       ) : null}
 
-      {peerInCall && !selfInCall ? (
+      {groupPicker && (
+        <GroupDmPicker
+          group={channel.is_group ? channel : undefined}
+          fromDm={channel}
+          onClose={() => setGroupPicker(false)}
+        />
+      )}
+
+      {peerInCall && !selfInCall && !channel.is_group ? (
         <div className="dm-call-banner">
           <span>
             <strong>{channel.peer.display_name}</strong> started a call
@@ -641,7 +716,7 @@ function DmComposer({ channel }: { channel: DmChannel }) {
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder={`Message @${channel.peer.username}`}
+          placeholder={channel.is_group ? `Message ${dmTitle(channel, useAppStore.getState().user?.id)}` : `Message @${channel.peer.username}`}
           rows={1}
         />
         <EmojiPickerButton onPick={insertEmoji} />

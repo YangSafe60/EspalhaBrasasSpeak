@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { Fragment, memo, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import logoMark from "../assets/logo-mark.png";
 import { messageMentionsMe, type MentionContext } from "../lib/mentions";
 import { effectiveChannelPerms, effectiveServerPerms, hasPerm, Perm } from "../lib/serverPerms";
@@ -13,6 +13,8 @@ import { EmojiPickerButton } from "./EmojiPickerButton";
 import { MessageAttachment } from "./MessageAttachment";
 import { MessageContent } from "./MessageContent";
 import { MessageEmbeds } from "./MessageEmbeds";
+import { MessageSearch } from "./MessageSearch";
+import { PinIcon, PinnedMessagesButton } from "./PinnedMessagesButton";
 import { useAppStore } from "../store/appStore";
 import type { Atmosphere, Channel, Member, Message, ReactionSummary, Role, UserPublic } from "../types";
 
@@ -59,7 +61,13 @@ type RowActions = {
   cancelEdit: () => void;
   saveEdit: (id: string, content: string) => Promise<void>;
   remove: (m: Message) => void;
+  reply: (m: Message) => void;
+  jumpTo: (messageId: string) => void;
+  togglePin: (m: Message) => void;
 };
+
+/** The message a reply points at, as shown above the reply. */
+type ReplyQuote = { authorName: string; text: string } | null;
 
 export function MessageView() {
   const activeChannelId = useAppStore((s) => s.activeChannelId);
@@ -76,6 +84,9 @@ export function MessageView() {
   const editMessage = useAppStore((s) => s.editMessage);
   const deleteMessage = useAppStore((s) => s.deleteMessage);
   const toggleReaction = useAppStore((s) => s.toggleReaction);
+  const setReplyTo = useAppStore((s) => s.setReplyTo);
+  const setMessagePinned = useAppStore((s) => s.setMessagePinned);
+  const unreadMarker = useAppStore((s) => s.unreadMarker);
   const resolveCustomEmojis = useAppStore((s) => s.resolveCustomEmojis);
 
   const channel: Channel | undefined = useMemo(
@@ -135,6 +146,33 @@ export function MessageView() {
     }),
     [members, roles, user, me?.role_ids],
   );
+
+  // "New messages" divider: pinned to the first unread message when the
+  // channel was opened, so live messages arriving later don't move it.
+  const [dividerId, setDividerId] = useState<string | null>(null);
+  useEffect(() => {
+    setDividerId(null);
+  }, [activeChannelId]);
+  useEffect(() => {
+    if (dividerId || !unreadMarker || unreadMarker.channelId !== activeChannelId) return;
+    if (messages.length === 0) return;
+    const idx = Math.max(0, messages.length - unreadMarker.count);
+    setDividerId(messages[idx]?.id ?? null);
+  }, [dividerId, unreadMarker, activeChannelId, messages]);
+
+  const byId = useMemo(() => new Map(messages.map((m) => [m.id, m])), [messages]);
+  const quoteFor = (m: Message): ReplyQuote | undefined => {
+    if (!m.reply_to_id) return undefined;
+    const target = byId.get(m.reply_to_id);
+    if (!target) return null; // deleted, or older than what's loaded
+    const text =
+      target.content ||
+      (target.attachments?.length ? "Attachment" : "");
+    return {
+      authorName: authors[target.author_id]?.display_name || "Unknown",
+      text: text.length > 140 ? `${text.slice(0, 140)}…` : text,
+    };
+  };
 
   const mentionedIds = useMemo(() => {
     const out = new Set<string>();
@@ -207,6 +245,23 @@ export function MessageView() {
       await editMessage(id, content);
       setEditingId((cur) => (cur === id ? null : cur));
     },
+    togglePin: (m) => {
+      void setMessagePinned(m.id, !m.pinned_at).catch(() => undefined);
+    },
+    reply: (m) => {
+      setReplyTo(m.channel_id, m.id);
+      requestAnimationFrame(() =>
+        (document.querySelector(".composer textarea") as HTMLTextAreaElement | null)?.focus(),
+      );
+    },
+    jumpTo: (messageId) => {
+      const el = document.getElementById(`msg-${messageId}`);
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.remove("flash");
+      void el.offsetWidth;
+      el.classList.add("flash");
+    },
     remove: (m) => {
       if (selectedIds.size > 1 && selectedIds.has(m.id)) {
         setPendingDelete(null);
@@ -275,24 +330,36 @@ export function MessageView() {
           </h2>
           {channel.topic && <p className="topic">{channel.topic}</p>}
         </div>
+        <div className="message-header-actions">
+          <PinnedMessagesButton channelId={channel.id} onJump={actions.jumpTo} />
+          <MessageSearch serverId={channel.server_id} onJump={actions.jumpTo} />
+        </div>
       </header>
 
       <div className="message-list">
         {messages.map((m, i) => {
           return (
+            <Fragment key={m.id}>
+            {m.id === dividerId && (
+              <div className="new-messages-divider" role="separator">
+                <span>New messages</span>
+              </div>
+            )}
             <MessageRow
-              key={m.id}
               m={m}
               author={authors[m.author_id]}
-              isGroupStart={shouldStartGroup(messages[i - 1], m)}
+              isGroupStart={Boolean(m.reply_to_id) || shouldStartGroup(messages[i - 1], m)}
+              replyQuote={quoteFor(m)}
               mine={user?.id === m.author_id}
               canDelete={canDelete(m)}
+              canPin={canManageMessages}
               editing={editingId === m.id}
               selected={selectedIds.has(m.id)}
               mentioned={mentionedIds.has(m.id)}
               serverId={channel.server_id}
               actions={actions}
             />
+            </Fragment>
           );
         })}
         <div ref={bottomRef} />
@@ -363,8 +430,12 @@ type RowProps = {
   author: UserPublic | undefined;
   isGroupStart: boolean;
   mine: boolean;
+  /** Set when this message is a reply (null: original not available). */
+  replyQuote?: ReplyQuote;
   /** Own message, or Manage Messages in this channel. */
   canDelete: boolean;
+  /** Manage Messages in this channel. */
+  canPin: boolean;
   editing: boolean;
   selected: boolean;
   mentioned: boolean;
@@ -378,7 +449,9 @@ const MessageRow = memo(function MessageRow({
   author,
   isGroupStart,
   mine,
+  replyQuote,
   canDelete,
+  canPin,
   editing,
   selected,
   mentioned,
@@ -390,9 +463,29 @@ const MessageRow = memo(function MessageRow({
 
   return (
     <article
-      className={`message ${isGroupStart ? "group-start" : "grouped"}${mentioned ? " mentioned" : ""}${selected ? " selected" : ""}`}
+      id={`msg-${m.id}`}
+      className={`message ${isGroupStart ? "group-start" : "grouped"}${mentioned ? " mentioned" : ""}${selected ? " selected" : ""}${replyQuote !== undefined ? " is-reply" : ""}`}
       onClick={(e) => actions.toggleSelect(m, e)}
     >
+      {replyQuote !== undefined && (
+        <button
+          type="button"
+          className="message-reply-quote"
+          disabled={replyQuote === null}
+          onClick={() => m.reply_to_id && actions.jumpTo(m.reply_to_id)}
+          title={replyQuote ? "Jump to message" : undefined}
+        >
+          <span className="message-reply-line" aria-hidden />
+          {replyQuote ? (
+            <>
+              <strong>{replyQuote.authorName}</strong>
+              <span className="message-reply-text">{replyQuote.text}</span>
+            </>
+          ) : (
+            <span className="message-reply-text muted">Original message was deleted or isn't loaded</span>
+          )}
+        </button>
+      )}
       <div className="avatar-col">
         {isGroupStart ? (
           <button
@@ -423,6 +516,11 @@ const MessageRow = memo(function MessageRow({
               {displayName}
             </button>
             <time dateTime={m.created_at}>{formatTime(m.created_at)}</time>
+            {m.pinned_at && (
+              <span className="message-pinned-flag" title="Pinned">
+                <PinIcon />
+              </span>
+            )}
           </div>
         )}
 
@@ -456,6 +554,14 @@ const MessageRow = memo(function MessageRow({
         )}
 
         <div className="message-actions">
+          <button
+            type="button"
+            className="msg-action"
+            title="Reply"
+            onClick={() => actions.reply(m)}
+          >
+            Reply
+          </button>
           {QUICK_EMOJIS.map((emoji) => (
             <button
               key={emoji}
@@ -483,6 +589,16 @@ const MessageRow = memo(function MessageRow({
               onClick={() => actions.startEdit(m.id)}
             >
               Edit
+            </button>
+          )}
+          {canPin && !editing && (
+            <button
+              type="button"
+              className="msg-action"
+              title={m.pinned_at ? "Unpin message" : "Pin message"}
+              onClick={() => actions.togglePin(m)}
+            >
+              {m.pinned_at ? "Unpin" : "Pin"}
             </button>
           )}
           {canDelete && !editing && (

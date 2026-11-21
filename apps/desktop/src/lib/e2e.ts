@@ -212,3 +212,74 @@ export async function fingerprint(
     .join("");
   return hex.slice(0, 16).match(/.{1,4}/g)?.join(" ") ?? hex.slice(0, 16);
 }
+
+// ------------------------------------------------------------ group DMs
+
+export type DmKeyEnvelope = {
+  user_id: string;
+  /** The member's public key the content key was wrapped for. */
+  public_key: string;
+  wrapped_key: string;
+  nonce: string;
+};
+
+/**
+ * Group message: the text is encrypted once with a random AES key, and that
+ * key is wrapped for every member with the same pairwise X25519 key 1:1 DMs
+ * use (author private + member public). The author wraps it for themself too
+ * (X25519 with their own public key), so they can read it back.
+ */
+export async function encryptGroupDm(
+  plaintext: string,
+  myPrivate: CryptoKey,
+  members: { userId: string; publicKey: string }[],
+  dmChannelId: string,
+): Promise<{ ciphertext: string; nonce: string; key_envelopes: DmKeyEnvelope[] }> {
+  const raw = crypto.getRandomValues(new Uint8Array(32));
+  const contentKey = await crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt"]);
+  const nonce = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv: nonce },
+    contentKey,
+    new TextEncoder().encode(plaintext),
+  );
+  const key_envelopes = await Promise.all(
+    members.map(async (m) => {
+      const wrapKey = await deriveDmKey(myPrivate, m.publicKey, dmChannelId);
+      const wrapNonce = crypto.getRandomValues(new Uint8Array(12));
+      const wrapped = await crypto.subtle.encrypt({ name: "AES-GCM", iv: wrapNonce }, wrapKey, raw);
+      return {
+        user_id: m.userId,
+        public_key: m.publicKey,
+        wrapped_key: b64Encode(wrapped),
+        nonce: b64Encode(wrapNonce),
+      };
+    }),
+  );
+  raw.fill(0);
+  return { ciphertext: b64Encode(ct), nonce: b64Encode(nonce), key_envelopes };
+}
+
+/** Open a group message with my envelope; `authorPublicB64` = author's key. */
+export async function decryptGroupDm(
+  ciphertextB64: string,
+  nonceB64: string,
+  envelope: DmKeyEnvelope,
+  myPrivate: CryptoKey,
+  authorPublicB64: string,
+  dmChannelId: string,
+): Promise<string> {
+  const wrapKey = await deriveDmKey(myPrivate, authorPublicB64, dmChannelId);
+  const raw = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: b64Decode(envelope.nonce) },
+    wrapKey,
+    b64Decode(envelope.wrapped_key),
+  );
+  const contentKey = await crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["decrypt"]);
+  const plain = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: b64Decode(nonceB64) },
+    contentKey,
+    b64Decode(ciphertextB64),
+  );
+  return new TextDecoder().decode(plain);
+}

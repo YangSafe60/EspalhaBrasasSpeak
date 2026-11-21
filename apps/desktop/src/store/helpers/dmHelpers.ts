@@ -3,6 +3,7 @@ import {
   clearDmKeyCache,
   createIdentity,
   decryptDm,
+  decryptGroupDm,
   importIdentityBackup,
   loadIdentity,
   type IdentityKeyPair,
@@ -191,6 +192,53 @@ export async function decryptWire(
   }
 }
 
+/** Group message: open my envelope with the author's public key. */
+async function decryptGroupWire(
+  wire: DmMessageWire,
+  userId: string,
+  getCachedPeerKey: (id: string) => string | undefined,
+  setCachedPeerKey: (id: string, key: string) => void,
+): Promise<DmMessage> {
+  const failed = { ...wire, content: "", decrypt_failed: true };
+  const me = identityPair;
+  const envelope = wire.key_envelopes?.find((e) => e.user_id === userId);
+  // No envelope: sent before I joined the group.
+  if (!me || !envelope) return failed;
+  const author = wire.author_id;
+  const candidates: string[] = [];
+  if (wire.sender_public_key) candidates.push(wire.sender_public_key);
+  if (author === userId) candidates.push(me.publicKeyB64);
+  const cached = getCachedPeerKey(author);
+  if (cached) candidates.push(cached);
+  const tryKeys = async (keys: string[]) => {
+    for (const pub of [...new Set(keys)]) {
+      try {
+        const content = await decryptGroupDm(
+          wire.ciphertext,
+          wire.nonce,
+          envelope,
+          me.privateKey,
+          pub,
+          wire.dm_channel_id,
+        );
+        if (author !== userId && pub !== cached) setCachedPeerKey(author, pub);
+        return { ...wire, content, decrypt_failed: false };
+      } catch {
+        /* next key */
+      }
+    }
+    return null;
+  };
+  const first = await tryKeys(candidates);
+  if (first) return first;
+  try {
+    const history = await fetchPeerPublicKeyHistory(author);
+    return (await tryKeys(history.filter((k) => !candidates.includes(k)))) ?? failed;
+  } catch {
+    return failed;
+  }
+}
+
 /** Try message-bound keys, cached peer key, then retired keys from the server. */
 export async function decryptWireResilient(
   wire: DmMessageWire,
@@ -202,6 +250,9 @@ export async function decryptWireResilient(
 ): Promise<DmMessage> {
   if (!identityPair) {
     return { ...wire, content: "", decrypt_failed: true };
+  }
+  if (wire.key_envelopes) {
+    return decryptGroupWire(wire, userId, getCachedPeerKey, setCachedPeerKey);
   }
 
   let history = preloadedHistory;

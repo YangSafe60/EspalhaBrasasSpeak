@@ -173,9 +173,17 @@ export const createServerSlice: AppStoreSlice = (set, get) => ({
 
   selectChannel: async (channelId) => {
     set((s) => {
+      const count = s.unreadByChannel[channelId] || 0;
       const { [channelId]: _drop, ...unreadByChannel } = s.unreadByChannel;
+      const { [channelId]: _m, ...mentionsByChannel } = s.mentionsByChannel;
       void _drop;
-      return { activeChannelId: channelId, unreadByChannel };
+      void _m;
+      return {
+        activeChannelId: channelId,
+        unreadByChannel,
+        mentionsByChannel,
+        unreadMarker: count > 0 ? { channelId, count } : null,
+      };
     });
     const channel = Object.values(get().channelsByServer)
       .flat()

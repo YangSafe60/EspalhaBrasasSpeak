@@ -24,6 +24,7 @@ import { useVoice } from "./hooks/useVoice";
 import { useVoiceWindowTitle } from "./hooks/useVoiceWindowTitle";
 import { useAutoIdlePresence } from "./hooks/useAutoIdlePresence";
 import { useMemoryDiagnostics } from "./hooks/useMemoryDiagnostics";
+import { usePushToTalk } from "./hooks/usePushToTalk";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { requestDesktopNotifyPermission } from "./lib/desktopNotify";
 import { primeNotifyAudio } from "./lib/messageNotify";
@@ -171,6 +172,7 @@ function MainApp() {
   const voice = useVoice();
   useVoiceWindowTitle(!!user);
   useDmCallRing(voice);
+  usePushToTalk(voice);
   const [pendingVoiceId, setPendingVoiceId] = useState<string | null>(null);
   const [pendingDmCallId, setPendingDmCallId] = useState<string | null>(null);
   const [micBusy, setMicBusy] = useState(false);

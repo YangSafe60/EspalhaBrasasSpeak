@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useVoiceEngine } from "../hooks/useVoiceEngine";
 import { useAppStore } from "../store/appStore";
 import type { VoiceHostCommand, VoiceHostEvent } from "./voiceIpc";
+import { onKeyFrameRequest } from "../lib/framePorts";
 import {
   requestLobbyKeyFrame,
   setLobbyPreviewLevel,
@@ -43,7 +44,7 @@ export function VoiceHostApp() {
 
   useEffect(() => {
     window.electronAPI?.notifyVoiceHostReady?.();
-    const offKey = window.electronAPI?.onPreviewKeyFrameRequest?.(requestLobbyKeyFrame);
+    const offKey = onKeyFrameRequest(requestLobbyKeyFrame);
     const offPreview = window.electronAPI?.onScreenPreview?.((level) => {
       setLobbyPreviewLevel(level);
       setPreviewWanted(level > 0);
@@ -71,6 +72,9 @@ export function VoiceHostApp() {
           break;
         case "toggle-mute":
           void e.toggleMute();
+          break;
+        case "mic-gate":
+          e.setMicGate(cmd.open);
           break;
         case "toggle-deafen":
           void e.toggleDeafen();

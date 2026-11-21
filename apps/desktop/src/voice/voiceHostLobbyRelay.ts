@@ -1,3 +1,4 @@
+import { publishFrame } from "../lib/framePorts";
 import type { LocalScreen, RemoteScreen } from "../hooks/voice/types";
 import { previewProfile } from "../lib/jpegRelay";
 import { startPreviewEncoder } from "../lib/previewEncoder";
@@ -81,7 +82,7 @@ function startRelay(
     fps: () => previewProfile(previewLevel).fps,
     warm: () => [previewProfile(1), previewProfile(2)],
     onFrame: (frame) => {
-      window.electronAPI?.publishLobbyFrame?.({ trackSid, ...frame });
+      publishFrame({ trackSid, ...frame });
     },
   });
 

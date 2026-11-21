@@ -15,6 +15,12 @@ export type MediaSettings = {
   noiseSuppression: boolean;
   autoGainControl: boolean;
   mirrorCamera: boolean;
+  /** "voice": open mic (voice activity). "ptt": only while the key is held. */
+  inputMode: "voice" | "ptt";
+  /** KeyboardEvent.code of the push-to-talk key ("" = not set yet). */
+  pttKey: string;
+  /** Keep the mic open this long after releasing the key (ms). */
+  pttReleaseDelay: number;
 };
 
 export const MEDIA_SETTINGS_KEY = "eb_media_settings";
@@ -31,6 +37,9 @@ export const DEFAULT_MEDIA_SETTINGS: MediaSettings = {
   noiseSuppression: true,
   autoGainControl: true,
   mirrorCamera: true,
+  inputMode: "voice",
+  pttKey: "",
+  pttReleaseDelay: 150,
 };
 
 export function loadMediaSettings(): MediaSettings {
@@ -59,18 +68,31 @@ export function subscribeMediaSettings(cb: (s: MediaSettings) => void): () => vo
   return () => window.removeEventListener(MEDIA_SETTINGS_EVENT, handler);
 }
 
+/**
+ * Makes device labels readable. Opens only what is still unlabeled: starting
+ * the camera just to list devices is slow (hundreds of ms, light flashes),
+ * so it is skipped when labels are already there or there is no camera.
+ */
 export async function ensureMediaPermissions(): Promise<boolean> {
+  const stopAll = (s: MediaStream) => s.getTracks().forEach((t) => t.stop());
+  let devices: MediaDeviceInfo[] = [];
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
-      video: true,
-    });
-    stream.getTracks().forEach((t) => t.stop());
+    devices = await navigator.mediaDevices.enumerateDevices();
+  } catch {
+    /* fall through and ask */
+  }
+  const unlabeled = (kind: MediaDeviceKind) =>
+    devices.some((d) => d.kind === kind && !d.label);
+  const needAudio = devices.length === 0 || unlabeled("audioinput");
+  const needVideo = unlabeled("videoinput");
+  if (!needAudio && !needVideo) return true;
+  try {
+    stopAll(await navigator.mediaDevices.getUserMedia({ audio: needAudio, video: needVideo }));
     return true;
   } catch {
+    if (!needAudio) return true; // camera refused: audio labels are fine
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach((t) => t.stop());
+      stopAll(await navigator.mediaDevices.getUserMedia({ audio: true }));
       return true;
     } catch {
       return false;

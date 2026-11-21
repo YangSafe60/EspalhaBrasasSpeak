@@ -14,7 +14,8 @@
     "preview": "vite preview",
     "electron": "electron .",
     "dist": "npm run build && electron-builder --config electron-builder.yml",
-    "dist:dir": "npm run build && electron-builder --config electron-builder.yml --dir"
+    "dist:dir": "npm run build && electron-builder --config electron-builder.yml --dir",
+    "test": "vitest run"
   },
   "devDependencies": {
     "@types/react": "^19.2.18",
@@ -23,7 +24,8 @@
     "electron": "^37.2.6",
     "electron-builder": "^26.15.3",
     "typescript": "~6.0.2",
-    "vite": "^8.2.0"
+    "vite": "^8.2.0",
+    "vitest": "^3.2.4"
   },
   "dependencies": {
     "electron-updater": "^6.8.9",

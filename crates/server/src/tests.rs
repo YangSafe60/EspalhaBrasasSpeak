@@ -532,7 +532,7 @@ async fn memory_samples_are_stored_per_user_and_rate_limited() {
 }
 
 #[tokio::test]
-async fn websocket_takes_token_from_subprotocol_or_legacy_query() {
+async fn websocket_takes_token_from_subprotocol_only() {
     use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValue};
 
     let app = test_app().await;
@@ -563,9 +563,9 @@ async fn websocket_takes_token_from_subprotocol_or_legacy_query() {
         "speakapp.auth"
     );
 
-    // Older clients: token in the URL still works.
+    // A token in the URL is no longer accepted (it would end up in logs).
     let legacy = format!("ws://{addr}/api/ws?token={token}");
-    assert!(tokio_tungstenite::connect_async(legacy).await.is_ok());
+    assert!(tokio_tungstenite::connect_async(legacy).await.is_err());
 
     // No token, or a bad one: refused.
     assert!(tokio_tungstenite::connect_async(format!("ws://{addr}/api/ws")).await.is_err());
@@ -662,4 +662,253 @@ async fn moderators_delete_but_never_edit_others_messages() {
         app.count("SELECT COUNT(1) FROM messages WHERE id = ?", &member_msg).await,
         0
     );
+}
+
+#[tokio::test]
+async fn replies_must_target_the_same_channel() {
+    let app = test_app().await;
+    let auth = app.register("alice").await;
+    let (server_a, chan_a) = app.server_with_text_channel(&auth).await;
+    let (_, chan_b) = app.server_with_text_channel(&auth).await;
+    let _ = server_a;
+    let first = app
+        .call(
+            Method::POST,
+            &format!("/api/channels/{chan_a}/messages"),
+            Some(&auth),
+            Some(json!({ "content": "question" })),
+        )
+        .await;
+    let first_id = first.body["id"].as_str().unwrap().to_string();
+
+    let ok = app
+        .call(
+            Method::POST,
+            &format!("/api/channels/{chan_a}/messages"),
+            Some(&auth),
+            Some(json!({ "content": "answer", "reply_to_id": first_id })),
+        )
+        .await;
+    assert_eq!(ok.status, StatusCode::OK, "{}", ok.body);
+    assert_eq!(ok.body["reply_to_id"], first_id.as_str());
+
+    let cross = app
+        .call(
+            Method::POST,
+            &format!("/api/channels/{chan_b}/messages"),
+            Some(&auth),
+            Some(json!({ "content": "sneaky", "reply_to_id": first_id })),
+        )
+        .await;
+    assert_eq!(cross.status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn pins_need_manage_messages_and_list_newest_first() {
+    let app = test_app().await;
+    let owner = app.register("owner").await;
+    let member = app.register("member").await;
+    let (server_id, channel) = app.server_with_text_channel(&owner).await;
+    let inv = app
+        .call(Method::POST, &format!("/api/servers/{server_id}/invites"), Some(&owner), Some(json!({})))
+        .await;
+    let code = inv.body["code"].as_str().unwrap();
+    app.call(Method::POST, &format!("/api/invites/{code}"), Some(&member), Some(json!({}))).await;
+    let path = format!("/api/channels/{channel}/messages");
+    let a = app.call(Method::POST, &path, Some(&member), Some(json!({ "content": "a" }))).await;
+    let b = app.call(Method::POST, &path, Some(&member), Some(json!({ "content": "b" }))).await;
+    let (a, b) = (a.body["id"].as_str().unwrap().to_string(), b.body["id"].as_str().unwrap().to_string());
+
+    // Plain member: no Manage Messages.
+    let r = app.call(Method::PUT, &format!("/api/messages/{a}/pin"), Some(&member), None).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+
+    let r = app.call(Method::PUT, &format!("/api/messages/{a}/pin"), Some(&owner), None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert!(r.body["pinned_at"].is_string());
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    app.call(Method::PUT, &format!("/api/messages/{b}/pin"), Some(&owner), None).await;
+
+    // Anyone who can read the channel sees the pins, newest pin first.
+    let pins = app.call(Method::GET, &format!("/api/channels/{channel}/pins"), Some(&member), None).await;
+    let ids: Vec<&str> = pins.body.as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, vec![b.as_str(), a.as_str()]);
+
+    let r = app.call(Method::DELETE, &format!("/api/messages/{b}/pin"), Some(&owner), None).await;
+    assert!(r.body.get("pinned_at").is_none() || r.body["pinned_at"].is_null());
+    let pins = app.call(Method::GET, &format!("/api/channels/{channel}/pins"), Some(&member), None).await;
+    assert_eq!(pins.body.as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn search_finds_words_in_readable_channels_only() {
+    let app = test_app().await;
+    let owner = app.register("owner").await;
+    let outsider = app.register("outsider").await;
+    let (server_id, channel) = app.server_with_text_channel(&owner).await;
+    let path = format!("/api/channels/{channel}/messages");
+    for text in ["Vamos jogar Valorant hoje", "amanhã há reunião", "Ação às 21h"] {
+        app.call(Method::POST, &path, Some(&owner), Some(json!({ "content": text }))).await;
+    }
+    // Edited text is re-indexed; deleted messages disappear.
+    let edit_me = app.call(Method::POST, &path, Some(&owner), Some(json!({ "content": "old words" }))).await;
+    let edit_id = edit_me.body["id"].as_str().unwrap().to_string();
+    app.call(Method::PATCH, &format!("/api/messages/{edit_id}"), Some(&owner), Some(json!({ "content": "brand new words" }))).await;
+
+    let search = |q: &'static str| {
+        let app = &app;
+        let enc: String = q
+            .bytes()
+            .map(|b| if b.is_ascii_alphanumeric() { (b as char).to_string() } else { format!("%{b:02X}") })
+            .collect();
+        let url = format!("/api/servers/{server_id}/search?q={enc}");
+        let owner = owner.clone();
+        async move {
+            let r = app.call(Method::GET, &url, Some(&owner), None).await;
+            assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+            r.body["messages"].as_array().unwrap().iter().map(|m| m["content"].as_str().unwrap().to_string()).collect::<Vec<_>>()
+        }
+    };
+    assert_eq!(search("valor").await, vec!["Vamos jogar Valorant hoje"]); // prefix
+    assert_eq!(search("acao").await, vec!["Ação às 21h"]); // accents ignored
+    assert_eq!(search("old").await, Vec::<String>::new());
+    assert_eq!(search("brand").await, vec!["brand new words"]);
+    assert_eq!(search("\"OR* NEAR(").await.len(), 0); // no FTS syntax injection
+
+    // Not a member: refused.
+    let r = app
+        .call(Method::GET, &format!("/api/servers/{server_id}/search?q=valorant"), Some(&outsider), None)
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn reused_refresh_token_revokes_the_whole_login() {
+    let app = test_app().await;
+    let r = app
+        .call(
+            Method::POST,
+            "/api/auth/register",
+            None,
+            Some(json!({
+                "username": "alice",
+                "email": "alice@example.com",
+                "password": "correct horse battery",
+            })),
+        )
+        .await;
+    let first = r.body["refresh_token"].as_str().unwrap().to_string();
+    let refresh = |t: String| {
+        let app = &app;
+        async move {
+            app.call(Method::POST, "/api/auth/refresh", None, Some(json!({ "refresh_token": t })))
+                .await
+        }
+    };
+    // Normal rotation works.
+    let r = refresh(first.clone()).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let second = r.body["refresh_token"].as_str().unwrap().to_string();
+    // The old token comes back (stolen copy): refused...
+    assert_eq!(refresh(first).await.status, StatusCode::UNAUTHORIZED);
+    // ...and the current token of that login is revoked too.
+    assert_eq!(refresh(second).await.status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn group_dms_need_friends_and_an_envelope_per_member() {
+    let app = test_app().await;
+    let alice = app.register("alice").await;
+    let bob = app.register("bob").await;
+    let carol = app.register("carol").await;
+    let id_of = |auth: &str| {
+        let auth = auth.to_string();
+        let app = &app;
+        async move {
+            app.call(Method::GET, "/api/auth/me", Some(&auth), None).await.body["id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        }
+    };
+    let (bob_id, carol_id) = (id_of(&bob).await, id_of(&carol).await);
+    let alice_id = id_of(&alice).await;
+    let befriend = |name: &'static str, auth: String| {
+        let app = &app;
+        let alice = alice.clone();
+        async move {
+            let f = app
+                .call(Method::POST, "/api/friends/request", Some(&alice), Some(json!({ "username": name })))
+                .await;
+            assert_eq!(f.status, StatusCode::OK, "{}", f.body);
+            let fid = f.body["id"].as_str().unwrap();
+            let path = format!("/api/friends/{fid}/accept");
+            assert_eq!(app.call(Method::POST, &path, Some(&auth), None).await.status, StatusCode::OK);
+        }
+    };
+    befriend("bob", bob.clone()).await;
+
+    // Non-friends (carol, for now) can't be added.
+    let r = app
+        .call(Method::POST, "/api/dms/groups", Some(&alice), Some(json!({ "user_ids": [bob_id, carol_id] })))
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    befriend("carol", carol.clone()).await;
+
+    let r = app
+        .call(
+            Method::POST,
+            "/api/dms/groups",
+            Some(&alice),
+            Some(json!({ "user_ids": [bob_id, carol_id], "name": " Trio " })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["is_group"], true);
+    assert_eq!(r.body["name"], "Trio");
+    assert_eq!(r.body["members"].as_array().unwrap().len(), 3);
+    let gid = r.body["id"].as_str().unwrap().to_string();
+
+    let env = |uid: &str| json!({ "user_id": uid, "public_key": "pk", "wrapped_key": "wk", "nonce": "n" });
+    let msgs = format!("/api/dms/{gid}/messages");
+    // Missing a member's envelope: refused.
+    let r = app
+        .call(
+            Method::POST,
+            &msgs,
+            Some(&bob),
+            Some(json!({ "ciphertext": "c", "nonce": "n", "key_envelopes": [env(&alice_id), env(&bob_id)] })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    let r = app
+        .call(
+            Method::POST,
+            &msgs,
+            Some(&bob),
+            Some(json!({
+                "ciphertext": "c", "nonce": "n",
+                "key_envelopes": [env(&alice_id), env(&bob_id), env(&carol_id)]
+            })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["key_envelopes"].as_array().unwrap().len(), 3);
+    let list = app.call(Method::GET, &msgs, Some(&carol), None).await;
+    assert_eq!(list.body.as_array().unwrap().len(), 1);
+
+    // Calls stay 1:1 for now.
+    let call = format!("/api/dms/{gid}/call/token");
+    assert_eq!(app.call(Method::POST, &call, Some(&bob), None).await.status, StatusCode::BAD_REQUEST);
+
+    // Only the owner removes others; the owner leaving passes ownership on.
+    let kick = format!("/api/dms/{gid}/members/{carol_id}");
+    assert_eq!(app.call(Method::DELETE, &kick, Some(&bob), None).await.status, StatusCode::FORBIDDEN);
+    let leave = format!("/api/dms/{gid}/members/{alice_id}");
+    assert_eq!(app.call(Method::DELETE, &leave, Some(&alice), None).await.status, StatusCode::OK);
+    let dms = app.call(Method::GET, "/api/dms", Some(&bob), None).await;
+    let g = dms.body.as_array().unwrap().iter().find(|d| d["id"] == gid.as_str()).unwrap();
+    assert_eq!(g["members"].as_array().unwrap().len(), 2);
+    assert_ne!(g["owner_id"], alice_id.as_str());
+    assert_eq!(app.call(Method::GET, &msgs, Some(&alice), None).await.status, StatusCode::FORBIDDEN);
 }

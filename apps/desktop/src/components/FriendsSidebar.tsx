@@ -3,6 +3,8 @@ import { mediaUrl } from "../lib/mediaUrl";
 import { useAppStore } from "../store/appStore";
 import type { DmChannel, PresenceStatus, UserPublic } from "../types";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
+import { GroupDmPicker } from "./GroupDmPicker";
+import { dmMemberCount, dmTitle } from "../lib/dmDisplay";
 import type { FriendsTab } from "./FriendsHomeView";
 
 function FriendAvatar({
@@ -62,6 +64,9 @@ export function FriendsSidebar({ onOpenFriends, friendsViewActive }: Props) {
   const requestFriend = useAppStore((s) => s.requestFriend);
   const setModal = useAppStore((s) => s.setModal);
 
+  const me = useAppStore((s) => s.user);
+  const removeGroupDmMember = useAppStore((s) => s.removeGroupDmMember);
+  const [creatingGroup, setCreatingGroup] = useState(false);
   const [search, setSearch] = useState("");
   const [menu, setMenu] = useState<MenuState>(null);
 
@@ -70,12 +75,14 @@ export function FriendsSidebar({ onOpenFriends, friendsViewActive }: Props) {
   const filteredDms = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return dmChannels;
-    return dmChannels.filter(
-      (d) =>
-        d.peer.display_name.toLowerCase().includes(q) ||
-        d.peer.username.toLowerCase().includes(q),
+    return dmChannels.filter((d) =>
+      d.is_group
+        ? dmTitle(d, me?.id).toLowerCase().includes(q) ||
+          (d.members || []).some((m) => m.username.toLowerCase().includes(q))
+        : d.peer.display_name.toLowerCase().includes(q) ||
+          d.peer.username.toLowerCase().includes(q),
     );
-  }, [dmChannels, search]);
+  }, [dmChannels, search, me?.id]);
 
   const filteredFriends = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -90,6 +97,18 @@ export function FriendsSidebar({ onOpenFriends, friendsViewActive }: Props) {
   const menuItems: ContextMenuItem[] = useMemo(() => {
     if (!menu) return [];
     const { dm } = menu;
+    if (dm.is_group) {
+      return [
+        { label: "Close DM", onClick: () => void closeDm(dm.id) },
+        {
+          label: "Leave group",
+          danger: true,
+          onClick: () => {
+            if (me) void removeGroupDmMember(dm.id, me.id);
+          },
+        },
+      ];
+    }
     const isFriend = friends.some((f) => f.peer.id === dm.peer.id);
     const requestPending = pendingOutbound.some(
       (f) => f.peer.id === dm.peer.id,
@@ -114,7 +133,7 @@ export function FriendsSidebar({ onOpenFriends, friendsViewActive }: Props) {
     });
 
     return items;
-  }, [menu, friends, pendingOutbound, requestFriend, startDmCallWithPeer, closeDm]);
+  }, [menu, friends, pendingOutbound, requestFriend, startDmCallWithPeer, closeDm, me, removeGroupDmMember]);
 
   return (
     <aside className="channel-sidebar friends-sidebar">
@@ -190,7 +209,18 @@ export function FriendsSidebar({ onOpenFriends, friendsViewActive }: Props) {
         )}
 
         <section className="friends-section">
-          <h3>Direct messages</h3>
+          <h3 className="friends-section-head">
+            Direct messages
+            <button
+              type="button"
+              className="icon-btn friends-new-group"
+              title="Create group DM"
+              aria-label="Create group DM"
+              onClick={() => setCreatingGroup(true)}
+            >
+              +
+            </button>
+          </h3>
           {filteredDms.length === 0 ? (
             <p className="muted friends-empty">
               {search.trim()
@@ -214,20 +244,28 @@ export function FriendsSidebar({ onOpenFriends, friendsViewActive }: Props) {
                     className="friends-dm-main"
                     onClick={() => void selectDm(dm.id)}
                   >
-                    <FriendAvatar
-                      user={dm.peer}
-                      status={presenceByUser[dm.peer.id] || "offline"}
-                    />
+                    {dm.is_group ? (
+                      <span className="friends-avatar-wrap sm">
+                        <span className="friends-avatar placeholder group-dm-icon"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden fill="currentColor"><path d="M16 11a3 3 0 1 0-3-3 3 3 0 0 0 3 3zm-8 0a3 3 0 1 0-3-3 3 3 0 0 0 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5C15 14.17 10.33 13 8 13zm8 0c-.29 0-.62.02-.97.05A4.22 4.22 0 0 1 17 16.5V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z" /></svg></span>
+                      </span>
+                    ) : (
+                      <FriendAvatar
+                        user={dm.peer}
+                        status={presenceByUser[dm.peer.id] || "offline"}
+                      />
+                    )}
                     <span className="friends-dm-name">
-                      {dm.peer.display_name}
-                      <span className="muted">@{dm.peer.username}</span>
+                      {dmTitle(dm, me?.id)}
+                      <span className="muted">
+                        {dm.is_group ? `${dmMemberCount(dm)} members` : `@${dm.peer.username}`}
+                      </span>
                     </span>
                   </button>
                   <button
                     type="button"
                     className="friends-dm-close icon-btn"
                     title="Close DM"
-                    aria-label={`Close DM with ${dm.peer.display_name}`}
+                    aria-label={`Close DM with ${dmTitle(dm, me?.id)}`}
                     onClick={(e) => {
                       e.stopPropagation();
                       void closeDm(dm.id);
@@ -241,6 +279,8 @@ export function FriendsSidebar({ onOpenFriends, friendsViewActive }: Props) {
           )}
         </section>
       </div>
+
+      {creatingGroup && <GroupDmPicker onClose={() => setCreatingGroup(false)} />}
 
       {menu && (
         <ContextMenu

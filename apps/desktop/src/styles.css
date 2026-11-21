@@ -781,6 +781,32 @@ html[data-theme="light"] .rail-brand.rail-home {
   border-radius: 8px;
 }
 
+/* Unread pill on the left of a server icon, and red mention badges. */
+.server-orb.has-unread::before {
+  content: "";
+  position: absolute;
+  left: -11px;
+  top: 50%;
+  width: 4px;
+  height: 8px;
+  margin-top: -4px;
+  border-radius: 0 4px 4px 0;
+  background: var(--text);
+}
+
+.rail-badge.mention {
+  top: auto;
+  bottom: -4px;
+  right: -4px;
+  background: #da373c;
+  border: 2px solid #081014;
+}
+
+.channel-unread.mention {
+  background: #da373c;
+  color: #fff;
+}
+
 .rail-badge {
   position: absolute;
   top: -4px;
@@ -875,9 +901,10 @@ html[data-theme="light"] .rail-brand.rail-home {
   min-width: 0;
   min-height: 0;
   position: relative;
-  background: rgba(12, 24, 30, 0.88);
+  /* No backdrop blur on always-visible surfaces: it costs GPU on every
+     repaint behind them (lives, scrolling) and barely shows at this opacity. */
+  background: rgba(12, 24, 30, 0.92);
   border-right: 1px solid var(--border);
-  backdrop-filter: blur(10px);
 }
 
 .sidebar-resize {
@@ -1555,8 +1582,7 @@ html[data-theme="light"] .rail-brand.rail-home {
   gap: 1rem;
   padding: 0.9rem 1.15rem;
   border-bottom: 1px solid var(--border);
-  background: rgba(8, 16, 20, 0.45);
-  backdrop-filter: blur(8px);
+  background: rgba(8, 16, 20, 0.55);
 }
 
 .message-header h2 {
@@ -2196,8 +2222,7 @@ html[data-compact="1"] .message {
   padding: 0.55rem;
   border-radius: 14px;
   border: 1px solid var(--border);
-  background: rgba(8, 16, 20, 0.72);
-  backdrop-filter: blur(10px);
+  background: rgba(8, 16, 20, 0.8);
 }
 
 /* DMs: file + textarea + emoji + gif + Send */
@@ -3107,8 +3132,6 @@ html[data-theme="light"] .user-voice-dock {
     rgba(0, 0, 0, 0.72) 35%,
     rgba(0, 0, 0, 0.94) 100%
   );
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
   border-top: 1px solid rgba(255, 255, 255, 0.14);
   font-size: 0.88rem;
   color: #fff;
@@ -7505,6 +7528,368 @@ html[data-theme="light"] .mini-profile-msg {
   .incoming-call-avatar {
     animation: none;
   }
+}
+
+/* Replies: quoted message above the reply, and the composer's reply bar. */
+.message.is-reply {
+  row-gap: 0.1rem;
+}
+
+.message-reply-quote {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  margin: 0 0 0.15rem 1.1rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 0.78rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.message-reply-quote:disabled {
+  cursor: default;
+}
+
+.message-reply-quote strong {
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.message-reply-quote:not(:disabled):hover .message-reply-text {
+  color: var(--text);
+}
+
+.message-reply-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-reply-line {
+  flex: none;
+  width: 22px;
+  height: 9px;
+  margin-top: 6px;
+  border-left: 2px solid var(--border-strong, rgba(255, 255, 255, 0.22));
+  border-top: 2px solid var(--border-strong, rgba(255, 255, 255, 0.22));
+  border-top-left-radius: 6px;
+}
+
+.message.flash {
+  animation: message-flash 1.4s ease-out;
+}
+
+@keyframes message-flash {
+  0%, 30% { background: rgba(227, 27, 35, 0.16); }
+  100% { background: transparent; }
+}
+
+.composer-reply-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0 0 0.35rem;
+  padding: 0.35rem 0.6rem;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+.composer-reply-bar strong {
+  color: var(--text);
+}
+
+.composer-reply-cancel {
+  width: 22px;
+  height: 22px;
+  font-size: 0.7rem;
+}
+
+/* Message search */
+.message-search {
+  position: relative;
+}
+
+.message-search input {
+  width: 180px;
+  height: 30px;
+  padding: 0 0.6rem;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  transition: width 160ms ease;
+}
+
+.message-search input:focus {
+  width: 240px;
+}
+
+.search-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 60;
+  width: min(420px, 85vw);
+  max-height: min(520px, 72vh);
+  overflow: auto;
+  padding: 0.65rem;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(12, 20, 24, 0.98);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.search-count {
+  margin: 0 0 0.45rem;
+}
+
+.search-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+}
+
+.search-panel mark {
+  background: rgba(227, 27, 35, 0.35);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+/* Pinned messages (the header sits above the list so its panel isn't covered) */
+.message-header {
+  position: relative;
+  z-index: 5;
+}
+
+.message-header-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.pins-root {
+  position: relative;
+}
+
+.pins-toggle.active {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.pins-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 60;
+  width: min(380px, 80vw);
+  max-height: min(460px, 70vh);
+  overflow: auto;
+  padding: 0.75rem;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(12, 20, 24, 0.98);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.pins-panel h4 {
+  margin: 0 0 0.5rem;
+}
+
+.pins-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.pins-item {
+  width: 100%;
+  display: grid;
+  gap: 0.15rem;
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.pins-item:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.pins-text {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.message-pinned-flag {
+  display: inline-flex;
+  color: var(--text-dim);
+}
+
+.message-pinned-flag svg {
+  width: 13px;
+  height: 13px;
+}
+
+.new-messages-divider {
+  display: flex;
+  align-items: center;
+  margin: 0.6rem 0 0.2rem;
+  border-top: 1px solid #da373c;
+  position: relative;
+}
+
+.new-messages-divider span {
+  position: absolute;
+  right: 0;
+  top: -0.55rem;
+  padding: 0 0.4rem;
+  border-radius: 4px;
+  background: #da373c;
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.1rem;
+}
+
+/* ---------- group DMs ---------- */
+.friends-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.friends-new-group {
+  width: 22px;
+  height: 22px;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.group-dm-icon {
+  display: grid;
+  place-items: center;
+  background: var(--accent, #e25822);
+  color: #fff;
+}
+
+.group-dm-picker {
+  width: min(440px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.group-dm-picker input[type="search"],
+.group-dm-picker .group-dm-name {
+  width: 100%;
+}
+
+.group-dm-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.group-dm-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.group-dm-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.group-dm-row.is-full {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.group-dm-who {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.group-dm-empty {
+  padding: 0.6rem 0.5rem;
+}
+
+.group-dm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.dm-group-title {
+  min-width: 0;
+}
+
+.dm-group-title .topic {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dm-group-name {
+  cursor: text;
+}
+
+.dm-group-rename {
+  font-size: 1.05rem;
+  font-weight: 600;
+  width: min(320px, 100%);
+}
+
+.input-mode-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.input-mode-label em {
+  font-style: normal;
+}
+
+.ptt-key-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0;
+}
+
+.ptt-key-row .form-error {
+  flex-basis: 100%;
+  margin: 0;
 }
 
 .message-toast-stack {

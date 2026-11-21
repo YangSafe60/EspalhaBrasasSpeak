@@ -27,6 +27,9 @@ export function ServerRail() {
   const rolesByServer = useAppStore((s) => s.rolesByServer);
   const membersByServer = useAppStore((s) => s.membersByServer);
   const serverMutes = useAppStore((s) => s.serverMutes);
+  const channelsByServer = useAppStore((s) => s.channelsByServer);
+  const unreadByChannel = useAppStore((s) => s.unreadByChannel);
+  const mentionsByChannel = useAppStore((s) => s.mentionsByChannel);
   const serverNotify = useAppStore((s) => s.serverNotify);
   const muteServer = useAppStore((s) => s.muteServer);
   const unmuteServer = useAppStore((s) => s.unmuteServer);
@@ -171,11 +174,16 @@ export function ServerRail() {
           const initial = server.name.trim().charAt(0).toUpperCase() || "?";
           const active = !friendsHome && server.id === activeServerId;
           const muted = serverIsMuted(serverMutes, server.id);
+          const textChannels = (channelsByServer[server.id] || []).filter(
+            (c) => c.channel_type === "text",
+          );
+          const unread = !muted && textChannels.some((c) => (unreadByChannel[c.id] || 0) > 0);
+          const mentions = textChannels.reduce((n, c) => n + (mentionsByChannel[c.id] || 0), 0);
           return (
             <button
               key={server.id}
               type="button"
-              className={`server-orb ${active ? "active" : ""}${muted ? " is-muted" : ""}`}
+              className={`server-orb ${active ? "active" : ""}${muted ? " is-muted" : ""}${unread && !active ? " has-unread" : ""}`}
               style={
                 server.icon_url
                   ? { backgroundImage: mediaCssUrl(server.icon_url) }
@@ -189,6 +197,11 @@ export function ServerRail() {
               }}
             >
               {!server.icon_url && <span>{initial}</span>}
+              {mentions > 0 && (
+                <span className="rail-badge mention" aria-label={`${mentions} mentions`}>
+                  {mentions > 99 ? "99+" : mentions}
+                </span>
+              )}
             </button>
           );
         })}

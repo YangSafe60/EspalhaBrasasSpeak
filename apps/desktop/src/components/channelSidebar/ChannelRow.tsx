@@ -52,6 +52,8 @@ export type ChannelRowProps = {
   inVoice: boolean;
   muted: boolean;
   unread: number;
+  /** Unread messages mentioning me: shown instead of the unread count. */
+  mentions?: number;
   muteLabel: string | null;
   limitLabel: string;
   locked: boolean;
@@ -92,6 +94,7 @@ export function ChannelRow({
   inVoice,
   muted,
   unread,
+  mentions = 0,
   muteLabel,
   limitLabel,
   locked,
@@ -181,10 +184,16 @@ export function ChannelRow({
             </svg>
           </span>
         )}
-        {unread > 0 && (
-          <span className="channel-unread" aria-label={`${unread} unread`}>
-            {unread > 99 ? "99+" : unread}
+        {mentions > 0 ? (
+          <span className="channel-unread mention" aria-label={`${mentions} mentions`}>
+            {mentions > 99 ? "99+" : mentions}
           </span>
+        ) : (
+          unread > 0 && (
+            <span className="channel-unread" aria-label={`${unread} unread`}>
+              {unread > 99 ? "99+" : unread}
+            </span>
+          )
         )}
       </button>
       {canInvitePeople && (

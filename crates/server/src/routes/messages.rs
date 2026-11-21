@@ -206,6 +206,19 @@ pub async fn create(
     )
     .await?;
 
+    // A reply must point at a message in this same channel.
+    if let Some(target) = body.reply_to_id {
+        let found: Option<i64> =
+            sqlx::query_scalar("SELECT 1 FROM messages WHERE id = ? AND channel_id = ?")
+                .bind(target.to_string())
+                .bind(id.to_string())
+                .fetch_optional(&mut *tx)
+                .await?;
+        if found.is_none() {
+            return Err(AppError::BadRequest("reply target not found".into()));
+        }
+    }
+
     let msg_id = Uuid::new_v4();
     let now = Utc::now().to_rfc3339();
     sqlx::query(
@@ -349,6 +362,188 @@ pub async fn delete(
     )
     .await?;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct SearchQuery {
+    pub q: String,
+    /// Limit to one channel of the server.
+    pub channel_id: Option<Uuid>,
+    pub limit: Option<i64>,
+}
+
+#[derive(serde::Serialize)]
+pub struct SearchResults {
+    pub messages: Vec<Message>,
+}
+
+/// Turn user input into a safe FTS5 query: each word becomes a quoted prefix
+/// term ("word"*), all required. No FTS syntax from the user gets through.
+fn fts_query(raw: &str) -> Option<String> {
+    let terms: Vec<String> = raw
+        .split_whitespace()
+        .map(|w| w.replace('"', ""))
+        .filter(|w| !w.is_empty())
+        .take(8)
+        .map(|w| format!("\"{w}\"*"))
+        .collect();
+    (!terms.is_empty()).then(|| terms.join(" "))
+}
+
+/// Search the text channels of a server the user can read, newest first.
+pub async fn search(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(server_id): Path<Uuid>,
+    Query(q): Query<SearchQuery>,
+) -> AppResult<Json<SearchResults>> {
+    let server = db::get_server(&state.db, server_id).await?;
+    if !db::is_member(&state.db, server_id, user.id).await? && server.owner_id != user.id {
+        return Err(AppError::Forbidden);
+    }
+    let Some(fts) = fts_query(q.q.trim()) else {
+        return Ok(Json(SearchResults { messages: Vec::new() }));
+    };
+    if q.q.chars().count() > 200 {
+        return Err(AppError::BadRequest("search is too long".into()));
+    }
+    let limit = q.limit.unwrap_or(25).clamp(1, 50);
+
+    // Channels the user may read (one permission check per channel).
+    let channels = db::server_channels(&state.db, server_id).await?;
+    let mut readable = Vec::new();
+    for c in channels {
+        if c.channel_type != speakapp_shared::ChannelType::Text {
+            continue;
+        }
+        if q.channel_id.is_some_and(|only| only != c.id) {
+            continue;
+        }
+        let perms = db::effective_permissions(&state.db, &server, Some(c.id), user.id).await?;
+        if perms.has(Permissions::VIEW_CHANNEL) {
+            readable.push(c.id.to_string());
+        }
+    }
+    if readable.is_empty() {
+        return Ok(Json(SearchResults { messages: Vec::new() }));
+    }
+
+    let placeholders = vec!["?"; readable.len()].join(",");
+    let sql = format!(
+        "SELECT m.id FROM messages_fts f JOIN messages m ON m.rowid = f.rowid          WHERE messages_fts MATCH ? AND m.channel_id IN ({placeholders})          ORDER BY m.created_at DESC LIMIT ?"
+    );
+    let mut query = sqlx::query_scalar::<_, String>(&sql).bind(fts);
+    for c in &readable {
+        query = query.bind(c);
+    }
+    let ids = query.bind(limit).fetch_all(&state.db).await?;
+    let mut messages = Vec::with_capacity(ids.len());
+    for id in ids {
+        if let Ok(id) = Uuid::parse_str(&id) {
+            messages.push(db::load_message(&state.db, id, user.id).await?);
+        }
+    }
+    Ok(Json(SearchResults { messages }))
+}
+
+/// Max pinned messages per channel (same as Discord).
+const MAX_PINS: i64 = 50;
+
+/// Pin or unpin a channel message. Needs Manage Messages in that channel.
+async fn set_pinned(
+    state: &AppState,
+    user: &AuthUser,
+    id: Uuid,
+    pinned: bool,
+) -> AppResult<Json<Message>> {
+    let channel_id: String = sqlx::query_scalar("SELECT channel_id FROM messages WHERE id = ?")
+        .bind(id.to_string())
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let channel_id = Uuid::parse_str(&channel_id).map_err(|_| AppError::NotFound)?;
+    let channel = db::get_channel(&state.db, channel_id).await?;
+    let server = db::get_server(&state.db, channel.server_id).await?;
+    db::require_perm(&state.db, &server, Some(channel_id), user.id, Permissions::VIEW_CHANNEL).await?;
+    db::require_perm(&state.db, &server, Some(channel_id), user.id, Permissions::MANAGE_MESSAGES).await?;
+
+    if pinned {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(1) FROM messages WHERE channel_id = ? AND pinned_at IS NOT NULL AND id != ?",
+        )
+        .bind(channel_id.to_string())
+        .bind(id.to_string())
+        .fetch_one(&state.db)
+        .await?;
+        if count >= MAX_PINS {
+            return Err(AppError::BadRequest(format!(
+                "this channel already has {MAX_PINS} pinned messages"
+            )));
+        }
+        sqlx::query("UPDATE messages SET pinned_at = COALESCE(pinned_at, ?), pinned_by = ? WHERE id = ?")
+            .bind(Utc::now().to_rfc3339())
+            .bind(user.id.to_string())
+            .bind(id.to_string())
+            .execute(&state.db)
+            .await?;
+    } else {
+        sqlx::query("UPDATE messages SET pinned_at = NULL, pinned_by = NULL WHERE id = ?")
+            .bind(id.to_string())
+            .execute(&state.db)
+            .await?;
+    }
+    let message = db::load_message(&state.db, id, user.id).await?;
+    broadcast_to_viewers(
+        state,
+        &server,
+        channel_id,
+        &WsEvent::MessageUpdate {
+            message: message.clone(),
+        },
+    )
+    .await?;
+    Ok(Json(message))
+}
+
+pub async fn pin(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<Message>> {
+    set_pinned(&state, &user, id, true).await
+}
+
+pub async fn unpin(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<Message>> {
+    set_pinned(&state, &user, id, false).await
+}
+
+/// Pinned messages of a channel, newest pin first.
+pub async fn list_pins(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<Vec<Message>>> {
+    let channel = db::get_channel(&state.db, id).await?;
+    let server = db::get_server(&state.db, channel.server_id).await?;
+    db::require_perm(&state.db, &server, Some(id), user.id, Permissions::VIEW_CHANNEL).await?;
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM messages WHERE channel_id = ? AND pinned_at IS NOT NULL ORDER BY pinned_at DESC LIMIT ?",
+    )
+    .bind(id.to_string())
+    .bind(MAX_PINS)
+    .fetch_all(&state.db)
+    .await?;
+    let mut out = Vec::with_capacity(ids.len());
+    for mid in ids {
+        if let Ok(mid) = Uuid::parse_str(&mid) {
+            out.push(db::load_message(&state.db, mid, user.id).await?);
+        }
+    }
+    Ok(Json(out))
 }
 
 pub async fn add_reaction(

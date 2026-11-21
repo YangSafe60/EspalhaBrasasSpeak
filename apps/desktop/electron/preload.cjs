@@ -20,9 +20,33 @@ function onKeyFrameRequest(trackSid) {
   for (const handler of keyFrameHandlers) handler(trackSid);
 }
 
+/*
+ * Once the page claims the ports (src/lib/framePorts.ts), they are handed to
+ * it with window.postMessage + transfer, so frames never cross contextBridge
+ * (each crossing is a structured-clone copy). Ports that arrive before the
+ * claim wait here.
+ */
+let pageOwnsPorts = false;
+const pendingPagePorts = [];
+
+function handPortToPage(info, port) {
+  window.postMessage(
+    { __ebFramePort: true, role: info.role, id: info.id, trackSid: info.trackSid || null },
+    "*",
+    [port],
+  );
+}
+
 ipcRenderer.on("frames:port", (event, info) => {
   const port = event.ports && event.ports[0];
   if (!port || !info || !info.id) return;
+  if (pageOwnsPorts) {
+    handPortToPage(info, port);
+    return;
+  }
+  const waiting = pendingPagePorts.findIndex((p) => p.info.id === info.id && p.info.role === info.role);
+  if (waiting >= 0) pendingPagePorts.splice(waiting, 1)[0].port.close();
+  pendingPagePorts.push({ info, port });
   if (info.role === "publisher") {
     const old = framePortsOut.get(info.id);
     if (old) old.port.close();
@@ -46,6 +70,13 @@ ipcRenderer.on("frames:port", (event, info) => {
 ipcRenderer.on("frames:port-close", (_event, info) => {
   const id = info && info.id;
   if (!id) return;
+  if (pageOwnsPorts) {
+    window.postMessage({ __ebFramePortClose: true, id }, "*");
+    return;
+  }
+  for (let i = pendingPagePorts.length - 1; i >= 0; i--) {
+    if (pendingPagePorts[i].info.id === id) pendingPagePorts.splice(i, 1);
+  }
   const out = framePortsOut.get(id);
   if (out) {
     out.port.close();
@@ -158,6 +189,20 @@ contextBridge.exposeInMainWorld("electronAPI", {
   sendVoiceCommand: (cmd) => ipcRenderer.send("voice:cmd", cmd),
   publishVoiceEvent: (evt) => ipcRenderer.send("voice:evt", evt),
   publishLobbyFrame: (frame) => publishFrame(frame),
+  /** Page takes over the frame ports (see the note at frames:port). */
+  claimFramePorts: () => {
+    if (pageOwnsPorts) return;
+    pageOwnsPorts = true;
+    // Ports kept here so far move to the page; the preload's maps empty out,
+    // so its publish/keyframe helpers fall back to IPC from now on.
+    for (const { port } of framePortsOut.values()) port.onmessage = null;
+    for (const port of framePortsIn.values()) port.onmessage = null;
+    framePortsOut.clear();
+    framePortsIn.clear();
+    const handed = pendingPagePorts.splice(0);
+    for (const { info, port } of handed) handPortToPage(info, port);
+    return handed.length;
+  },
   requestPreviewKeyFrame: (trackSid) => requestKeyFrame(String(trackSid || "")),
   onPreviewKeyFrameRequest: (handler) => {
     keyFrameHandlers.add(handler);

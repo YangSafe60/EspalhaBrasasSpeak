@@ -1,3 +1,4 @@
+import { onKeyFrameRequest, publishFrame } from "../lib/framePorts";
 import { api } from "../api/client";
 import { normalizeLivekitUrl } from "../hooks/voice/livekitHelpers";
 import { previewProfile } from "../lib/jpegRelay";
@@ -153,7 +154,7 @@ export async function startScreenHost(): Promise<void> {
     // on screen (level > 0); the old version encoded all the time.
     let video: HTMLVideoElement | null = null;
     let relay: { stop: () => void; requestKeyFrame: () => void } | null = null;
-    const offKeyRequest = window.electronAPI?.onPreviewKeyFrameRequest?.((sid) => {
+    const offKeyRequest = onKeyFrameRequest((sid) => {
       if (sid === trackSid) relay?.requestKeyFrame();
     });
     const stopPreview = () => {
@@ -184,7 +185,7 @@ export async function startScreenHost(): Promise<void> {
         fps: () => previewProfile(previewLevel).fps,
         warm: () => [previewProfile(1), previewProfile(2)],
         onFrame: (frame) => {
-          window.electronAPI?.publishLobbyFrame?.({ trackSid, ...frame });
+          publishFrame({ trackSid, ...frame });
         },
       });
     };

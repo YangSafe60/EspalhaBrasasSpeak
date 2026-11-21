@@ -1,5 +1,6 @@
 /** WebSocket event handler: real-time sync for messages, presence, voice, and social. */
 import { channelIsMuted } from "../../lib/channelMutePrefs";
+import { messageMentionsMe } from "../../lib/mentions";
 import { channelNotifyOf, effectiveNotify } from "../../lib/channelNotifyPrefs";
 import { serverIsMuted } from "../../lib/serverMutePrefs";
 import {
@@ -81,11 +82,25 @@ export const createWsSlice: AppStoreSlice = (set, get) => ({
               roles,
               me?.role_ids || [],
             ));
+        // Mentions show as a red badge even in muted channels (like Discord).
+        const mentionsMe =
+          !isSelf &&
+          !isActive &&
+          channel?.channel_type === "text" &&
+          messageMentionsMe(event.message.content || "", {
+            members: [],
+            roles,
+            me: state.user,
+            myRoleIds: me?.role_ids,
+          });
         set((s) => {
           const authors = { ...s.authors, [event.author.id]: event.author };
+          const mentionsByChannel = mentionsMe
+            ? { ...s.mentionsByChannel, [cid]: (s.mentionsByChannel[cid] || 0) + 1 }
+            : s.mentionsByChannel;
           // Don't grow caches for channels we've never opened.
           if (!(cid in s.messagesByChannel) && cid !== s.activeChannelId) {
-            const next: Partial<AppState> = { authors };
+            const next: Partial<AppState> = { authors, mentionsByChannel };
             if (!isSelf && !isActive && !hideUnread) {
               next.unreadByChannel = {
                 ...s.unreadByChannel,
@@ -96,6 +111,7 @@ export const createWsSlice: AppStoreSlice = (set, get) => ({
           }
           const next: Partial<AppState> = {
             authors,
+            mentionsByChannel,
             messagesByChannel: {
               ...s.messagesByChannel,
               [cid]: upsertMessage(s.messagesByChannel[cid] || [], event.message),
@@ -589,16 +605,20 @@ export const createWsSlice: AppStoreSlice = (set, get) => ({
         }));
         break;
       case "dm_channel_create":
-        set((s) => ({
-          dmChannels: [
-            event.channel,
-            ...s.dmChannels.filter((c) => c.id !== event.channel.id),
-          ],
-          authors: {
-            ...s.authors,
-            [event.channel.peer.id]: event.channel.peer,
-          },
-        }));
+        set((s) => {
+          const authors = { ...s.authors, [event.channel.peer.id]: event.channel.peer };
+          for (const m of event.channel.members || []) authors[m.id] = m;
+          return {
+            dmChannels: [
+              event.channel,
+              ...s.dmChannels.filter((c) => c.id !== event.channel.id),
+            ],
+            authors,
+          };
+        });
+        break;
+      case "dm_channel_remove":
+        get().dropDmChannel(event.dm_channel_id);
         break;
       case "dm_message_create": {
         set((s) => ({

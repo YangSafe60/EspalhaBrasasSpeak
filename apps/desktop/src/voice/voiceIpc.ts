@@ -11,6 +11,8 @@ export type VoiceHostCommand =
   | { op: "join-dm"; dmId: string }
   | { op: "leave" }
   | { op: "toggle-mute" }
+  /** Push-to-talk: open/close the mic without touching mute. */
+  | { op: "mic-gate"; open: boolean }
   | { op: "toggle-deafen" }
   | { op: "toggle-camera" }
   | { op: "share-screen" }

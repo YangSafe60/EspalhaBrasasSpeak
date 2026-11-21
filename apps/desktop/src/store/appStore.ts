@@ -23,3 +23,9 @@ export const useAppStore = create<AppState>()((...args) =>
     ...createWsSlice(...args),
   }) as AppState,
 );
+
+// Dev builds only: the app's store instance for local debugging/automation
+// (Vite can serve a second copy of this module after hot updates).
+if (import.meta.env.DEV && typeof window !== "undefined") {
+  (window as unknown as { __appStore?: typeof useAppStore }).__appStore = useAppStore;
+}

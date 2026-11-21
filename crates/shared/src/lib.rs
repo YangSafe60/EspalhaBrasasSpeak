@@ -145,6 +145,9 @@ pub struct Message {
     pub created_at: DateTime<Utc>,
     pub attachments: Vec<Attachment>,
     pub reactions: Vec<ReactionSummary>,
+    /// When the message was pinned in its channel (None = not pinned).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_at: Option<DateTime<Utc>>,
 }
 
 
@@ -252,8 +255,30 @@ pub struct UserIdentityKeyHistory {
 pub struct DmChannel {
     pub id: Uuid,
     pub friendship_id: Option<Uuid>,
+    /// 1:1: the other person. Group: some other member (or the viewer if alone).
     pub peer: UserPublic,
     pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub is_group: bool,
+    /// Group name (None = show the member names).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_id: Option<Uuid>,
+    /// Group members, the viewer included (empty for 1:1).
+    #[serde(default)]
+    pub members: Vec<UserPublic>,
+}
+
+/// A group message's content key, wrapped for one member with the pairwise
+/// X25519 key (author private + member public).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DmKeyEnvelope {
+    pub user_id: Uuid,
+    /// The member's public key the key was wrapped for.
+    pub public_key: String,
+    pub wrapped_key: String,
+    pub nonce: String,
 }
 
 /// Wire format for E2E DMs — ciphertext only; plaintext never leaves the client.
@@ -270,6 +295,9 @@ pub struct DmMessage {
     /// Recipient's X25519 public key at send time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recipient_public_key: Option<String>,
+    /// Group DMs only: the content key for each member.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_envelopes: Option<Vec<DmKeyEnvelope>>,
     pub reply_to_id: Option<Uuid>,
     pub edited_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
@@ -386,6 +414,10 @@ pub enum WsEvent {
     },
     DmChannelCreate {
         channel: DmChannel,
+    },
+    /// You left or were removed from a group DM.
+    DmChannelRemove {
+        dm_channel_id: Uuid,
     },
     DmMessageCreate {
         message: DmMessage,

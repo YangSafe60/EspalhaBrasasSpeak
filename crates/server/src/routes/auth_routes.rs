@@ -251,14 +251,17 @@ pub async fn refresh(
         id: String,
         user_id: String,
         expires_at: String,
+        family_id: Option<String>,
+        used_at: Option<String>,
     }
     let row = sqlx::query_as::<_, Row>(
-        "SELECT id, user_id, expires_at FROM refresh_tokens WHERE token_hash = ?",
+        "SELECT id, user_id, expires_at, family_id, used_at FROM refresh_tokens WHERE token_hash = ?",
     )
     .bind(&th)
     .fetch_optional(&state.db)
     .await?
     .ok_or(AppError::Unauthorized)?;
+    let family = row.family_id.clone().unwrap_or_else(|| row.id.clone());
 
     let exp = chrono::DateTime::parse_from_rfc3339(&row.expires_at)
         .map(|d| d.with_timezone(&Utc))
@@ -266,12 +269,37 @@ pub async fn refresh(
     if exp < Utc::now() {
         return Err(AppError::Unauthorized);
     }
-    sqlx::query("DELETE FROM refresh_tokens WHERE id = ?")
-        .bind(&row.id)
+    // Mark it used; only one caller can win this update.
+    let claimed = if row.used_at.is_none() {
+        sqlx::query("UPDATE refresh_tokens SET used_at = ? WHERE id = ? AND used_at IS NULL")
+            .bind(Utc::now().to_rfc3339())
+            .bind(&row.id)
+            .execute(&state.db)
+            .await?
+            .rows_affected()
+            == 1
+    } else {
+        false
+    };
+    if !claimed {
+        // A rotated token came back: it was copied. End that whole login
+        // (the thief's and the owner's tokens) so the copy is useless.
+        tracing::warn!(user_id = %row.user_id, "refresh token reuse detected; revoking its family");
+        sqlx::query("DELETE FROM refresh_tokens WHERE family_id = ? OR id = ?")
+            .bind(&family)
+            .bind(&row.id)
+            .execute(&state.db)
+            .await?;
+        return Err(AppError::Unauthorized);
+    }
+    let user_id = Uuid::parse_str(&row.user_id).map_err(|_| AppError::Unauthorized)?;
+    // Housekeeping: drop this user's expired tokens.
+    sqlx::query("DELETE FROM refresh_tokens WHERE user_id = ? AND expires_at < ?")
+        .bind(&row.user_id)
+        .bind(Utc::now().to_rfc3339())
         .execute(&state.db)
         .await?;
-    let user_id = Uuid::parse_str(&row.user_id).unwrap();
-    issue_pair(&state, user_id).await
+    issue_pair_in(&state, user_id, Some(family)).await
 }
 
 pub async fn me(State(state): State<AppState>, user: AuthUser) -> AppResult<Json<db::UserMe>> {
@@ -410,18 +438,30 @@ fn is_safe_profile_url(raw: &str) -> bool {
 }
 
 async fn issue_pair(state: &AppState, user_id: Uuid) -> AppResult<Json<AuthResponse>> {
+    issue_pair_in(state, user_id, None).await
+}
+
+/// `family`: the login this refresh belongs to (None = a new login).
+async fn issue_pair_in(
+    state: &AppState,
+    user_id: Uuid,
+    family: Option<String>,
+) -> AppResult<Json<AuthResponse>> {
     let access = issue_access_token(user_id, &state.config.jwt_secret)?;
     let refresh = issue_refresh_token_value();
     let th = hash_token(&refresh);
     let now = Utc::now();
+    let id = Uuid::new_v4().to_string();
+    let family = family.unwrap_or_else(|| id.clone());
     sqlx::query(
-        "INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, created_at, family_id) VALUES (?, ?, ?, ?, ?, ?)",
     )
-    .bind(Uuid::new_v4().to_string())
+    .bind(&id)
     .bind(user_id.to_string())
     .bind(th)
     .bind((now + Duration::days(30)).to_rfc3339())
     .bind(now.to_rfc3339())
+    .bind(family)
     .execute(&state.db)
     .await?;
 

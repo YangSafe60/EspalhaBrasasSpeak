@@ -120,6 +120,13 @@ export function useVoiceEngine() {
   );
   const mutedRef = useRef(muted);
   const deafenedRef = useRef(deafened);
+  /**
+   * Push-to-talk gate: closed means the mic is off even when not muted. Kept
+   * apart from `muted` so releasing the key never changes the user's mute.
+   */
+  const [micGateOpen, setMicGateOpen] = useState(true);
+  const micGateRef = useRef(true);
+  micGateRef.current = micGateOpen;
   const switchingRef = useRef(false);
   /** Suppress share start/stop chirps while replacing a share slot. */
   const replacingShareRef = useRef(false);
@@ -1086,8 +1093,12 @@ export function useVoiceEngine() {
           await teardownRoom(room, true);
           return;
         }
+        // Push-to-talk starts closed, so the mic is never live before a press.
+        const pttMode = settings.inputMode === "ptt" && Boolean(settings.pttKey);
+        micGateRef.current = !pttMode;
+        setMicGateOpen(!pttMode);
         await room.localParticipant.setMicrophoneEnabled(
-          !mutedRef.current && !deafenedRef.current,
+          !mutedRef.current && !deafenedRef.current && micGateRef.current,
           {
             deviceId: settings.inputDeviceId || undefined,
             echoCancellation: settings.echoCancellation,
@@ -1185,7 +1196,7 @@ export function useVoiceEngine() {
   useEffect(() => {
     const room = roomRef.current;
     if (!room || !connected) return;
-    void room.localParticipant.setMicrophoneEnabled(!muted && !deafened);
+    void room.localParticipant.setMicrophoneEnabled(!muted && !deafened && micGateRef.current);
     room.remoteParticipants.forEach((p) => {
       p.audioTrackPublications.forEach((pub: RemoteTrackPublication) => {
         if (!pub.track) return;
@@ -1224,6 +1235,13 @@ export function useVoiceEngine() {
     });
     void syncSessionState({ muted, deafened });
   }, [muted, deafened, connected, syncSessionState]);
+
+  // Push-to-talk presses only flip the local mic; nothing to sync server-side.
+  useEffect(() => {
+    const room = roomRef.current;
+    if (!room || !connected || mutedRef.current || deafenedRef.current) return;
+    void room.localParticipant.setMicrophoneEnabled(micGateOpen);
+  }, [micGateOpen, connected]);
 
   const applyUserMic = useCallback((userId: string, pref: UserVoicePref) => {
     const room = roomRef.current;
@@ -1273,7 +1291,7 @@ export function useVoiceEngine() {
       const room = roomRef.current;
       if (!room) return;
       void applyDevicesToRoom(room, settings);
-      void room.localParticipant.setMicrophoneEnabled(!muted && !deafened, {
+      void room.localParticipant.setMicrophoneEnabled(!muted && !deafened && micGateRef.current, {
         deviceId: settings.inputDeviceId || undefined,
         echoCancellation: settings.echoCancellation,
         noiseSuppression: settings.noiseSuppression,
@@ -1716,6 +1734,7 @@ export function useVoiceEngine() {
 
   return {
     roomRef,
+    setMicGate: setMicGateOpen,
     voiceChannelId,
     dmCallId,
     connected,

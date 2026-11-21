@@ -2,6 +2,7 @@
 import { api } from "../../api/client";
 import {
   encryptDm,
+  encryptGroupDm,
   fingerprint,
 } from "../../lib/e2e";
 import { sameId } from "../../lib/serverPerms";
@@ -9,6 +10,7 @@ import {
   decryptWire,
   decryptWireResilient,
   ensureIdentity,
+  fetchPeerPublicKey,
   fetchPeerPublicKeyHistory,
   getCachedIdentity,
   prefetchPeerPublicKey,
@@ -25,6 +27,39 @@ import type {
   VoiceStateView,
 } from "../../types";
 import type { AppStoreSlice } from "./sliceTypes";
+
+/** Encrypt for every current member of a group DM (me included). */
+async function sealForGroup(
+  dm: DmChannel,
+  plain: string,
+  myId: string,
+  identity: { privateKey: CryptoKey; publicKeyB64: string },
+) {
+  const members = dm.members || [];
+  const missing: string[] = [];
+  const keyed = await Promise.all(
+    members.map(async (m) => {
+      if (m.id === myId) return { userId: m.id, publicKey: identity.publicKeyB64 };
+      try {
+        return { userId: m.id, publicKey: await fetchPeerPublicKey(m.id) };
+      } catch {
+        missing.push(m.display_name || m.username);
+        return null;
+      }
+    }),
+  );
+  if (missing.length) {
+    throw new Error(
+      `${missing.join(", ")} ${missing.length === 1 ? "hasn't" : "haven't"} set up encrypted messaging yet.`,
+    );
+  }
+  return encryptGroupDm(
+    plain,
+    identity.privateKey,
+    keyed.filter((k): k is { userId: string; publicKey: string } => k !== null),
+    dm.id,
+  );
+}
 
 export const createSocialSlice: AppStoreSlice = (set, get) => ({
   openFriendsHome: async () => {
@@ -375,12 +410,17 @@ export const createSocialSlice: AppStoreSlice = (set, get) => ({
     );
     const peerKey = get().peerPublicKeys[peerId];
     let fp = get().dmFingerprints[dmId];
-    if (!fp && peerKey && getCachedIdentity()) {
+    // Fingerprints are per pair of people; a group has no single one.
+    if (!fp && peerKey && getCachedIdentity() && !dm.is_group) {
       fp = await fingerprint(getCachedIdentity()!.publicKeyB64, peerKey);
     }
     set((s) => ({
       messagesByDm: { ...s.messagesByDm, [dmId]: messages },
-      authors: { ...s.authors, [dm.peer.id]: dm.peer },
+      authors: {
+        ...s.authors,
+        [dm.peer.id]: dm.peer,
+        ...Object.fromEntries((dm.members || []).map((m) => [m.id, m])),
+      },
       dmFingerprints: fp
         ? { ...s.dmFingerprints, [dmId]: fp }
         : s.dmFingerprints,
@@ -395,6 +435,23 @@ export const createSocialSlice: AppStoreSlice = (set, get) => ({
     const id = await ensureIdentity(user.id);
     const dm = get().dmChannels.find((c) => c.id === dmId);
     if (!dm) throw new Error("DM not found");
+
+    if (dm.is_group) {
+      const sealed = await sealForGroup(dm, plain, user.id, id);
+      const wire = await api<DmMessageWire>(`/api/dms/${dmId}/messages`, {
+        method: "POST",
+        body: { ...sealed, sender_public_key: id.publicKeyB64, attachment_ids: ids },
+      });
+      const message = { ...wire, content: plain, decrypt_failed: false };
+      set((s) => ({
+        messagesByDm: {
+          ...s.messagesByDm,
+          [dmId]: upsertDm(s.messagesByDm[dmId] || [], message),
+        },
+        authors: { ...s.authors, [user.id]: user },
+      }));
+      return;
+    }
 
     let peerKey: string;
     try {
@@ -444,6 +501,28 @@ export const createSocialSlice: AppStoreSlice = (set, get) => ({
     const id = await ensureIdentity(user.id);
     const dm = get().dmChannels.find((c) => c.id === dmId);
     if (!dm) return;
+    if (dm.is_group) {
+      const plain = content.trim();
+      let sealed: Awaited<ReturnType<typeof sealForGroup>>;
+      try {
+        sealed = await sealForGroup(dm, plain, user.id, id);
+      } catch (e) {
+        get().setError(e instanceof Error ? e.message : "Could not encrypt the message.");
+        return;
+      }
+      const wire = await api<DmMessageWire>(`/api/dms/messages/${messageId}`, {
+        method: "PATCH",
+        body: { ...sealed, sender_public_key: id.publicKeyB64 },
+      });
+      const message = { ...wire, content: plain, decrypt_failed: false };
+      set((s) => ({
+        messagesByDm: {
+          ...s.messagesByDm,
+          [dmId]: upsertDm(s.messagesByDm[dmId] || [], message),
+        },
+      }));
+      return;
+    }
     let peerKey: string;
     try {
       peerKey = await prefetchPeerPublicKey(
@@ -494,5 +573,61 @@ export const createSocialSlice: AppStoreSlice = (set, get) => ({
 
   sendDmTyping: async (dmId) => {
     await api(`/api/dms/${dmId}/typing`, { method: "POST" });
+  },
+
+  createGroupDm: async (userIds, name) => {
+    const channel = await api<DmChannel>("/api/dms/groups", {
+      method: "POST",
+      body: { user_ids: userIds, name: name?.trim() || null },
+    });
+    get().upsertDmChannel(channel);
+    return channel.id;
+  },
+
+  addGroupDmMember: async (dmId, userId) => {
+    const channel = await api<DmChannel>(`/api/dms/${dmId}/members`, {
+      method: "POST",
+      body: { user_id: userId },
+    });
+    get().upsertDmChannel(channel);
+  },
+
+  removeGroupDmMember: async (dmId, userId) => {
+    await api(`/api/dms/${dmId}/members/${userId}`, { method: "DELETE" });
+    if (userId === get().user?.id) get().dropDmChannel(dmId);
+  },
+
+  renameGroupDm: async (dmId, name) => {
+    const channel = await api<DmChannel>(`/api/dms/${dmId}/group`, {
+      method: "PATCH",
+      body: { name: name.trim() || null },
+    });
+    get().upsertDmChannel(channel);
+  },
+
+  upsertDmChannel: (channel) => {
+    set((s) => {
+      const authors = { ...s.authors, [channel.peer.id]: channel.peer };
+      for (const m of channel.members || []) authors[m.id] = m;
+      const exists = s.dmChannels.some((d) => d.id === channel.id);
+      return {
+        dmChannels: exists
+          ? s.dmChannels.map((d) => (d.id === channel.id ? channel : d))
+          : [channel, ...s.dmChannels],
+        authors,
+      };
+    });
+  },
+
+  dropDmChannel: (dmId) => {
+    set((s) => {
+      const { [dmId]: _m, ...messagesByDm } = s.messagesByDm;
+      void _m;
+      return {
+        dmChannels: s.dmChannels.filter((d) => d.id !== dmId),
+        messagesByDm,
+        activeDmId: s.activeDmId === dmId ? null : s.activeDmId,
+      };
+    });
   },
 });
