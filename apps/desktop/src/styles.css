@@ -139,7 +139,10 @@ html.has-titlebar .update-overlay {
   top: var(--titlebar-height);
 }
 
-html.has-titlebar .lobby-screen-tile.is-expanded {
+html.has-titlebar .lobby-screen-tile.is-expanded,
+/* The DM call stage sets tile height: 100% with higher specificity; an
+   expanded tile must still fit below the title bar (it was cut at the bottom). */
+.dm-split-view.in-call .dm-call-lobby.has-stage .lobby-screen-tile.is-expanded {
   height: calc(100vh - var(--titlebar-height));
 }
 
@@ -7384,6 +7387,108 @@ html[data-theme="light"] .mini-profile-msg {
 .mini-profile-msg-emoji .emoji-picker-toggle:hover {
   color: var(--text);
   background: rgba(255, 255, 255, 0.08);
+}
+
+/* Incoming DM call (Discord-style): top centre, above everything but modals. */
+.incoming-call-card {
+  position: fixed;
+  top: calc(var(--titlebar-height) + 14px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 210;
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  min-width: min(360px, calc(100vw - 32px));
+  padding: 0.7rem 0.8rem 0.7rem 0.75rem;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(12, 20, 24, 0.97);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(12px);
+  animation: incoming-call-in 180ms ease-out;
+}
+
+@keyframes incoming-call-in {
+  from { opacity: 0; transform: translate(-50%, -8px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+.incoming-call-avatar {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--bg-3) center / cover no-repeat;
+  color: var(--text);
+  font-weight: 700;
+  /* ringing pulse */
+  box-shadow: 0 0 0 0 rgba(35, 165, 90, 0.55);
+  animation: incoming-call-ring 1.4s ease-out infinite;
+}
+
+@keyframes incoming-call-ring {
+  0% { box-shadow: 0 0 0 0 rgba(35, 165, 90, 0.55); }
+  70% { box-shadow: 0 0 0 12px rgba(35, 165, 90, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(35, 165, 90, 0); }
+}
+
+.incoming-call-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.incoming-call-text strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.incoming-call-text span {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.incoming-call-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.incoming-call-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  cursor: pointer;
+  transition: filter 120ms ease, transform 120ms ease;
+}
+
+.incoming-call-btn:hover {
+  filter: brightness(1.12);
+  transform: scale(1.05);
+}
+
+.incoming-call-btn.accept {
+  background: #23a55a;
+}
+
+.incoming-call-btn.decline {
+  background: #da373c;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .incoming-call-card,
+  .incoming-call-avatar {
+    animation: none;
+  }
 }
 
 .message-toast-stack {

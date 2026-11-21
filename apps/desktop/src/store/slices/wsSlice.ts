@@ -782,11 +782,20 @@ export const createWsSlice: AppStoreSlice = (set, get) => ({
               };
             }
           }
+          const othersLeft = next.some(
+            (p) => !(s.user?.id && sameId(p.user_id, s.user.id)),
+          );
+          let declinedDmCalls = s.declinedDmCalls;
+          if (!othersLeft && declinedDmCalls[event.dm_channel_id]) {
+            const { [event.dm_channel_id]: _ended, ...rest } = declinedDmCalls;
+            declinedDmCalls = rest;
+          }
           return {
             dmCallByChannel: {
               ...s.dmCallByChannel,
               [event.dm_channel_id]: next,
             },
+            declinedDmCalls,
             ...local,
           };
         });

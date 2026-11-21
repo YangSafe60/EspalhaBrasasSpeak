@@ -6,7 +6,26 @@ import {
   stopDmCallRing,
 } from "../lib/voiceSounds";
 import { useAppStore } from "../store/appStore";
+import type { DmChannel } from "../types";
 import type { useVoice } from "./useVoice";
+
+/**
+ * A DM where the other person is in a call we're not in and haven't
+ * declined: someone is calling us.
+ */
+export function findIncomingDmCall(
+  dmChannels: DmChannel[],
+  dmCallByChannel: Record<string, { user_id: string }[]>,
+  dmCallId: string | null,
+  declined: Record<string, true>,
+): DmChannel | undefined {
+  return dmChannels.find((dm) => {
+    if (dmCallId && sameId(dm.id, dmCallId)) return false;
+    if (declined[dm.id]) return false;
+    const participants = dmCallByChannel[dm.id] || [];
+    return participants.some((p) => sameId(p.user_id, dm.peer.id));
+  });
+}
 
 /** Play ringing while a private call is waiting to be answered. */
 export function useDmCallRing(voice: ReturnType<typeof useVoice>) {
@@ -14,6 +33,7 @@ export function useDmCallRing(voice: ReturnType<typeof useVoice>) {
   const dmCallId = useAppStore((s) => s.dmCallId);
   const dmCallByChannel = useAppStore((s) => s.dmCallByChannel);
   const dmChannels = useAppStore((s) => s.dmChannels);
+  const declinedDmCalls = useAppStore((s) => s.declinedDmCalls);
 
   useEffect(() => {
     if (!user) {
@@ -40,11 +60,7 @@ export function useDmCallRing(voice: ReturnType<typeof useVoice>) {
       return;
     }
 
-    const incomingCall = dmChannels.find((dm) => {
-      if (dmCallId && sameId(dm.id, dmCallId)) return false;
-      const participants = dmCallByChannel[dm.id] || [];
-      return participants.some((p) => sameId(p.user_id, dm.peer.id));
-    });
+    const incomingCall = findIncomingDmCall(dmChannels, dmCallByChannel, dmCallId, declinedDmCalls);
 
     if (incomingCall) {
       startDmCallIncomingRing();
@@ -56,6 +72,7 @@ export function useDmCallRing(voice: ReturnType<typeof useVoice>) {
     dmCallByChannel,
     dmCallId,
     dmChannels,
+    declinedDmCalls,
     user,
     voice.connected,
     voice.dmCallId,

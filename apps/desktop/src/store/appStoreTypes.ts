@@ -101,6 +101,8 @@ export interface AppState {
   pendingVoiceJoinChannelId: string | null;
   /** Join a private DM call (consumed by App). */
   pendingDmCallJoinId: string | null;
+  /** Incoming DM calls the user declined (until that call ends). */
+  declinedDmCalls: Record<string, true>;
   /** Shown when a friend invites you into a server. */
   pendingServerInvite: {
     server: Server;
@@ -144,6 +146,7 @@ export interface AppState {
   requestVoiceJoin: (channelId: string) => void;
   clearPendingVoiceJoin: () => void;
   requestDmCallJoin: (dmId: string) => void;
+  declineDmCall: (dmId: string) => void;
   clearPendingDmCallJoin: () => void;
   clearPendingServerInvite: () => void;
   clearPendingChannelInvite: () => void;

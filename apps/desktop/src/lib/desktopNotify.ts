@@ -28,6 +28,8 @@ export function showDesktopNotification(opts: {
   >;
   tag?: string;
   onClick?: () => void;
+  /** Overrides the context line (e.g. "Incoming call"). */
+  context?: string;
 }): void {
   if (isAppFocused()) return;
 
@@ -47,7 +49,7 @@ export function showDesktopNotification(opts: {
       authorAvatar: opts.toast.authorAvatar
         ? mediaUrl(opts.toast.authorAvatar)
         : null,
-      context: toastContextLabel(opts.toast),
+      context: opts.context ?? toastContextLabel(opts.toast),
       preview: opts.toast.preview,
     });
     return;
@@ -57,7 +59,7 @@ export function showDesktopNotification(opts: {
   if (Notification.permission === "denied") return;
 
   const title = opts.toast.authorName;
-  const body = `${toastContextLabel(opts.toast)} — ${opts.toast.preview}`;
+  const body = `${opts.context ?? toastContextLabel(opts.toast)} — ${opts.toast.preview}`;
 
   const show = () => {
     try {

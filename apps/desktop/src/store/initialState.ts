@@ -53,6 +53,7 @@ export function createInitialState() {
     } | null,
     pendingVoiceJoinChannelId: null as string | null,
     pendingDmCallJoinId: null as string | null,
+    declinedDmCalls: {} as Record<string, true>,
     pendingServerInvite: null,
     pendingChannelInvite: null,
     channelMutes: loadChannelMutes(),

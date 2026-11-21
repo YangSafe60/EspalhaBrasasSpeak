@@ -5,10 +5,10 @@ const APP_NAME = "Espalha Brasas";
 export function toastContextLabel(
   toast: Pick<MessageToast, "kind" | "channelName">,
 ): string {
-  if (toast.kind === "dm") return "Mensagem direta";
-  if (toast.kind === "friend") return toast.channelName || "Pedido de amizade";
+  if (toast.kind === "dm") return "Direct Message";
+  if (toast.kind === "friend") return toast.channelName || "Friend request";
   if (toast.channelName) return `#${toast.channelName}`;
-  return "Nova mensagem";
+  return "New message";
 }
 
 /** Branded title/body for native OS notifications. */
