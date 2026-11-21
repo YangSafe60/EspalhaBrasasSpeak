@@ -897,9 +897,19 @@ async fn group_dms_need_friends_and_an_envelope_per_member() {
     let list = app.call(Method::GET, &msgs, Some(&carol), None).await;
     assert_eq!(list.body.as_array().unwrap().len(), 1);
 
-    // Calls stay 1:1 for now.
+    // Group calls: any member can join; the room is the group's.
     let call = format!("/api/dms/{gid}/call/token");
-    assert_eq!(app.call(Method::POST, &call, Some(&bob), None).await.status, StatusCode::BAD_REQUEST);
+    let r = app.call(Method::POST, &call, Some(&bob), None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["room"], format!("dm_call_{gid}"));
+    let r = app.call(Method::POST, &call, Some(&carol), None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let state_path = format!("/api/dms/{gid}/call/state");
+    let r = app
+        .call(Method::PUT, &state_path, Some(&carol), Some(json!({ "muted": true })))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["muted"], true);
 
     // Only the owner removes others; the owner leaving passes ownership on.
     let kick = format!("/api/dms/{gid}/members/{carol_id}");

@@ -3,6 +3,7 @@ import { findIncomingDmCall } from "../hooks/useDmCallRing";
 import { showDesktopNotification } from "../lib/desktopNotify";
 import { mediaCssUrl } from "../lib/mediaUrl";
 import { useAppStore } from "../store/appStore";
+import { dmTitle, otherCallers } from "../lib/dmDisplay";
 
 /**
  * Discord-style incoming call popup: who is calling, with Join and Decline.
@@ -18,8 +19,11 @@ export function IncomingCallCard() {
   const selectDm = useAppStore((s) => s.selectDm);
   const requestDmCallJoin = useAppStore((s) => s.requestDmCallJoin);
   const declineDmCall = useAppStore((s) => s.declineDmCall);
+  const me = useAppStore((s) => s.user);
 
-  const call = findIncomingDmCall(dmChannels, dmCallByChannel, dmCallId, declinedDmCalls);
+  const call = findIncomingDmCall(dmChannels, dmCallByChannel, dmCallId, declinedDmCalls, me?.id);
+  // Group: the group's name, and who started it.
+  const caller = call ? otherCallers(call, dmCallByChannel[call.id] || [], me?.id)[0] : undefined;
   const notifiedFor = useRef<string | null>(null);
 
   useEffect(() => {
@@ -29,23 +33,28 @@ export function IncomingCallCard() {
     }
     if (notifiedFor.current === call.id) return;
     notifiedFor.current = call.id;
-    const name = call.peer.display_name || call.peer.username;
+    const name = call.is_group
+      ? dmTitle(call, me?.id)
+      : call.peer.display_name || call.peer.username;
     showDesktopNotification({
       toast: {
         kind: "dm",
         authorName: name,
-        authorAvatar: call.peer.avatar_url,
-        preview: "is calling you",
+        authorAvatar: call.is_group ? caller?.avatar_url ?? null : call.peer.avatar_url,
+        preview: call.is_group
+          ? `${caller?.display_name || "Someone"} started a group call`
+          : "is calling you",
       },
       context: "Incoming call",
       tag: `dm-call-${call.id}`,
       onClick: () => void selectDm(call.id),
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [call, selectDm]);
 
   if (!call) return null;
-  const name = call.peer.display_name || call.peer.username;
-  const avatar = call.peer.avatar_url;
+  const name = call.is_group ? dmTitle(call, me?.id) : call.peer.display_name || call.peer.username;
+  const avatar = call.is_group ? caller?.avatar_url ?? null : call.peer.avatar_url;
 
   return (
     <div className="incoming-call-card" role="alertdialog" aria-label={`Incoming call from ${name}`}>
@@ -57,7 +66,11 @@ export function IncomingCallCard() {
       </div>
       <div className="incoming-call-text">
         <strong>{name}</strong>
-        <span>Incoming call…</span>
+        <span>
+          {call.is_group
+            ? `${caller?.display_name || "Someone"} started a group call`
+            : "Incoming call…"}
+        </span>
       </div>
       <div className="incoming-call-actions">
         <button

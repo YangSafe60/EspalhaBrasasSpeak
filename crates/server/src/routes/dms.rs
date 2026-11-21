@@ -94,6 +94,16 @@ fn validate_envelopes(
     serde_json::to_string(&envelopes).map_err(|_| bad())
 }
 
+/// Calls: any member of a group DM; in a 1:1, only if neither blocked the other.
+async fn require_can_call(db: &sqlx::SqlitePool, dm_id: Uuid, user: Uuid) -> AppResult<()> {
+    require_participant(db, dm_id, user).await?;
+    if is_group_dm(db, dm_id).await? {
+        return Ok(());
+    }
+    let peer = peer_of_dm(db, dm_id, user).await?;
+    require_can_message_peer(db, user, peer).await
+}
+
 async fn require_can_message_peer(db: &sqlx::SqlitePool, a: Uuid, b: Uuid) -> AppResult<()> {
     if is_blocked(db, a, b).await? {
         return Err(AppError::Forbidden);
@@ -664,12 +674,7 @@ pub async fn screen_call_token(
     Path(id): Path<Uuid>,
     Json(body): Json<crate::routes::voice::ScreenTokenReq>,
 ) -> AppResult<Json<VoiceTokenResponse>> {
-    require_participant(&state.db, id, user.id).await?;
-    let peer = peer_of_dm(&state.db, id, user.id).await?;
-    if is_blocked(&state.db, user.id, peer).await? {
-        return Err(AppError::Forbidden);
-    }
-    require_can_message_peer(&state.db, user.id, peer).await?;
+    require_can_call(&state.db, id, user.id).await?;
     let in_call: Option<String> = sqlx::query_scalar(
         "SELECT dm_channel_id FROM voice_states WHERE user_id = ?",
     )
@@ -704,9 +709,7 @@ pub async fn call_token(
     user: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<VoiceTokenResponse>> {
-    require_participant(&state.db, id, user.id).await?;
-    let peer = peer_of_dm(&state.db, id, user.id).await?;
-    require_can_message_peer(&state.db, user.id, peer).await?;
+    require_can_call(&state.db, id, user.id).await?;
 
     let profile = db::user_public(&state.db, user.id).await?;
     let room = dm_call_room_name(id);
@@ -773,8 +776,10 @@ pub async fn call_state(
     Json(body): Json<DmCallStateReq>,
 ) -> AppResult<Json<DmCallStateView>> {
     require_participant(&state.db, id, user.id).await?;
-    let peer = peer_of_dm(&state.db, id, user.id).await?;
-    require_can_message_peer(&state.db, user.id, peer).await?;
+    // Leaving always works (e.g. after being blocked mid-call).
+    if body.active != Some(false) {
+        require_can_call(&state.db, id, user.id).await?;
+    }
 
     let now = Utc::now().to_rfc3339();
     #[derive(sqlx::FromRow)]
@@ -1038,6 +1043,31 @@ pub async fn remove_group_member(
         .await?;
     if res.rows_affected() == 0 {
         return Err(AppError::NotFound);
+    }
+    let left_call = sqlx::query(
+        "UPDATE voice_states SET dm_channel_id = NULL, streaming = 0, updated_at = ? WHERE user_id = ? AND dm_channel_id = ?",
+    )
+    .bind(Utc::now().to_rfc3339())
+    .bind(target.to_string())
+    .bind(id.to_string())
+    .execute(&state.db)
+    .await?
+    .rows_affected()
+        > 0;
+    if left_call {
+        let mut notify = dm_participant_ids(&state.db, id).await?;
+        notify.push(target);
+        state.hub.broadcast_users(
+            &notify,
+            &WsEvent::DmCallUpdate {
+                dm_channel_id: id,
+                user_id: target,
+                active: false,
+                muted: false,
+                deafened: false,
+                streaming: false,
+            },
+        );
     }
     state
         .hub

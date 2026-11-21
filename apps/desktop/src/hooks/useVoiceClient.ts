@@ -1,3 +1,4 @@
+import { dmTitle } from "../lib/dmDisplay";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ScreenShareFps, ScreenShareResolution } from "../lib/screenShareQuality";
 import { loadScreenShareQuality } from "../lib/screenShareQuality";
@@ -280,7 +281,9 @@ export function useVoiceClient() {
           .getState()
           .dmChannels.find((d) => d.id === evt.dmCallId);
         if (dm) {
-          void api.setWindowTitle?.(`${dm.peer.display_name} | Call`);
+          void api.setWindowTitle?.(
+            `${dmTitle(dm, useAppStore.getState().user?.id)} | Call`,
+          );
         }
       }
     });

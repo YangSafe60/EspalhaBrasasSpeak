@@ -6,6 +6,7 @@ import { mediaCssUrl } from "../lib/mediaUrl";
 import { sameId } from "../lib/serverPerms";
 import { livekitUserId } from "../lib/screenPublisher";
 import { useAppStore } from "../store/appStore";
+import { dmTitle } from "../lib/dmDisplay";
 import { LobbyScreenTile } from "./voice/LobbyScreenTile";
 
 type VoiceApi = ReturnType<typeof useVoice>;
@@ -55,12 +56,10 @@ export function DmCallLobbyView({ voice, compact = false }: Props) {
         ? user
         : sameId(p.user_id, dm.peer.id)
           ? dm.peer
-          : authors[p.user_id];
+          : dm.members?.find((m) => sameId(m.id, p.user_id)) || authors[p.user_id];
       byId.set(p.user_id, {
         user_id: p.user_id,
-        name:
-          author?.display_name ||
-          (isSelf ? user.display_name : dm.peer.display_name),
+        name: author?.display_name || (isSelf ? user.display_name : "Unknown"),
         avatar: author?.avatar_url ?? null,
         muted: isSelf ? voice.muted : p.muted,
         deafened: isSelf ? voice.deafened : p.deafened,
@@ -88,7 +87,9 @@ export function DmCallLobbyView({ voice, compact = false }: Props) {
       });
     }
 
+    // 1:1: show the person being called. A group just lists who joined.
     if (
+      !dm.is_group &&
       inCall &&
       voice.connected &&
       !byId.has(dm.peer.id) &&
@@ -173,7 +174,7 @@ export function DmCallLobbyView({ voice, compact = false }: Props) {
       <header className="voice-lobby-header">
         <div>
           {!compact ? (
-            <p className="voice-lobby-eyebrow">Private call</p>
+            <p className="voice-lobby-eyebrow">{dm.is_group ? "Group call" : "Private call"}</p>
           ) : null}
           <h2>
             <span className="dm-call-lobby-icon" aria-hidden>
@@ -181,7 +182,7 @@ export function DmCallLobbyView({ voice, compact = false }: Props) {
                 <path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.01-.24c1.12.37 2.33.57 3.58.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.85 21 3 13.15 3 3a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.46.57 3.58a1 1 0 0 1-.24 1.01l-2.2 2.2z" />
               </svg>
             </span>{" "}
-            {dm.peer.display_name}
+            {dmTitle(dm, user?.id)}
           </h2>
           <p className="muted tiny">
             {voice.joining && !voice.connected
@@ -189,7 +190,9 @@ export function DmCallLobbyView({ voice, compact = false }: Props) {
               : connectedHere
                 ? peerJoined
                   ? `${lobbyUsers.length} in call`
-                  : `Waiting for ${dm.peer.display_name} to join…`
+                  : dm.is_group
+                    ? "Waiting for others to join…"
+                    : `Waiting for ${dm.peer.display_name} to join…`
                 : "Start the call from the chat header"}
           </p>
         </div>

@@ -1,5 +1,5 @@
 import { GroupDmPicker } from "./GroupDmPicker";
-import { dmTitle } from "../lib/dmDisplay";
+import { dmTitle, otherCallers } from "../lib/dmDisplay";
 import { memo, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent } from "react";
 import logoMark from "../assets/logo-mark.png";
 import { insertAtCursor } from "../lib/emojis";
@@ -92,9 +92,8 @@ export function DmMessageView() {
 
   const canSend = Boolean(channel);
   const selfInCall = Boolean(activeDmId && dmCallId && sameId(dmCallId, activeDmId));
-  const peerInCall = Boolean(
-    channel && (dmCallParticipants || []).some((p) => sameId(p.user_id, channel.peer.id)),
-  );
+  const callers = channel ? otherCallers(channel, dmCallParticipants || [], user?.id) : [];
+  const peerInCall = callers.length > 0;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -268,7 +267,6 @@ export function DmMessageView() {
               </svg>
             </button>
           )}
-          {!channel.is_group && (
           <button
             type="button"
             className={`icon-btn dm-call-btn${selfInCall ? " active" : ""}`}
@@ -280,7 +278,6 @@ export function DmMessageView() {
               <path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.01-.24c1.12.37 2.33.57 3.58.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.85 21 3 13.15 3 3a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.46.57 3.58a1 1 0 0 1-.24 1.01l-2.2 2.2z" />
             </svg>
           </button>
-          )}
           <span className="dm-e2e-badge" title="End-to-end encrypted" aria-label="End-to-end encrypted">
             E2E
           </span>
@@ -310,10 +307,11 @@ export function DmMessageView() {
         />
       )}
 
-      {peerInCall && !selfInCall && !channel.is_group ? (
+      {peerInCall && !selfInCall ? (
         <div className="dm-call-banner">
           <span>
-            <strong>{channel.peer.display_name}</strong> started a call
+            <strong>{callers[0]?.display_name}</strong>
+            {callers.length > 1 ? ` and ${callers.length - 1} more are in a call` : " started a call"}
           </span>
           <button type="button" className="btn primary sm" onClick={() => requestDmCallJoin(activeDmId)}>
             Join

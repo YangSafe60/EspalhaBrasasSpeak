@@ -66,6 +66,7 @@ export function FriendsSidebar({ onOpenFriends, friendsViewActive }: Props) {
 
   const me = useAppStore((s) => s.user);
   const removeGroupDmMember = useAppStore((s) => s.removeGroupDmMember);
+  const requestDmCallJoin = useAppStore((s) => s.requestDmCallJoin);
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [search, setSearch] = useState("");
   const [menu, setMenu] = useState<MenuState>(null);
@@ -99,6 +100,13 @@ export function FriendsSidebar({ onOpenFriends, friendsViewActive }: Props) {
     const { dm } = menu;
     if (dm.is_group) {
       return [
+        {
+          label: "Start call",
+          onClick: () => {
+            void selectDm(dm.id);
+            requestDmCallJoin(dm.id);
+          },
+        },
         { label: "Close DM", onClick: () => void closeDm(dm.id) },
         {
           label: "Leave group",
@@ -133,7 +141,7 @@ export function FriendsSidebar({ onOpenFriends, friendsViewActive }: Props) {
     });
 
     return items;
-  }, [menu, friends, pendingOutbound, requestFriend, startDmCallWithPeer, closeDm, me, removeGroupDmMember]);
+  }, [menu, friends, pendingOutbound, requestFriend, startDmCallWithPeer, closeDm, me, removeGroupDmMember, requestDmCallJoin, selectDm]);
 
   return (
     <aside className="channel-sidebar friends-sidebar">

@@ -1,3 +1,4 @@
+import { dmTitle } from "../lib/dmDisplay";
 import { useEffect } from "react";
 import { getElectronAPI } from "../lib/desktop";
 import { useAppStore } from "../store/appStore";
@@ -20,7 +21,7 @@ export function useVoiceWindowTitle(enabled: boolean) {
     if (dmCallId) {
       const dm = dmChannels.find((d) => d.id === dmCallId);
       void desktop.setWindowTitle(
-        dm ? `${dm.peer.display_name} | Call` : "Private call",
+        dm ? `${dmTitle(dm, useAppStore.getState().user?.id)} | Call` : "Private call",
       );
       return;
     }

@@ -10,20 +10,21 @@ import type { DmChannel } from "../types";
 import type { useVoice } from "./useVoice";
 
 /**
- * A DM where the other person is in a call we're not in and haven't
- * declined: someone is calling us.
+ * A DM (1:1 or group) where someone else is in a call we're not in and
+ * haven't declined: someone is calling us.
  */
 export function findIncomingDmCall(
   dmChannels: DmChannel[],
   dmCallByChannel: Record<string, { user_id: string }[]>,
   dmCallId: string | null,
   declined: Record<string, true>,
+  myId: string | undefined,
 ): DmChannel | undefined {
   return dmChannels.find((dm) => {
     if (dmCallId && sameId(dm.id, dmCallId)) return false;
     if (declined[dm.id]) return false;
     const participants = dmCallByChannel[dm.id] || [];
-    return participants.some((p) => sameId(p.user_id, dm.peer.id));
+    return participants.some((p) => !sameId(p.user_id, myId ?? ""));
   });
 }
 
@@ -60,7 +61,13 @@ export function useDmCallRing(voice: ReturnType<typeof useVoice>) {
       return;
     }
 
-    const incomingCall = findIncomingDmCall(dmChannels, dmCallByChannel, dmCallId, declinedDmCalls);
+    const incomingCall = findIncomingDmCall(
+      dmChannels,
+      dmCallByChannel,
+      dmCallId,
+      declinedDmCalls,
+      user.id,
+    );
 
     if (incomingCall) {
       startDmCallIncomingRing();
