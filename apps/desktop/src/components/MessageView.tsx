@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import logoMark from "../assets/logo-mark.png";
 import { messageMentionsMe, type MentionContext } from "../lib/mentions";
-import { effectiveServerPerms, hasPerm, Perm } from "../lib/serverPerms";
+import { effectiveChannelPerms, effectiveServerPerms, hasPerm, Perm } from "../lib/serverPerms";
 import { matchCustomEmojiToken } from "../lib/customEmoji";
 import { mediaUrl } from "../lib/mediaUrl";
 import { MAX_MESSAGE_CHARS, messageLength } from "../lib/messageLimits";
@@ -111,6 +111,20 @@ export function MessageView() {
     [server, roles, me, user?.id],
   );
   const canMentionEveryone = hasPerm(myPerms, Perm.MENTION_EVERYONE);
+  // Manage Messages in this channel (role overwrites included): may delete
+  // other people's messages, like the server allows.
+  const channelOverwrites = useAppStore((s) =>
+    activeChannelId ? s.overwritesByChannel[activeChannelId] : undefined,
+  );
+  const canManageMessages = useMemo(
+    () =>
+      hasPerm(
+        effectiveChannelPerms(server, roles, me, user?.id, channelOverwrites),
+        Perm.MANAGE_MESSAGES,
+      ),
+    [server, roles, me, user?.id, channelOverwrites],
+  );
+  const canDelete = (m: Message) => m.author_id === user?.id || canManageMessages;
 
   const mentionCtx = useMemo<MentionContext>(
     () => ({
@@ -176,7 +190,7 @@ export function MessageView() {
     },
     toggleSelect: (m, e) => {
       if (!(e.ctrlKey || e.metaKey)) return;
-      if (m.author_id !== user?.id) return;
+      if (!canDelete(m)) return;
       const t = e.target as HTMLElement;
       if (t.closest("button, a, input, textarea, .emoji-picker-root")) return;
       e.preventDefault();
@@ -225,7 +239,7 @@ export function MessageView() {
     try {
       if (pendingBulkDelete) {
         const toDelete = messages.filter(
-          (m) => selectedIds.has(m.id) && m.author_id === user?.id,
+          (m) => selectedIds.has(m.id) && canDelete(m),
         );
         await Promise.all(toDelete.map((m) => deleteMessage(m.id, m.channel_id)));
         if (editingId && selectedIds.has(editingId)) setEditingId(null);
@@ -272,6 +286,7 @@ export function MessageView() {
               author={authors[m.author_id]}
               isGroupStart={shouldStartGroup(messages[i - 1], m)}
               mine={user?.id === m.author_id}
+              canDelete={canDelete(m)}
               editing={editingId === m.id}
               selected={selectedIds.has(m.id)}
               mentioned={mentionedIds.has(m.id)}
@@ -322,9 +337,11 @@ export function MessageView() {
         description={
           pendingBulkDelete
             ? "Selected messages will be permanently removed for everyone in the channel."
-            : pendingDelete?.content
-              ? `“${pendingDelete.content.slice(0, 120)}${pendingDelete.content.length > 120 ? "…" : ""}” will be gone for everyone.`
-              : "This message will be permanently removed for everyone in the channel."
+            : pendingDelete && pendingDelete.author_id !== user?.id
+              ? `This message from ${authors[pendingDelete.author_id]?.display_name || "another member"} will be permanently removed for everyone in the channel.`
+              : pendingDelete?.content
+                ? `“${pendingDelete.content.slice(0, 120)}${pendingDelete.content.length > 120 ? "…" : ""}” will be gone for everyone.`
+                : "This message will be permanently removed for everyone in the channel."
         }
         confirmLabel={pendingBulkDelete ? "Delete Messages" : "Delete Message"}
         cancelLabel="Keep it"
@@ -346,6 +363,8 @@ type RowProps = {
   author: UserPublic | undefined;
   isGroupStart: boolean;
   mine: boolean;
+  /** Own message, or Manage Messages in this channel. */
+  canDelete: boolean;
   editing: boolean;
   selected: boolean;
   mentioned: boolean;
@@ -359,6 +378,7 @@ const MessageRow = memo(function MessageRow({
   author,
   isGroupStart,
   mine,
+  canDelete,
   editing,
   selected,
   mentioned,
@@ -454,25 +474,26 @@ const MessageRow = memo(function MessageRow({
             placement="auto"
             onPick={onReact}
           />
+          {/* Only the author edits; moderators may delete anyone's message. */}
           {mine && !editing && (
-            <>
-              <button
-                type="button"
-                className="msg-action"
-                title="Edit"
-                onClick={() => actions.startEdit(m.id)}
-              >
-                Edit
-              </button>
-              <button
-                type="button"
-                className="msg-action danger"
-                title="Delete"
-                onClick={() => actions.remove(m)}
-              >
-                Delete
-              </button>
-            </>
+            <button
+              type="button"
+              className="msg-action"
+              title="Edit"
+              onClick={() => actions.startEdit(m.id)}
+            >
+              Edit
+            </button>
+          )}
+          {canDelete && !editing && (
+            <button
+              type="button"
+              className="msg-action danger"
+              title={mine ? "Delete" : "Delete (moderator)"}
+              onClick={() => actions.remove(m)}
+            >
+              Delete
+            </button>
           )}
         </div>
 

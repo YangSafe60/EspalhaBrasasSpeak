@@ -607,3 +607,59 @@ async fn login_takes_as_long_for_unknown_accounts() {
         "unknown {unknown:?} vs known {known:?}"
     );
 }
+
+#[tokio::test]
+async fn moderators_delete_but_never_edit_others_messages() {
+    let app = test_app().await;
+    let owner = app.register("owner").await;
+    let member = app.register("member").await;
+    let (server_id, channel) = app.server_with_text_channel(&owner).await;
+    let inv = app
+        .call(
+            Method::POST,
+            &format!("/api/servers/{server_id}/invites"),
+            Some(&owner),
+            Some(json!({})),
+        )
+        .await;
+    let code = inv.body["code"].as_str().unwrap();
+    app.call(Method::POST, &format!("/api/invites/{code}"), Some(&member), Some(json!({})))
+        .await;
+
+    let path = format!("/api/channels/{channel}/messages");
+    let by_owner = app
+        .call(Method::POST, &path, Some(&owner), Some(json!({ "content": "owner says" })))
+        .await;
+    let by_member = app
+        .call(Method::POST, &path, Some(&member), Some(json!({ "content": "member says" })))
+        .await;
+    let owner_msg = by_owner.body["id"].as_str().unwrap().to_string();
+    let member_msg = by_member.body["id"].as_str().unwrap().to_string();
+
+    // A plain member can't delete someone else's message.
+    let r = app
+        .call(Method::DELETE, &format!("/api/messages/{owner_msg}"), Some(&member), None)
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+
+    // The owner (all permissions) can't rewrite it either...
+    let r = app
+        .call(
+            Method::PATCH,
+            &format!("/api/messages/{member_msg}"),
+            Some(&owner),
+            Some(json!({ "content": "words in your mouth" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+
+    // ...but can delete it.
+    let r = app
+        .call(Method::DELETE, &format!("/api/messages/{member_msg}"), Some(&owner), None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(
+        app.count("SELECT COUNT(1) FROM messages WHERE id = ?", &member_msg).await,
+        0
+    );
+}

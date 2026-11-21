@@ -268,15 +268,10 @@ pub async fn update(
         Permissions::VIEW_CHANNEL,
     )
     .await?;
+    // Only the author edits a message. Manage Messages lets moderators
+    // delete other people's messages, not rewrite them.
     if author_id != user.id {
-        db::require_perm(
-            &state.db,
-            &server,
-            Some(channel_id),
-            user.id,
-            Permissions::MANAGE_MESSAGES,
-        )
-        .await?;
+        return Err(AppError::Forbidden);
     }
     let content = body.content.trim();
     check_message_len(content)?;
