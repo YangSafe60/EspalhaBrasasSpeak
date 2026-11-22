@@ -4164,6 +4164,40 @@ html[data-theme="light"] .user-voice-dock {
   overflow: hidden;
 }
 
+/* Server settings: one fixed size for every tab (the Roles page size), so
+   the popup doesn't jump around when switching pages. */
+.modal.wide.server-settings-modal {
+  width: min(920px, 96vw);
+  height: min(720px, 92vh);
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.server-settings-modal > .modal-header,
+.server-settings-modal > .tabs {
+  flex-shrink: 0;
+}
+
+.server-settings-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding-right: 0.25rem;
+}
+
+/* Roles fills the page and scrolls its own columns. */
+.server-settings-body > .roles-layout {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+  max-height: none;
+  overflow: hidden;
+}
+
 .modal.user-settings {
   width: min(960px, 96vw);
   height: min(820px, 92vh);

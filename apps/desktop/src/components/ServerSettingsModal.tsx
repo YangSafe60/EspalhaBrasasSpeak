@@ -445,7 +445,7 @@ export function ServerSettingsModal() {
   return (
     <div className="modal-backdrop" onClick={() => setModal(null)}>
       <div
-        className={`modal wide${tab === "roles" ? " roles-wide" : ""}`}
+        className="modal wide server-settings-modal"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="modal-header">
@@ -476,6 +476,8 @@ export function ServerSettingsModal() {
           ))}
         </div>
 
+        {/* Same popup size on every tab; only this area scrolls. */}
+        <div className="server-settings-body">
         {tab === "branding" && (
           <form className="stack" onSubmit={(e) => void saveBranding(e)}>
             <label>
@@ -926,6 +928,7 @@ export function ServerSettingsModal() {
 
         {msg && <p className="form-hint">{msg}</p>}
         {err && tab !== "danger" && <p className="form-error">{err}</p>}
+        </div>
       </div>
 
       <ConfirmDialog
