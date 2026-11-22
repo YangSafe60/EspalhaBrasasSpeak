@@ -194,6 +194,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/users/{user_id}/block", post(friends::block_user))
         .route("/api/users/{user_id}/profile", get(auth_routes::profile))
+        .route("/api/users/me/custom-status", put(auth_routes::set_custom_status))
         .route(
             "/api/servers/{id}/automod",
             get(servers::get_automod).put(servers::set_automod),

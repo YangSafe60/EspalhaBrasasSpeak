@@ -23,16 +23,43 @@ pub struct UserMe {
 pub struct UserProfile {
     pub bio: Option<String>,
     pub accent_color: Option<String>,
+    /// Only while it hasn't expired.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_status: Option<CustomStatus>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CustomStatus {
+    pub text: Option<String>,
+    pub emoji: Option<String>,
+    /// None = until cleared.
+    pub expires_at: Option<String>,
+}
+
+/// A custom status, unless it's empty or expired.
+fn live_status(text: Option<String>, emoji: Option<String>, expires_at: Option<String>) -> Option<CustomStatus> {
+    if text.is_none() && emoji.is_none() {
+        return None;
+    }
+    if let Some(e) = expires_at.as_deref().and_then(|e| DateTime::parse_from_rfc3339(e).ok()) {
+        if e.with_timezone(&Utc) <= Utc::now() {
+            return None;
+        }
+    }
+    Some(CustomStatus { text, emoji, expires_at })
 }
 
 pub async fn user_profile(db: &SqlitePool, id: Uuid) -> AppResult<UserProfile> {
-    let row: Option<(Option<String>, Option<String>)> =
-        sqlx::query_as("SELECT bio, accent_color FROM users WHERE id = ?")
-            .bind(id.to_string())
-            .fetch_optional(db)
-            .await?;
-    let (bio, accent_color) = row.ok_or(AppError::NotFound)?;
-    Ok(UserProfile { bio, accent_color })
+    #[allow(clippy::type_complexity)]
+    let row: Option<(Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)> =
+        sqlx::query_as(
+            "SELECT bio, accent_color, custom_status_text, custom_status_emoji, custom_status_expires_at FROM users WHERE id = ?",
+        )
+        .bind(id.to_string())
+        .fetch_optional(db)
+        .await?;
+    let (bio, accent_color, text, emoji, expires_at) = row.ok_or(AppError::NotFound)?;
+    Ok(UserProfile { bio, accent_color, custom_status: live_status(text, emoji, expires_at) })
 }
 
 #[allow(dead_code)]

@@ -36,6 +36,13 @@ export interface UserAccount extends UserPublic {
 export interface UserProfileExtras {
   bio: string | null;
   accent_color: string | null;
+  /** Custom status bubble (absent when none or expired). */
+  custom_status?: {
+    text: string | null;
+    emoji: string | null;
+    /** null = until cleared */
+    expires_at: string | null;
+  } | null;
 }
 
 export interface Server {

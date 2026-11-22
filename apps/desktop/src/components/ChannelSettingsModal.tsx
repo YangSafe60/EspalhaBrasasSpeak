@@ -1,3 +1,4 @@
+import { AppSelect } from "./AppSelect";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useAppStore } from "../store/appStore";
 import {
@@ -832,13 +833,12 @@ export function ChannelSettingsModal() {
                   <p className="muted tiny">
                     How long each person waits between messages. Moderators aren't affected.
                   </p>
-                  <select value={slowmode} onChange={(e) => setSlowmode(Number(e.target.value))}>
-                    {SLOWMODE_OPTIONS.map((o) => (
-                      <option key={o.seconds} value={o.seconds}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
+                  <AppSelect
+                    ariaLabel="Slow mode"
+                    value={slowmode}
+                    options={SLOWMODE_OPTIONS.map((o) => ({ value: o.seconds, label: o.label }))}
+                    onChange={setSlowmode}
+                  />
                 </div>
               )}
               {isVoice && (

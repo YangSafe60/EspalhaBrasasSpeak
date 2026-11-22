@@ -512,3 +512,44 @@ pub async fn profile(
 ) -> AppResult<Json<db::UserProfile>> {
     Ok(Json(db::user_profile(&state.db, id).await?))
 }
+
+
+#[derive(Deserialize)]
+pub struct CustomStatusReq {
+    pub text: Option<String>,
+    pub emoji: Option<String>,
+    /// Clear after this many minutes (None = until cleared).
+    pub expires_minutes: Option<i64>,
+}
+
+/// Set (or clear, with no text and no emoji) my custom status.
+pub async fn set_custom_status(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Json(body): Json<CustomStatusReq>,
+) -> AppResult<Json<db::UserProfile>> {
+    let text = body.text.as_deref().map(str::trim).filter(|t| !t.is_empty());
+    let emoji = body.emoji.as_deref().map(str::trim).filter(|e| !e.is_empty());
+    if text.is_some_and(|t| t.chars().count() > 128) {
+        return Err(AppError::BadRequest("status can be up to 128 characters".into()));
+    }
+    if emoji.is_some_and(|e| e.chars().count() > 64) {
+        return Err(AppError::BadRequest("invalid emoji".into()));
+    }
+    let expires_at = match body.expires_minutes {
+        None | Some(0) => None,
+        Some(m) if (1..=60 * 24 * 30).contains(&m) => Some((Utc::now() + Duration::minutes(m)).to_rfc3339()),
+        Some(_) => return Err(AppError::BadRequest("invalid duration".into())),
+    };
+    let clear = text.is_none() && emoji.is_none();
+    sqlx::query(
+        "UPDATE users SET custom_status_text = ?, custom_status_emoji = ?, custom_status_expires_at = ? WHERE id = ?",
+    )
+    .bind(text)
+    .bind(emoji)
+    .bind(if clear { None } else { expires_at })
+    .bind(user.id.to_string())
+    .execute(&state.db)
+    .await?;
+    Ok(Json(db::user_profile(&state.db, user.id).await?))
+}

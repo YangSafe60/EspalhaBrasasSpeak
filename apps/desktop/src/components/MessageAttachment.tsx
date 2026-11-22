@@ -114,7 +114,7 @@ export function MessageAttachment({
       {temporary && (
         <span
           className="attachment-temporary"
-          title="Catbox was down, so this file is on a temporary host. The server moves it to Catbox automatically when Catbox is back (within 72 hours)."
+          title="Stored temporarily for now. It will be saved permanently automatically (within 72 hours)."
         >
           Temporary · saving permanently
         </span>

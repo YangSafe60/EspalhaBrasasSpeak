@@ -1,3 +1,4 @@
+import { AppSelect } from "./AppSelect";
 import { keyLabel } from "../hooks/usePushToTalk";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -257,20 +258,15 @@ export function VoiceVideoSettingsPanel() {
 
       <div className="settings-section">
         <h4>Input Device</h4>
-        <label>
-          Microphone
-          <select
-            value={settings.inputDeviceId}
-            onChange={(e) => patch({ inputDeviceId: e.target.value })}
-          >
-            <option value="">Default</option>
-            {audioInputs.map((d) => (
-              <option key={d.deviceId} value={d.deviceId}>
-                {d.label || `Microphone ${d.deviceId.slice(0, 6)}`}
-              </option>
-            ))}
-          </select>
-        </label>
+        <AppSelect
+          label="Microphone"
+          value={settings.inputDeviceId}
+          options={[
+            { value: "", label: "Default" },
+            ...audioInputs.map((d) => ({ value: d.deviceId, label: d.label || `Microphone ${d.deviceId.slice(0, 6)}` })),
+          ]}
+          onChange={(v) => patch({ inputDeviceId: v })}
+        />
         <label>
           Input Volume ({settings.inputVolume}%)
           <input
@@ -300,20 +296,15 @@ export function VoiceVideoSettingsPanel() {
 
       <div className="settings-section">
         <h4>Output Device</h4>
-        <label>
-          Speakers / Headphones
-          <select
-            value={settings.outputDeviceId}
-            onChange={(e) => patch({ outputDeviceId: e.target.value })}
-          >
-            <option value="">Default</option>
-            {audioOutputs.map((d) => (
-              <option key={d.deviceId} value={d.deviceId}>
-                {d.label || `Speaker ${d.deviceId.slice(0, 6)}`}
-              </option>
-            ))}
-          </select>
-        </label>
+        <AppSelect
+          label="Speakers / Headphones"
+          value={settings.outputDeviceId}
+          options={[
+            { value: "", label: "Default" },
+            ...audioOutputs.map((d) => ({ value: d.deviceId, label: d.label || `Speaker ${d.deviceId.slice(0, 6)}` })),
+          ]}
+          onChange={(v) => patch({ outputDeviceId: v })}
+        />
         <label>
           Output Volume ({settings.outputVolume}%)
           <input
@@ -413,20 +404,15 @@ export function VoiceVideoSettingsPanel() {
 
       <div className="settings-section">
         <h4>Camera</h4>
-        <label>
-          Camera
-          <select
-            value={settings.cameraDeviceId}
-            onChange={(e) => patch({ cameraDeviceId: e.target.value })}
-          >
-            <option value="">Default</option>
-            {videoInputs.map((d) => (
-              <option key={d.deviceId} value={d.deviceId}>
-                {d.label || `Camera ${d.deviceId.slice(0, 6)}`}
-              </option>
-            ))}
-          </select>
-        </label>
+        <AppSelect
+          label="Camera"
+          value={settings.cameraDeviceId}
+          options={[
+            { value: "", label: "Default" },
+            ...videoInputs.map((d) => ({ value: d.deviceId, label: d.label || `Camera ${d.deviceId.slice(0, 6)}` })),
+          ]}
+          onChange={(v) => patch({ cameraDeviceId: v })}
+        />
         <label className="toggle-row">
           <span>Mirror my camera</span>
           <input

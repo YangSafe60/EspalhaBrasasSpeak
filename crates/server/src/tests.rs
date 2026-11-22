@@ -1351,3 +1351,24 @@ async fn litterbox_fallback_is_temporary_and_encrypted_only() {
     let hours = (until.with_timezone(&chrono::Utc) - chrono::Utc::now()).num_hours();
     assert!((71..=72).contains(&hours), "{hours}");
 }
+
+#[tokio::test]
+async fn custom_status_set_read_and_clear() {
+    let app = test_app().await;
+    let (owner, member, _server, _channel, member_id) = owner_and_member(&app).await;
+    let r = app
+        .call(Method::PUT, "/api/users/me/custom-status", Some(&member), Some(json!({ "text": " Watermelon ", "emoji": "🍉", "expires_minutes": 60 })))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let p = app.call(Method::GET, &format!("/api/users/{member_id}/profile"), Some(&owner), None).await;
+    assert_eq!(p.body["custom_status"]["text"], "Watermelon");
+    assert_eq!(p.body["custom_status"]["emoji"], "🍉");
+    assert!(p.body["custom_status"]["expires_at"].is_string());
+    let long = app
+        .call(Method::PUT, "/api/users/me/custom-status", Some(&member), Some(json!({ "text": "x".repeat(200) })))
+        .await;
+    assert_eq!(long.status, StatusCode::BAD_REQUEST);
+    app.call(Method::PUT, "/api/users/me/custom-status", Some(&member), Some(json!({ "text": "" }))).await;
+    let p = app.call(Method::GET, &format!("/api/users/{member_id}/profile"), Some(&owner), None).await;
+    assert!(p.body.get("custom_status").is_none(), "{}", p.body);
+}

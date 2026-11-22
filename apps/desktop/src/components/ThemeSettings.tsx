@@ -1,3 +1,4 @@
+import { AppSelect } from "./AppSelect";
 import { useEffect, useState } from "react";
 import { sameId } from "../lib/serverPerms";
 import {
@@ -214,18 +215,16 @@ export function ThemeSettings() {
               Choose whether servers use your colors or their accent.
             </em>
           </span>
-          <select
+          <AppSelect
+            className="app-select-inline"
+            ariaLabel="Server theme"
             value={theme.serverThemeMode}
-            onChange={(e) =>
-              commit({
-                ...theme,
-                serverThemeMode: e.target.value as ServerThemeMode,
-              })
-            }
-          >
-            <option value="mine">Use my theme</option>
-            <option value="server">Use the server&apos;s theme</option>
-          </select>
+            options={[
+              { value: "mine" as ServerThemeMode, label: "Use my theme" },
+              { value: "server" as ServerThemeMode, label: "Use the server's theme" },
+            ]}
+            onChange={(v) => commit({ ...theme, serverThemeMode: v })}
+          />
         </label>
       </div>
     </div>

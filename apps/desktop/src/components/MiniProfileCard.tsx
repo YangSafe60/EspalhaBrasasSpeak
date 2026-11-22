@@ -1,3 +1,4 @@
+import { CustomStatusBubble } from "./CustomStatusBubble";
 import { api } from "../api/client";
 import type { UserProfileExtras } from "../types";
 import {
@@ -324,6 +325,11 @@ export function MiniProfileCard() {
             aria-label={status}
           />
         </div>
+        <CustomStatusBubble
+          status={extras?.custom_status}
+          editable={isSelf}
+          onChange={(cs) => setExtras((prev) => (prev ? { ...prev, custom_status: cs } : prev))}
+        />
       </div>
 
       <div className="mini-profile-body">

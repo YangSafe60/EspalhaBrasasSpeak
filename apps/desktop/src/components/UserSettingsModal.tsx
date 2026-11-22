@@ -1,3 +1,4 @@
+import { ColorField } from "./ColorField";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { mediaCssUrl, mediaUrl } from "../lib/mediaUrl";
 import { getElectronAPI } from "../lib/desktop";
@@ -461,17 +462,11 @@ export function UserSettingsModal() {
                     onChange={(e) => setBio(e.target.value)}
                   />
                 </label>
-                <div className="profile-accent-row">
-                  <span>Profile colour</span>
-                  <input
-                    type="color"
-                    value={accent || "#e31b23"}
-                    aria-label="Profile colour"
-                    onChange={(e) => setAccent(e.target.value)}
-                  />
+                <div className="profile-accent-field">
+                  <ColorField label="Profile colour" value={accent || "#e31b23"} onChange={setAccent} />
                   {accent && (
                     <button type="button" className="btn ghost sm" onClick={() => setAccent("")}>
-                      Reset
+                      Reset to default
                     </button>
                   )}
                 </div>

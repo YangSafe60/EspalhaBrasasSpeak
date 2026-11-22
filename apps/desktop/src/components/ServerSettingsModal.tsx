@@ -1,7 +1,7 @@
+import { AppSelect } from "./AppSelect";
 import { AuditLogTab, WordFilterTab } from "./ServerModerationTabs";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { copyText } from "../lib/clipboard";
-import { IMAGE_UPLOAD_HINT } from "../lib/uploadHints";
 import { mediaCssUrl, mediaUrl } from "../lib/mediaUrl";
 import {
   effectiveServerPerms,
@@ -559,7 +559,6 @@ export function ServerSettingsModal() {
                 )}
               </div>
             </div>
-            <p className="muted tiny">{IMAGE_UPLOAD_HINT}</p>
             <button type="submit" className="btn primary" disabled={busy}>
               Save branding
             </button>
@@ -775,32 +774,18 @@ export function ServerSettingsModal() {
             </p>
 
             <div className="invite-create-grid">
-              <label>
-                Expires after
-                <select
-                  value={inviteMaxAge}
-                  onChange={(e) => setInviteMaxAge(Number(e.target.value))}
-                >
-                  {INVITE_AGE_OPTIONS.map((o) => (
-                    <option key={o.seconds} value={o.seconds}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Max uses
-                <select
-                  value={inviteMaxUses}
-                  onChange={(e) => setInviteMaxUses(Number(e.target.value))}
-                >
-                  {INVITE_USES_OPTIONS.map((o) => (
-                    <option key={o.uses} value={o.uses}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <AppSelect
+                label="Expires after"
+                value={inviteMaxAge}
+                options={INVITE_AGE_OPTIONS.map((o) => ({ value: o.seconds, label: o.label }))}
+                onChange={setInviteMaxAge}
+              />
+              <AppSelect
+                label="Max uses"
+                value={inviteMaxUses}
+                options={INVITE_USES_OPTIONS.map((o) => ({ value: o.uses, label: o.label }))}
+                onChange={setInviteMaxUses}
+              />
             </div>
 
             <button
