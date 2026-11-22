@@ -152,32 +152,77 @@ function imageFileExt(filename, contentType) {
   return "png";
 }
 
+/**
+ * Upload to Catbox (permanent, random link). Catbox sometimes stores the
+ * file but answers with an empty body; sending the same bytes again returns
+ * the existing link (it dedupes by content), so empty replies are retried.
+ */
+/** Size of a just-uploaded file (HEAD), or null if it can't be checked. */
+async function storedSize(url) {
+  try {
+    const res = await fetch(url, { method: "HEAD", headers: { "User-Agent": "EspalhaBrasas/0.1" } });
+    if (!res.ok) return null;
+    const len = res.headers.get("content-length");
+    return len == null ? null : Number(len);
+  } catch {
+    return null;
+  }
+}
+
+async function catboxUpload(buf, filename, contentType, linkPattern) {
+  const waits = [0, 800, 2000, 4000];
+  let last = "";
+  let status = 0;
+  let brokenStore = false;
+  for (const wait of waits) {
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    const form = new FormData();
+    form.append("reqtype", "fileupload");
+    form.append("fileToUpload", new Blob([new Uint8Array(buf)], { type: contentType }), filename);
+    let res;
+    try {
+      res = await fetch("https://catbox.moe/user/api.php", {
+        method: "POST",
+        headers: { "User-Agent": "EspalhaBrasas/0.1" },
+        body: form,
+      });
+    } catch {
+      continue; // network hiccup: try again
+    }
+    status = res.status;
+    last = (await res.text()).trim();
+    if (res.ok && linkPattern.test(last)) {
+      // Catbox has had outages where it saves uploads as empty files. Check
+      // the stored size, so a broken link is never sent as an attachment.
+      const stored = await storedSize(last);
+      if (stored === null || stored === buf.length) return last;
+      brokenStore = true;
+      last = "";
+      continue;
+    }
+    // A real refusal (some text that isn't a link) won't change on retry.
+    if (last) break;
+  }
+  throw new Error(
+    brokenStore
+      ? "Upload failed: Catbox is having problems right now (files arrive empty). Try again later."
+      : !last
+        ? "Upload failed: the file host didn't answer. Try again in a moment."
+        : last.length < 200
+          ? `Upload failed: ${last}`
+          : `Upload failed (HTTP ${status})`,
+  );
+}
+
 async function uploadImageToCatbox(buf, filename, contentType) {
   const ext = imageFileExt(filename, contentType);
   const safe = `image.${ext === "jpeg" ? "jpg" : ext}`;
-  const form = new FormData();
-  form.append("reqtype", "fileupload");
-  form.append(
-    "fileToUpload",
-    new Blob([new Uint8Array(buf)], { type: contentType || "image/png" }),
+  return catboxUpload(
+    buf,
     safe,
+    contentType || "image/png",
+    new RegExp(`^https://files\\.catbox\\.moe/[a-z0-9]+\\.${ext === "jpeg" ? "jpe?g" : ext}$`, "i"),
   );
-  const res = await fetch("https://catbox.moe/user/api.php", {
-    method: "POST",
-    headers: { "User-Agent": "EspalhaBrasas/0.1" },
-    body: form,
-  });
-  const text = (await res.text()).trim();
-  const ok = new RegExp(
-    `^https://files\\.catbox\\.moe/[a-z0-9]+\\.${ext === "jpeg" ? "jpe?g" : ext}$`,
-    "i",
-  ).test(text);
-  if (!res.ok || !ok) {
-    throw new Error(
-      text && text.length < 200 ? `Upload failed: ${text}` : `Upload failed (${res.status})`,
-    );
-  }
-  return text;
 }
 
 function notifyAppIconUrl() {
@@ -1239,7 +1284,7 @@ function registerIpc() {
 
   /**
    * Encrypted attachments (encrypted in the page, AES-GCM): uploaded as an
-   * opaque .bin on Catbox (permanent), so the host only ever stores
+   * opaque file on Catbox (permanent), so the host only ever stores
    * ciphertext.
    */
   ipcMain.handle("media:upload-encrypted", async (_evt, payload = {}) => {
@@ -1250,21 +1295,13 @@ function registerIpc() {
       : Buffer.from(raw instanceof ArrayBuffer ? raw : new Uint8Array(raw));
     if (buf.length === 0) throw new Error("empty file");
     if (buf.length > 25 * 1024 * 1024 + 64) throw new Error("file too large (max 25 MB)");
-    const form = new FormData();
-    form.append("reqtype", "fileupload");
-    form.append("fileToUpload", new Blob([new Uint8Array(buf)], { type: "application/octet-stream" }), "file.bin");
-    const res = await fetch("https://catbox.moe/user/api.php", {
-      method: "POST",
-      headers: { "User-Agent": "EspalhaBrasas/0.1" },
-      body: form,
-    });
-    const text = (await res.text()).trim();
-    if (!res.ok || !/^https:\/\/files\.catbox\.moe\/[a-z0-9]+\.bin$/i.test(text)) {
-      throw new Error(
-        text && text.length < 200 ? `Upload failed: ${text}` : `Upload failed (${res.status})`,
-      );
-    }
-    return { url: text, size: buf.length };
+    const url = await catboxUpload(
+      buf,
+      "file.dat",
+      "application/octet-stream",
+      /^https:\/\/files\.catbox\.moe\/[a-z0-9]+\.[a-z0-9]+$/i,
+    );
+    return { url, size: buf.length };
   });
 
   /**
@@ -1319,28 +1356,8 @@ function registerIpc() {
       throw new Error("That file is not a valid MP3");
     }
 
-    const form = new FormData();
-    form.append("reqtype", "fileupload");
-    form.append(
-      "fileToUpload",
-      new Blob([new Uint8Array(buf)], { type: "audio/mpeg" }),
-      filename,
-    );
-
-    const res = await fetch("https://catbox.moe/user/api.php", {
-      method: "POST",
-      headers: { "User-Agent": "EspalhaBrasas/0.1" },
-      body: form,
-    });
-    const text = (await res.text()).trim();
-    if (!res.ok || !/^https:\/\/files\.catbox\.moe\/[a-z0-9]+\.mp3$/i.test(text)) {
-      throw new Error(
-        text && text.length < 200
-          ? `Upload failed: ${text}`
-          : `Upload failed (${res.status})`,
-      );
-    }
-    return { url: text, size: buf.length, filename };
+    const url = await catboxUpload(buf, filename, "audio/mpeg", /^https:\/\/files\.catbox\.moe\/[a-z0-9]+\.mp3$/i);
+    return { url, size: buf.length, filename };
   });
 
   /** Images go to Catbox as a direct file URL. If it fails, the renderer falls back to /api/media/upload (the server holds the ImgBB key). */
