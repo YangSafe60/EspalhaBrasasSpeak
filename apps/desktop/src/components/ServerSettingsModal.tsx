@@ -66,6 +66,7 @@ export function ServerSettingsModal() {
   const activeServerId = useAppStore((s) => s.activeServerId);
   const servers = useAppStore((s) => s.servers);
   const rolesByServer = useAppStore((s) => s.rolesByServer);
+  const channelsByServer = useAppStore((s) => s.channelsByServer);
   const updateServer = useAppStore((s) => s.updateServer);
   const deleteServer = useAppStore((s) => s.deleteServer);
   const createRole = useAppStore((s) => s.createRole);
@@ -898,18 +899,50 @@ export function ServerSettingsModal() {
         )}
 
         {tab === "danger" && isOwner && (
-          <div className="stack settings-form danger-zone">
-            <div className="danger-card">
-              <div className="confirm-icon" aria-hidden>
-                !
+          <div className="server-delete">
+            <div className="server-delete-card">
+              <div className="server-delete-head">
+                <div className="confirm-icon" aria-hidden>
+                  !
+                </div>
+                <div>
+                  <h4>Delete {server?.name}</h4>
+                  <p className="muted">
+                    The server and everything in it is removed for everyone.
+                  </p>
+                </div>
               </div>
-              <h4>Delete Server</h4>
-              <p className="muted">
-                Are you sure you want to delete <strong>{server?.name}</strong>? Channels,
-                messages, roles, and members will be permanently removed. This cannot be
-                undone.
-              </p>
+              <ul className="server-delete-list">
+                {(() => {
+                  const nChannels = (channelsByServer[server.id] || []).filter(
+                    (c) => c.channel_type !== "category",
+                  ).length;
+                  const nRoles = (rolesByServer[server.id] || []).filter((r) => !r.is_everyone).length;
+                  const nMembers = (membersByServer[server.id] || []).length;
+                  return (
+                    <>
+                      <li>
+                        <strong>{nChannels}</strong>
+                        {nChannels === 1 ? "channel" : "channels"}, with all messages and files
+                      </li>
+                      <li>
+                        <strong>{nRoles}</strong>
+                        {nRoles === 1 ? "role" : "roles"} and every channel permission
+                      </li>
+                      <li>
+                        <strong>{nMembers}</strong>
+                        {nMembers === 1 ? "member loses" : "members lose"} access, and all invites
+                        stop working
+                      </li>
+                    </>
+                  );
+                })()}
+              </ul>
               {err && <p className="form-error">{err}</p>}
+              <div className="server-delete-footer">
+                <span className="muted tiny">
+                  {deleteArmed ? "Click again to confirm." : "This can't be undone."}
+                </span>
               <button
                 type="button"
                 className={`btn danger${deleteArmed ? " is-armed" : ""}`}
@@ -922,6 +955,7 @@ export function ServerSettingsModal() {
                     ? "Click again to delete"
                     : "Delete Server"}
               </button>
+              </div>
             </div>
           </div>
         )}
