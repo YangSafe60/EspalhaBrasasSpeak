@@ -1493,3 +1493,54 @@ pub async fn accept_rules(
         .await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
+
+
+// ------------------------------------------------------------ word filter
+
+#[derive(Deserialize, Serialize)]
+pub struct AutomodBody {
+    pub words: Vec<String>,
+}
+
+pub async fn get_automod(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<AutomodBody>> {
+    let server = db::get_server(&state.db, id).await?;
+    db::require_perm(&state.db, &server, None, user.id, Permissions::MANAGE_SERVER).await?;
+    Ok(Json(AutomodBody { words: crate::routes::messages::blocked_words(&state.db, id).await? }))
+}
+
+/// Replace the word list (lowercased, trimmed, deduplicated; up to 200 words).
+pub async fn set_automod(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<AutomodBody>,
+) -> AppResult<Json<AutomodBody>> {
+    let server = db::get_server(&state.db, id).await?;
+    db::require_perm(&state.db, &server, None, user.id, Permissions::MANAGE_SERVER).await?;
+    let mut words: Vec<String> = Vec::new();
+    for w in body.words {
+        let w = w.trim().to_lowercase();
+        if w.is_empty() {
+            continue;
+        }
+        if w.chars().count() > 50 {
+            return Err(AppError::BadRequest("words can be up to 50 characters".into()));
+        }
+        if !words.contains(&w) {
+            words.push(w);
+        }
+    }
+    if words.len() > 200 {
+        return Err(AppError::BadRequest("up to 200 words".into()));
+    }
+    sqlx::query("UPDATE servers SET blocked_words = ? WHERE id = ?")
+        .bind(if words.is_empty() { None } else { Some(serde_json::to_string(&words).unwrap_or_default()) })
+        .bind(id.to_string())
+        .execute(&state.db)
+        .await?;
+    Ok(Json(AutomodBody { words }))
+}

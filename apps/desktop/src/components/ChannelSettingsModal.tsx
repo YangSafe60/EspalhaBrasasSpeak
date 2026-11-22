@@ -269,6 +269,18 @@ function lockStateFromOverwrites(
   return { locked: true, accessRoleIds, everyoneId };
 }
 
+const SLOWMODE_OPTIONS = [
+  { label: "Off", seconds: 0 },
+  { label: "5 seconds", seconds: 5 },
+  { label: "10 seconds", seconds: 10 },
+  { label: "30 seconds", seconds: 30 },
+  { label: "1 minute", seconds: 60 },
+  { label: "5 minutes", seconds: 300 },
+  { label: "15 minutes", seconds: 900 },
+  { label: "1 hour", seconds: 3600 },
+  { label: "6 hours", seconds: 21600 },
+];
+
 export function ChannelSettingsModal() {
   const modal = useAppStore((s) => s.modal);
   const settingsChannelId = useAppStore((s) => s.settingsChannelId);
@@ -342,6 +354,7 @@ export function ChannelSettingsModal() {
   const [textColor, setTextColor] = useState("#e8eef2");
   const [atmosphere, setAtmosphere] = useState<Atmosphere | "">("");
   const [userLimit, setUserLimit] = useState(0);
+  const [slowmode, setSlowmode] = useState(0);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -362,6 +375,7 @@ export function ChannelSettingsModal() {
     setTextColor(channel.text_color || "#e8eef2");
     setAtmosphere((channel.atmosphere as Atmosphere) || "");
     setUserLimit(channel.user_limit ?? 0);
+    setSlowmode(channel.slowmode_seconds ?? 0);
     setBusy(false);
     setMsg(null);
     setErr(null);
@@ -513,6 +527,7 @@ export function ChannelSettingsModal() {
         text_color: isText ? textColor || null : undefined,
         atmosphere: isText ? atmosphere || null : undefined,
         user_limit: isVoice ? Math.max(0, Math.floor(userLimit)) : undefined,
+        slowmode_seconds: isText ? slowmode : undefined,
       });
       setMsg("Changes saved.");
     } catch (error) {
@@ -811,6 +826,21 @@ export function ChannelSettingsModal() {
                 </>
               )}
 
+              {isText && (
+                <div className="settings-section">
+                  <h4>Slow mode</h4>
+                  <p className="muted tiny">
+                    How long each person waits between messages. Moderators aren't affected.
+                  </p>
+                  <select value={slowmode} onChange={(e) => setSlowmode(Number(e.target.value))}>
+                    {SLOWMODE_OPTIONS.map((o) => (
+                      <option key={o.seconds} value={o.seconds}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               {isVoice && (
                 <div className="settings-section">
                   <h4>User limit</h4>

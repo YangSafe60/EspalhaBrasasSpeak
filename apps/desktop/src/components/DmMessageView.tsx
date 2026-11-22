@@ -1,3 +1,4 @@
+import { VoiceRecorder } from "./VoiceRecorder";
 import { GroupDmPicker } from "./GroupDmPicker";
 import { dmTitle, otherCallers } from "../lib/dmDisplay";
 import { memo, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent } from "react";
@@ -729,6 +730,12 @@ function DmComposer({ channel }: { channel: DmChannel }) {
         />
         <EmojiPickerButton onPick={insertEmoji} />
         <GifPickerButton onPick={(g) => void onPickGif(g)} />
+        <VoiceRecorder
+          onRecorded={async (file) => {
+            const up = await uploadAttachment(file);
+            await sendDmMessage(dmId, "", [up.id]);
+          }}
+        />
         <button
           type="submit"
           className="btn primary sm"

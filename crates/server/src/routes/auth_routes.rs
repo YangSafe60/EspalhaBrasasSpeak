@@ -6,7 +6,10 @@ use crate::db;
 use crate::ratelimit::{self, ClientIp};
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
-use axum::{extract::State, Json};
+use axum::{
+    extract::{Path, State},
+    Json,
+};
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
@@ -39,6 +42,10 @@ pub struct UpdateMeReq {
     pub avatar_url: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_optional_string")]
     pub banner_url: Option<Option<String>>,
+    /// "About me" (up to 190 characters; empty = clear).
+    pub bio: Option<String>,
+    /// Profile colour "#rrggbb" (empty = default).
+    pub accent_color: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -345,6 +352,30 @@ pub async fn update_me(
             .execute(&state.db)
             .await?;
     }
+    if let Some(bio) = body.bio {
+        let bio = bio.trim();
+        if bio.chars().count() > 190 {
+            return Err(AppError::BadRequest("About me can be up to 190 characters".into()));
+        }
+        sqlx::query("UPDATE users SET bio = ? WHERE id = ?")
+            .bind(if bio.is_empty() { None } else { Some(bio) })
+            .bind(user.id.to_string())
+            .execute(&state.db)
+            .await?;
+    }
+    if let Some(color) = body.accent_color {
+        let color = color.trim();
+        let ok = color.is_empty()
+            || (color.len() == 7 && color.starts_with('#') && color[1..].chars().all(|c| c.is_ascii_hexdigit()));
+        if !ok {
+            return Err(AppError::BadRequest("invalid colour".into()));
+        }
+        sqlx::query("UPDATE users SET accent_color = ? WHERE id = ?")
+            .bind(if color.is_empty() { None } else { Some(color.to_lowercase()) })
+            .bind(user.id.to_string())
+            .execute(&state.db)
+            .await?;
+    }
     if let Some(banner) = body.banner_url {
         if let Some(ref url) = banner {
             if !is_safe_profile_url(url) {
@@ -470,4 +501,14 @@ async fn issue_pair_in(
         refresh_token: refresh,
         user: db::user_public(&state.db, user_id).await?,
     }))
+}
+
+
+/// Someone's "About me" and profile colour (any signed-in user).
+pub async fn profile(
+    State(state): State<AppState>,
+    _user: AuthUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<db::UserProfile>> {
+    Ok(Json(db::user_profile(&state.db, id).await?))
 }

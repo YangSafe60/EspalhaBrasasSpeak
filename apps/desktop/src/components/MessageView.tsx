@@ -26,6 +26,8 @@ import { MessageContent } from "./MessageContent";
 import { MessageEmbeds } from "./MessageEmbeds";
 import { MessageSearch } from "./MessageSearch";
 import { PinIcon, PinnedMessagesButton } from "./PinnedMessagesButton";
+import { PollCard } from "./PollCard";
+import { ForwardDialog } from "./ForwardDialog";
 import { useAppStore } from "../store/appStore";
 import type { Atmosphere, Channel, Member, Message, ReactionSummary, Role, UserPublic } from "../types";
 
@@ -75,6 +77,9 @@ type RowActions = {
   reply: (m: Message) => void;
   jumpTo: (messageId: string) => void;
   togglePin: (m: Message) => void;
+  forward: (m: Message) => void;
+  /** Open the message's thread, starting it if needed. */
+  openThread: (m: Message) => void;
 };
 
 /** The message a reply points at, as shown above the reply. */
@@ -95,6 +100,9 @@ export function MessageView() {
   const editMessage = useAppStore((s) => s.editMessage);
   const deleteMessage = useAppStore((s) => s.deleteMessage);
   const toggleReaction = useAppStore((s) => s.toggleReaction);
+  const createThread = useAppStore((s) => s.createThread);
+  const selectChannel = useAppStore((s) => s.selectChannel);
+  const [forwardSource, setForwardSource] = useState<{ content: string; attachments: Message["attachments"] } | null>(null);
   const setReplyTo = useAppStore((s) => s.setReplyTo);
   const setMessagePinned = useAppStore((s) => s.setMessagePinned);
   const unreadMarker = useAppStore((s) => s.unreadMarker);
@@ -110,6 +118,14 @@ export function MessageView() {
     [channelsByServer, activeChannelId],
   );
   const serverId = channel?.server_id;
+  /** In a thread: the channel it was started in. */
+  const parentChannel = useMemo(
+    () =>
+      channel?.parent_channel_id
+        ? Object.values(channelsByServer).flat().find((c) => c.id === channel.parent_channel_id)
+        : undefined,
+    [channelsByServer, channel?.parent_channel_id],
+  );
   const server = useAppStore((s) =>
     serverId ? s.servers.find((sv) => sv.id === serverId) : undefined,
   );
@@ -155,6 +171,10 @@ export function MessageView() {
     [server, roles, me, user?.id, channelOverwrites],
   );
   const canDelete = (m: Message) => m.author_id === user?.id || canManageMessages;
+  const canSendHere = useMemo(
+    () => hasPerm(effectiveChannelPerms(server, roles, me, user?.id, channelOverwrites), Perm.SEND_MESSAGES),
+    [server, roles, me, user?.id, channelOverwrites],
+  );
 
   const mentionCtx = useMemo<MentionContext>(
     () => ({
@@ -316,6 +336,17 @@ export function MessageView() {
         (document.querySelector(".composer textarea") as HTMLTextAreaElement | null)?.focus(),
       );
     },
+    forward: (m) => setForwardSource({ content: m.content, attachments: m.attachments || [] }),
+    openThread: (m) => {
+      if (m.thread) {
+        void selectChannel(m.thread.id);
+        return;
+      }
+      // Name it after the start of the message (rename like any channel).
+      const words = m.content.replace(/\s+/g, " ").trim();
+      const name = words ? (words.length > 40 ? `${words.slice(0, 40)}…` : words) : "Thread";
+      void createThread(m.id, name).then((t) => selectChannel(t.id)).catch(() => undefined);
+    },
     jumpTo: (messageId) => {
       const el = document.getElementById(`msg-${messageId}`);
       if (!el) return;
@@ -386,12 +417,30 @@ export function MessageView() {
       {atmosphere === "gaming" && <div className="channel-dim" />}
 
       <header className="message-header">
-        <div>
-          <h2>
-            <span className="ch-icon">#</span> {channel.name}
-          </h2>
-          {channel.topic && <p className="topic">{channel.topic}</p>}
-        </div>
+        {parentChannel ? (
+          <div className="thread-header">
+            <button
+              type="button"
+              className="thread-back"
+              title={`Back to #${parentChannel.name}`}
+              onClick={() => void selectChannel(parentChannel.id)}
+            >
+              <span className="ch-icon">#</span>
+              {parentChannel.name}
+            </button>
+            <span className="thread-sep" aria-hidden>›</span>
+            <h2>
+              <ThreadIcon /> {channel.name}
+            </h2>
+          </div>
+        ) : (
+          <div>
+            <h2>
+              <span className="ch-icon">#</span> {channel.name}
+            </h2>
+            {channel.topic && <p className="topic">{channel.topic}</p>}
+          </div>
+        )}
         <div className="message-header-actions">
           <PinnedMessagesButton channelId={channel.id} onJump={actions.jumpTo} />
           <MessageSearch serverId={channel.server_id} onJump={actions.jumpTo} />
@@ -429,6 +478,7 @@ export function MessageView() {
               selected={selectedIds.has(m.id)}
               mentioned={mentionedIds.has(m.id)}
               serverId={channel.server_id}
+              canThread={!channel.parent_channel_id && canSendHere}
               actions={actions}
             />
             </Fragment>
@@ -464,8 +514,10 @@ export function MessageView() {
         channel={channel}
         mentionCtx={mentionCtx}
         canMentionEveryone={canMentionEveryone}
+        slowmodeExempt={canManageMessages}
       />
 
+      {forwardSource && <ForwardDialog source={forwardSource} onClose={() => setForwardSource(null)} />}
       <ConfirmDialog
         open={!!pendingDelete || pendingBulkDelete}
         title={
@@ -512,8 +564,18 @@ type RowProps = {
   selected: boolean;
   mentioned: boolean;
   serverId: string;
+  /** May start/open a thread from it (not inside a thread). */
+  canThread: boolean;
   actions: RowActions;
 };
+
+function ThreadIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden fill="currentColor">
+      <path d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-6.6l-4.2 3.4A1 1 0 0 1 5.6 18.6V16H6a2 2 0 0 1-2-2V5zm4 3a1 1 0 0 0 0 2h8a1 1 0 1 0 0-2H8zm0 3.5a1 1 0 1 0 0 2h5a1 1 0 1 0 0-2H8z" />
+    </svg>
+  );
+}
 
 /** One message. Re-renders only when its own props change. */
 const MessageRow = memo(function MessageRow({
@@ -528,6 +590,7 @@ const MessageRow = memo(function MessageRow({
   selected,
   mentioned,
   serverId,
+  canThread,
   actions,
 }: RowProps) {
   const displayName = author?.display_name || "Unknown";
@@ -597,6 +660,14 @@ const MessageRow = memo(function MessageRow({
           </div>
         )}
 
+        {m.forwarded && (
+          <span className="message-forwarded">
+            <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden fill="currentColor">
+              <path d="M14 4l7 7-7 7v-4.1C9 13.9 5.5 15.5 3 19c1-5 4-10 11-11V4z" />
+            </svg>
+            Forwarded
+          </span>
+        )}
         {editing ? (
           <MessageEditBox
             messageId={m.id}
@@ -604,7 +675,7 @@ const MessageRow = memo(function MessageRow({
             onSave={actions.saveEdit}
             onCancel={actions.cancelEdit}
           />
-        ) : (
+        ) : m.poll ? null : (
           <>
             {m.content && (
               <>
@@ -624,6 +695,23 @@ const MessageRow = memo(function MessageRow({
               <MessageAttachment key={a.id} attachment={a} allowDownload={!mine} />
             ))}
           </div>
+        )}
+
+        {m.poll && (
+          <>
+            <p className="poll-question">{m.poll.question}</p>
+            <PollCard message={m} />
+          </>
+        )}
+
+        {m.thread && (
+          <button type="button" className="thread-chip" onClick={() => actions.openThread(m)}>
+            <ThreadIcon />
+            <strong>{m.thread.name}</strong>
+            <span className="muted">
+              {m.thread.message_count} {m.thread.message_count === 1 ? "message" : "messages"}
+            </span>
+          </button>
         )}
 
         <div className={`message-actions${menuOpen ? " is-open" : ""}`}>
@@ -665,6 +753,12 @@ const MessageRow = memo(function MessageRow({
                   : []),
                 ...(m.content
                   ? [{ label: "Copy text", onClick: () => void navigator.clipboard?.writeText(m.content) }]
+                  : []),
+                ...(m.content || m.attachments?.length
+                  ? [{ label: "Forward", onClick: () => actions.forward(m) }]
+                  : []),
+                ...(canThread
+                  ? [{ label: m.thread ? "Open thread" : "Create thread", onClick: () => actions.openThread(m) }]
                   : []),
                 ...(canDelete
                   ? [{ label: mine ? "Delete message" : "Delete message (moderator)", danger: true, onClick: () => actions.remove(m) }]

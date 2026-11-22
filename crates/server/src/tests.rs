@@ -1100,3 +1100,169 @@ async fn encrypted_attachments_keep_their_key() {
         .await;
     assert_eq!(list.body[0]["attachments"][0]["enc_key"], key.as_str());
 }
+
+/// Owner + a plain member in one server; returns (owner, member, server, channel, member id).
+async fn owner_and_member(app: &TestApp) -> (String, String, String, String, String) {
+    let owner = app.register("owner").await;
+    let member = app.register("member").await;
+    let (server_id, channel) = app.server_with_text_channel(&owner).await;
+    let inv = app
+        .call(Method::POST, &format!("/api/servers/{server_id}/invites"), Some(&owner), Some(json!({})))
+        .await;
+    let code = inv.body["code"].as_str().unwrap();
+    app.call(Method::POST, &format!("/api/invites/{code}"), Some(&member), Some(json!({}))).await;
+    app.call(Method::POST, &format!("/api/servers/{server_id}/rules/accept"), Some(&member), Some(json!({}))).await;
+    let me = app.call(Method::GET, "/api/auth/me", Some(&member), None).await;
+    let member_id = me.body["id"].as_str().unwrap().to_string();
+    (owner, member, server_id, channel, member_id)
+}
+
+#[tokio::test]
+async fn slow_mode_and_word_filter_skip_moderators() {
+    let app = test_app().await;
+    let (owner, member, server_id, channel, _) = owner_and_member(&app).await;
+    let post = |auth: String, text: &'static str| {
+        let app = &app;
+        let path = format!("/api/channels/{channel}/messages");
+        async move { app.call(Method::POST, &path, Some(&auth), Some(json!({ "content": text }))).await }
+    };
+    let r = app
+        .call(Method::PATCH, &format!("/api/channels/{channel}"), Some(&owner), Some(json!({ "slowmode_seconds": 30 })))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["slowmode_seconds"], 30);
+    assert_eq!(post(member.clone(), "first").await.status, StatusCode::OK);
+    assert_eq!(post(member.clone(), "too soon").await.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(post(owner.clone(), "owner a").await.status, StatusCode::OK);
+    assert_eq!(post(owner.clone(), "owner b").await.status, StatusCode::OK);
+    app.call(Method::PATCH, &format!("/api/channels/{channel}"), Some(&owner), Some(json!({ "slowmode_seconds": 0 })))
+        .await;
+
+    let r = app
+        .call(Method::PUT, &format!("/api/servers/{server_id}/automod"), Some(&owner), Some(json!({ "words": ["Batata", " palavrão ", "batata"] })))
+        .await;
+    assert_eq!(r.body["words"], json!(["batata", "palavrão"]));
+    assert_eq!(post(member.clone(), "gosto de BATATA frita").await.status, StatusCode::BAD_REQUEST);
+    assert_eq!(post(member.clone(), "batatas são outra palavra").await.status, StatusCode::OK);
+    assert_eq!(post(owner.clone(), "batata").await.status, StatusCode::OK);
+    let forbidden = app.call(Method::GET, &format!("/api/servers/{server_id}/automod"), Some(&member), None).await;
+    assert_eq!(forbidden.status, StatusCode::FORBIDDEN);
+
+    // Both settings changes are in the audit log, newest first.
+    let log = app.call(Method::GET, &format!("/api/servers/{server_id}/audit-log"), Some(&owner), None).await;
+    let actions: Vec<&str> = log.body.as_array().unwrap().iter().map(|e| e["action"].as_str().unwrap()).collect();
+    assert_eq!(actions.first(), Some(&"automod_update"), "{actions:?}");
+    assert!(actions.contains(&"channel_update"), "{actions:?}");
+    assert_eq!(app.call(Method::GET, &format!("/api/servers/{server_id}/audit-log"), Some(&member), None).await.status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn polls_count_votes_per_person() {
+    let app = test_app().await;
+    let (owner, member, _server, channel, _) = owner_and_member(&app).await;
+    let r = app
+        .call(
+            Method::POST,
+            &format!("/api/channels/{channel}/polls"),
+            Some(&owner),
+            Some(json!({ "question": "A que horas?", "options": ["20h", " "] })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "only one real option");
+    let r = app
+        .call(
+            Method::POST,
+            &format!("/api/channels/{channel}/polls"),
+            Some(&owner),
+            Some(json!({ "question": "A que horas?", "options": ["20h", "21h", "22h"] })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let mid = r.body["id"].as_str().unwrap().to_string();
+    let opts: Vec<String> = r.body["poll"]["options"].as_array().unwrap().iter().map(|o| o["id"].as_str().unwrap().to_string()).collect();
+    let vote = |auth: String, ids: Vec<String>| {
+        let app = &app;
+        let path = format!("/api/messages/{mid}/poll/vote");
+        async move { app.call(Method::PUT, &path, Some(&auth), Some(json!({ "option_ids": ids }))).await }
+    };
+    assert_eq!(vote(member.clone(), vec![opts[0].clone(), opts[1].clone()]).await.status, StatusCode::BAD_REQUEST);
+    vote(member.clone(), vec![opts[0].clone()]).await;
+    vote(owner.clone(), vec![opts[0].clone()]).await;
+    let r = vote(member.clone(), vec![opts[1].clone()]).await; // changes their vote
+    let votes: Vec<u64> = r.body["options"].as_array().unwrap().iter().map(|o| o["votes"].as_u64().unwrap()).collect();
+    assert_eq!(votes, vec![1, 1, 0]);
+    assert_eq!(r.body["my_votes"], json!([opts[1]]));
+    let list = app.call(Method::GET, &format!("/api/channels/{channel}/messages"), Some(&owner), None).await;
+    let poll = &list.body.as_array().unwrap().last().unwrap()["poll"];
+    assert_eq!(poll["my_votes"], json!([opts[0]]), "owner sees their own vote");
+}
+
+#[tokio::test]
+async fn threads_follow_their_channel_and_count_messages() {
+    let app = test_app().await;
+    let (owner, member, server_id, channel, _) = owner_and_member(&app).await;
+    let first = app
+        .call(Method::POST, &format!("/api/channels/{channel}/messages"), Some(&owner), Some(json!({ "content": "start here" })))
+        .await;
+    let mid = first.body["id"].as_str().unwrap().to_string();
+    let t = app
+        .call(Method::POST, &format!("/api/messages/{mid}/thread"), Some(&member), Some(json!({ "name": "Plano" })))
+        .await;
+    assert_eq!(t.status, StatusCode::OK, "{}", t.body);
+    let thread = t.body["id"].as_str().unwrap().to_string();
+    assert_eq!(t.body["parent_channel_id"], channel.as_str());
+    let again = app
+        .call(Method::POST, &format!("/api/messages/{mid}/thread"), Some(&owner), Some(json!({ "name": "Outro" })))
+        .await;
+    assert_eq!(again.body["id"], thread.as_str(), "one thread per message");
+    for text in ["a", "b"] {
+        let r = app
+            .call(Method::POST, &format!("/api/channels/{thread}/messages"), Some(&member), Some(json!({ "content": text })))
+            .await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    }
+    let list = app.call(Method::GET, &format!("/api/channels/{channel}/messages"), Some(&owner), None).await;
+    let parent = list.body.as_array().unwrap().iter().find(|m| m["id"] == mid.as_str()).unwrap();
+    assert_eq!(parent["thread"]["message_count"], 2);
+    assert_eq!(parent["thread"]["name"], "Plano");
+
+    // Hide the channel from @everyone: the thread is hidden too.
+    let roles = app.call(Method::GET, &format!("/api/servers/{server_id}/roles"), Some(&owner), None).await;
+    let everyone = roles.body.as_array().unwrap().iter().find(|r| r["is_everyone"] == true).unwrap()["id"].as_str().unwrap().to_string();
+    let r = app
+        .call(
+            Method::PUT,
+            &format!("/api/channels/{channel}/overwrites"),
+            Some(&owner),
+            Some(json!({ "overwrites": [{ "target_type": "role", "target_id": everyone, "allow": 0, "deny": 1 }] })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let hidden = app.call(Method::GET, &format!("/api/channels/{thread}/messages"), Some(&member), None).await;
+    assert_eq!(hidden.status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn profiles_and_forwarded_messages() {
+    let app = test_app().await;
+    let (owner, member, _server, channel, member_id) = owner_and_member(&app).await;
+    let r = app
+        .call(Method::PATCH, "/api/auth/me", Some(&member), Some(json!({ "bio": " Joga FIFA ", "accent_color": "#FF8800" })))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["bio"], "Joga FIFA");
+    let p = app.call(Method::GET, &format!("/api/users/{member_id}/profile"), Some(&owner), None).await;
+    assert_eq!(p.body["bio"], "Joga FIFA");
+    assert_eq!(p.body["accent_color"], "#ff8800");
+    let bad = app.call(Method::PATCH, "/api/auth/me", Some(&member), Some(json!({ "accent_color": "red" }))).await;
+    assert_eq!(bad.status, StatusCode::BAD_REQUEST);
+
+    let r = app
+        .call(Method::POST, &format!("/api/channels/{channel}/messages"), Some(&owner), Some(json!({ "content": "copied", "forwarded": true })))
+        .await;
+    assert_eq!(r.body["forwarded"], true);
+    let plain = app
+        .call(Method::POST, &format!("/api/channels/{channel}/messages"), Some(&owner), Some(json!({ "content": "normal" })))
+        .await;
+    assert!(plain.body.get("forwarded").is_none());
+}

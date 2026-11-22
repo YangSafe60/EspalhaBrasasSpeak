@@ -1,4 +1,5 @@
-import { useEffect, useMemo } from "react";
+import { createElement, Fragment, useEffect, useMemo } from "react";
+import { renderMarkdown } from "../lib/markdown";
 import { renderMessageContent } from "../lib/customEmoji";
 import type { MentionContext } from "../lib/mentions";
 import { useAppStore } from "../store/appStore";
@@ -51,14 +52,18 @@ export function MessageContent({
   }, [content, resolveCustomEmojis]);
 
   const nodes = useMemo(
-    () => renderMessageContent(content, customEmojisById, mentionCtx),
+    () =>
+      renderMarkdown(content, (text, key) => [
+        createElement(Fragment, { key }, ...renderMessageContent(text, customEmojisById, mentionCtx)),
+      ]),
     [content, customEmojisById, mentionCtx],
   );
 
+  // A div (not p): formatted messages can hold code blocks and quotes.
   return (
-    <p className={className ?? "message-content"}>
+    <div className={className ?? "message-content"}>
       {nodes}
       {children}
-    </p>
+    </div>
   );
 }

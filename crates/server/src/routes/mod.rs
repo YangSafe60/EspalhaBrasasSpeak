@@ -193,6 +193,12 @@ pub fn router(state: AppState) -> Router {
             put(servers::timeout_member),
         )
         .route("/api/users/{user_id}/block", post(friends::block_user))
+        .route("/api/users/{user_id}/profile", get(auth_routes::profile))
+        .route(
+            "/api/servers/{id}/automod",
+            get(servers::get_automod).put(servers::set_automod),
+        )
+        .route("/api/servers/{id}/audit-log", get(crate::audit::list))
         .route("/api/servers/{id}/bans", get(servers::list_bans).post(servers::ban_member))
         .route(
             "/api/servers/{id}/bans/{user_id}",
@@ -277,6 +283,9 @@ pub fn router(state: AppState) -> Router {
             "/api/messages/{id}",
             patch(messages::update).delete(messages::delete),
         )
+        .route("/api/channels/{id}/polls", post(messages::create_poll))
+        .route("/api/messages/{id}/poll/vote", put(messages::vote_poll))
+        .route("/api/messages/{id}/thread", post(messages::create_thread))
         .route(
             "/api/messages/{id}/pin",
             put(messages::pin).delete(messages::unpin),
@@ -320,6 +329,8 @@ pub fn router(state: AppState) -> Router {
             header::REFERRER_POLICY,
             HeaderValue::from_static("no-referrer"),
         ))
+        // Audit log for moderation actions (see crate::audit).
+        .layer(axum::middleware::from_fn_with_state(state.clone(), crate::audit::layer))
         // JSON bodies: 1 MB. The upload route overrides this above.
         .layer(DefaultBodyLimit::max(JSON_BODY_LIMIT))
         .layer(cors)

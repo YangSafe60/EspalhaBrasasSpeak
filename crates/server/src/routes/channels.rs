@@ -33,6 +33,8 @@ pub struct UpdateChannelReq {
     pub text_color: Option<Option<String>>,
     pub atmosphere: Option<Option<String>>,
     pub user_limit: Option<i32>,
+    /// Seconds between messages per person, 0..=21600 (6 h).
+    pub slowmode_seconds: Option<i32>,
 }
 
 #[derive(Deserialize)]
@@ -339,6 +341,13 @@ pub async fn update(
     if let Some(limit) = body.user_limit {
         sqlx::query("UPDATE channels SET user_limit = ? WHERE id = ?")
             .bind(limit.max(0))
+            .bind(id.to_string())
+            .execute(&state.db)
+            .await?;
+    }
+    if let Some(secs) = body.slowmode_seconds {
+        sqlx::query("UPDATE channels SET slowmode_seconds = ? WHERE id = ?")
+            .bind(secs.clamp(0, 21600))
             .bind(id.to_string())
             .execute(&state.db)
             .await?;

@@ -54,14 +54,15 @@ export function MessageAttachment({
   /** Encrypted files: a blob: URL once downloaded and decrypted. */
   const [plainUrl, setPlainUrl] = useState<string | null>(null);
   const image = isImageAttachment(attachment);
+  const audio = !image && (attachment.content_type || "").toLowerCase().startsWith("audio/");
 
   useEffect(() => {
     if (!encrypted) return;
     let alive = true;
     setPlainUrl(null);
     setBroken(false);
-    // Images load right away; other files only when opened or downloaded.
-    if (image) {
+    // Images and voice messages load right away; other files only when saved.
+    if (image || audio) {
       decryptedUrl(attachment)
         .then((u) => alive && setPlainUrl(u))
         .catch(() => alive && setBroken(true));
@@ -69,7 +70,7 @@ export function MessageAttachment({
     return () => {
       alive = false;
     };
-  }, [attachment, encrypted, image]);
+  }, [attachment, encrypted, image, audio]);
 
   const src = encrypted ? plainUrl : imageSrc(attachment.url);
 
@@ -130,6 +131,19 @@ export function MessageAttachment({
             Image unavailable
           </span>
         )
+      ) : audio ? (
+        <div className="voice-message" onContextMenu={onAttachmentContextMenu}>
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden fill="currentColor" className="voice-message-icon">
+            <path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z" />
+          </svg>
+          {broken ? (
+            <span className="muted tiny">Voice message unavailable</span>
+          ) : encrypted && !plainUrl ? (
+            <span className="muted tiny">Loading voice message…</span>
+          ) : (
+            <audio controls preload="metadata" src={encrypted ? plainUrl ?? undefined : attachment.url} />
+          )}
+        </div>
       ) : (
         <div className="file-card" onContextMenu={onAttachmentContextMenu}>
           <FileIcon ext={fileExt(attachment.filename)} />

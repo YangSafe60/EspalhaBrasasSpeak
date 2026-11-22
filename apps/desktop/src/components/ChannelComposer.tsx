@@ -1,3 +1,5 @@
+import { CreatePollDialog } from "./PollCard";
+import { VoiceRecorder } from "./VoiceRecorder";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { insertAtCursor } from "../lib/emojis";
 import {
@@ -22,14 +24,37 @@ type Props = {
   channel: Channel;
   mentionCtx: MentionContext;
   canMentionEveryone: boolean;
+  /** Moderators aren't slowed down by slow mode. */
+  slowmodeExempt?: boolean;
 };
 
 /**
  * Channel message composer. Owns the draft so typing re-renders only this
  * component, not the message list above it.
  */
-export function ChannelComposer({ channel, mentionCtx, canMentionEveryone }: Props) {
+export function ChannelComposer({ channel, mentionCtx, canMentionEveryone, slowmodeExempt = false }: Props) {
   const channelId = channel.id;
+  const [pollOpen, setPollOpen] = useState(false);
+  /** Slow mode: when I can send again (ms since epoch). */
+  const [cooldownUntil, setCooldownUntil] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
+  const slowmode = slowmodeExempt ? 0 : channel.slowmode_seconds || 0;
+  const cooldownLeft = Math.max(0, Math.ceil((cooldownUntil - now) / 1000));
+  useEffect(() => {
+    if (cooldownUntil <= Date.now()) return;
+    const t = window.setInterval(() => {
+      setNow(Date.now());
+      if (Date.now() >= cooldownUntil) window.clearInterval(t);
+    }, 500);
+    return () => window.clearInterval(t);
+  }, [cooldownUntil]);
+  useEffect(() => setCooldownUntil(0), [channelId]);
+  const startCooldown = () => {
+    if (slowmode > 0) {
+      setNow(Date.now());
+      setCooldownUntil(Date.now() + slowmode * 1000);
+    }
+  };
   const sendMessage = useAppStore((s) => s.sendMessage);
   const sendTyping = useAppStore((s) => s.sendTyping);
   const uploadAttachment = useAppStore((s) => s.uploadAttachment);
@@ -108,7 +133,7 @@ export function ChannelComposer({ channel, mentionCtx, canMentionEveryone }: Pro
     e?.preventDefault();
     if (fileUploading) return;
     if (!draft.trim() && !pendingFiles.length) return;
-    if (draftTooLong) return;
+    if (draftTooLong || cooldownLeft > 0) return;
     setBusy(true);
     setComposerErr(null);
     try {
@@ -122,6 +147,7 @@ export function ChannelComposer({ channel, mentionCtx, canMentionEveryone }: Pro
       setDraft("");
       setPendingFiles([]);
       setMentionQuery(null);
+      startCooldown();
     } catch (error) {
       setComposerErr(error instanceof Error ? error.message : "Failed to send message");
     } finally {
@@ -348,6 +374,17 @@ export function ChannelComposer({ channel, mentionCtx, canMentionEveryone }: Pro
         >
           +
         </button>
+        <button
+          type="button"
+          className="icon-btn"
+          title="Create a poll"
+          aria-label="Create a poll"
+          onClick={() => setPollOpen(true)}
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden fill="currentColor">
+            <path d="M4 20h16v2H4v-2zm1-3h3V9H5v8zm5.5 0h3V4h-3v13zM16 17h3v-5h-3v5z" />
+          </svg>
+        </button>
         <input
           ref={fileRef}
           type="file"
@@ -375,14 +412,30 @@ export function ChannelComposer({ channel, mentionCtx, canMentionEveryone }: Pro
         />
         <EmojiPickerButton onPick={insertEmoji} />
         <GifPickerButton onPick={(g) => void onPickGif(g)} />
+        <VoiceRecorder
+          disabled={cooldownLeft > 0}
+          onRecorded={async (file) => {
+            const up = await uploadAttachment(file);
+            await sendMessage(channelId, "", [up.id], replyToId);
+            setReplyTo(channelId, null);
+            startCooldown();
+          }}
+        />
         <button
           type="submit"
           className="btn primary sm"
-          disabled={busy || fileUploading || draftTooLong}
+          disabled={busy || fileUploading || draftTooLong || cooldownLeft > 0}
+          title={cooldownLeft > 0 ? `Slow mode: wait ${cooldownLeft}s` : undefined}
         >
-          Send
+          {cooldownLeft > 0 ? `${cooldownLeft}s` : "Send"}
         </button>
       </form>
+      {slowmode > 0 && (
+        <p className="muted tiny composer-slowmode">
+          Slow mode is on: one message every {slowmode >= 60 ? `${Math.round(slowmode / 60)} min` : `${slowmode}s`}.
+        </p>
+      )}
+      {pollOpen && <CreatePollDialog channelId={channelId} onClose={() => setPollOpen(false)} />}
     </div>
   );
 }

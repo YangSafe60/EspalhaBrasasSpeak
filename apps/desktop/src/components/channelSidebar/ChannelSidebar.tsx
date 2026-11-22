@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useEffect,
   useMemo,
   useRef,
@@ -154,8 +155,18 @@ export function ChannelSidebar({
     return unique.slice().sort((a, b) => a.position - b.position);
   }, [activeServerId, channelsByServer]);
 
-  const categories = channels.filter((c) => c.channel_type === "category");
-  const uncategorized = channels.filter((c) => {
+  // Threads are listed under the channel they came from, not as channels.
+  const threadsByParent = useMemo(() => {
+    const map: Record<string, Channel[]> = {};
+    for (const c of channels) {
+      if (c.parent_channel_id) (map[c.parent_channel_id] ||= []).push(c);
+    }
+    return map;
+  }, [channels]);
+  const topLevel = useMemo(() => channels.filter((c) => !c.parent_channel_id), [channels]);
+
+  const categories = topLevel.filter((c) => c.channel_type === "category");
+  const uncategorized = topLevel.filter((c) => {
     if (c.channel_type === "category") return false;
     if (!c.category_id) return true;
     return !categories.some((cat) => sameId(cat.id, c.category_id));
@@ -191,7 +202,7 @@ export function ChannelSidebar({
   }
 
   function channelsIn(cat: Channel) {
-    return channels.filter(
+    return topLevel.filter(
       (c) => c.channel_type !== "category" && sameId(c.category_id, cat.id),
     );
   }
@@ -347,6 +358,32 @@ export function ChannelSidebar({
     );
   }
 
+  function renderThreads(parent: Channel) {
+    const threads = threadsByParent[parent.id];
+    if (!threads?.length) return null;
+    return (
+      <ul className="thread-list">
+        {threads.map((t) => {
+          const unread = unreadByChannel[t.id] || 0;
+          return (
+            <li key={t.id}>
+              <button
+                type="button"
+                className={`thread-row${t.id === activeChannelId ? " active" : ""}${unread ? " has-unread" : ""}`}
+                onClick={() => void selectChannel(t.id)}
+                title={t.name}
+              >
+                <span className="thread-branch" aria-hidden />
+                <span className="thread-row-name">{t.name}</span>
+                {unread > 0 && <span className="channel-unread">{unread > 99 ? "99+" : unread}</span>}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    );
+  }
+
   function renderChannel(ch: Channel) {
     const active = ch.id === activeChannelId;
     const inVoice = ch.id === voiceChannelId;
@@ -381,8 +418,8 @@ export function ChannelSidebar({
     );
 
     return (
+      <Fragment key={ch.id}>
       <ChannelRow
-        key={ch.id}
         channel={ch}
         active={active}
         inVoice={inVoice}
@@ -429,6 +466,8 @@ export function ChannelSidebar({
         onDrop={(e, hint) => void dnd.commitDrop(e, hint)}
         guardClick={dnd.guardClick}
       />
+      {renderThreads(ch)}
+      </Fragment>
     );
   }
 

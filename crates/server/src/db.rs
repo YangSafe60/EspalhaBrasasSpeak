@@ -14,6 +14,25 @@ pub struct UserMe {
     pub profile: UserPublic,
     pub email: String,
     pub disabled: bool,
+    pub bio: Option<String>,
+    pub accent_color: Option<String>,
+}
+
+/// The extra profile shown on someone's card.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct UserProfile {
+    pub bio: Option<String>,
+    pub accent_color: Option<String>,
+}
+
+pub async fn user_profile(db: &SqlitePool, id: Uuid) -> AppResult<UserProfile> {
+    let row: Option<(Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT bio, accent_color FROM users WHERE id = ?")
+            .bind(id.to_string())
+            .fetch_optional(db)
+            .await?;
+    let (bio, accent_color) = row.ok_or(AppError::NotFound)?;
+    Ok(UserProfile { bio, accent_color })
 }
 
 #[allow(dead_code)]
@@ -43,9 +62,11 @@ pub async fn user_me(db: &SqlitePool, id: Uuid) -> AppResult<UserMe> {
         banner_url: Option<String>,
         created_at: String,
         disabled_at: Option<String>,
+        bio: Option<String>,
+        accent_color: Option<String>,
     }
     let row = sqlx::query_as::<_, Row>(
-        "SELECT id, username, display_name, email, avatar_url, banner_url, created_at, disabled_at FROM users WHERE id = ?",
+        "SELECT id, username, display_name, email, avatar_url, banner_url, created_at, disabled_at, bio, accent_color FROM users WHERE id = ?",
     )
     .bind(id.to_string())
     .fetch_optional(db)
@@ -64,6 +85,8 @@ pub async fn user_me(db: &SqlitePool, id: Uuid) -> AppResult<UserMe> {
         },
         email: row.email,
         disabled: row.disabled_at.is_some(),
+        bio: row.bio,
+        accent_color: row.accent_color,
     })
 }
 
@@ -505,6 +528,9 @@ struct ChannelRow {
     text_color: Option<String>,
     atmosphere: Option<String>,
     user_limit: i64,
+    slowmode_seconds: i64,
+    parent_channel_id: Option<String>,
+    thread_message_id: Option<String>,
 }
 
 impl From<ChannelRow> for Channel {
@@ -528,13 +554,16 @@ impl From<ChannelRow> for Channel {
             text_color: r.text_color,
             atmosphere: r.atmosphere,
             user_limit: r.user_limit as i32,
+            slowmode_seconds: r.slowmode_seconds as i32,
+            parent_channel_id: r.parent_channel_id.and_then(|id| Uuid::parse_str(&id).ok()),
+            thread_message_id: r.thread_message_id.and_then(|id| Uuid::parse_str(&id).ok()),
         }
     }
 }
 
 pub async fn get_channel(db: &SqlitePool, id: Uuid) -> AppResult<Channel> {
     let row = sqlx::query_as::<_, ChannelRow>(
-        "SELECT id, server_id, category_id, name, channel_type, position, topic, background_url, background_blur, background_dim, text_color, atmosphere, user_limit FROM channels WHERE id = ?",
+        "SELECT id, server_id, category_id, name, channel_type, position, topic, background_url, background_blur, background_dim, text_color, atmosphere, user_limit, slowmode_seconds, parent_channel_id, thread_message_id FROM channels WHERE id = ?",
     )
     .bind(id.to_string())
     .fetch_optional(db)
@@ -545,7 +574,7 @@ pub async fn get_channel(db: &SqlitePool, id: Uuid) -> AppResult<Channel> {
 
 pub async fn server_channels(db: &SqlitePool, server_id: Uuid) -> AppResult<Vec<Channel>> {
     let rows = sqlx::query_as::<_, ChannelRow>(
-        "SELECT id, server_id, category_id, name, channel_type, position, topic, background_url, background_blur, background_dim, text_color, atmosphere, user_limit FROM channels WHERE server_id = ? ORDER BY position, name",
+        "SELECT id, server_id, category_id, name, channel_type, position, topic, background_url, background_blur, background_dim, text_color, atmosphere, user_limit, slowmode_seconds, parent_channel_id, thread_message_id FROM channels WHERE server_id = ? ORDER BY position, name",
     )
     .bind(server_id.to_string())
     .fetch_all(db)
@@ -557,6 +586,16 @@ pub async fn channel_overwrites(
     db: &SqlitePool,
     channel_id: Uuid,
 ) -> AppResult<Vec<PermissionOverwrite>> {
+    // A thread has the same permissions as the channel it was started in.
+    let parent: Option<Option<String>> =
+        sqlx::query_scalar("SELECT parent_channel_id FROM channels WHERE id = ?")
+            .bind(channel_id.to_string())
+            .fetch_optional(db)
+            .await?;
+    let channel_id = match parent.flatten().and_then(|p| Uuid::parse_str(&p).ok()) {
+        Some(parent) => parent,
+        None => channel_id,
+    };
     #[derive(sqlx::FromRow)]
     struct OwRow {
         id: String,
@@ -935,9 +974,10 @@ pub async fn load_message(db: &SqlitePool, id: Uuid, viewer_id: Uuid) -> AppResu
         edited_at: Option<String>,
         created_at: String,
         pinned_at: Option<String>,
+        forwarded: i64,
     }
     let row = sqlx::query_as::<_, MRow>(
-        "SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, pinned_at FROM messages WHERE id = ?",
+        "SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, pinned_at, forwarded FROM messages WHERE id = ?",
     )
     .bind(id.to_string())
     .fetch_optional(db)
@@ -946,6 +986,7 @@ pub async fn load_message(db: &SqlitePool, id: Uuid, viewer_id: Uuid) -> AppResu
 
     let attachments = message_attachments(db, id).await?;
     let reactions = message_reactions(db, id, viewer_id).await?;
+    let mut extras = message_extras(db, &[row.id.clone()], viewer_id).await?;
 
     Ok(Message {
         id: Uuid::parse_str(&row.id).unwrap(),
@@ -964,7 +1005,116 @@ pub async fn load_message(db: &SqlitePool, id: Uuid, viewer_id: Uuid) -> AppResu
         attachments,
         reactions,
         pinned_at: parse_opt_dt(row.pinned_at.as_deref()),
+        forwarded: row.forwarded != 0,
+        poll: extras.polls.remove(&row.id),
+        thread: extras.threads.remove(&row.id),
     })
+}
+
+/// Polls and threads of a set of messages (batched for message lists).
+pub struct MessageExtras {
+    pub polls: HashMap<String, speakapp_shared::Poll>,
+    pub threads: HashMap<String, speakapp_shared::ThreadInfo>,
+}
+
+fn in_list(n: usize) -> String {
+    vec!["?"; n].join(",")
+}
+
+pub async fn message_extras(
+    db: &SqlitePool,
+    ids: &[String],
+    viewer_id: Uuid,
+) -> AppResult<MessageExtras> {
+    let mut out = MessageExtras { polls: HashMap::new(), threads: HashMap::new() };
+    if ids.is_empty() {
+        return Ok(out);
+    }
+    let list = in_list(ids.len());
+
+    let sql = format!("SELECT message_id, question, multi FROM polls WHERE message_id IN ({list})");
+    let mut q = sqlx::query_as::<Sqlite, (String, String, i64)>(&sql);
+    for id in ids {
+        q = q.bind(id);
+    }
+    let polls = q.fetch_all(db).await?;
+    if !polls.is_empty() {
+        let poll_ids: Vec<String> = polls.iter().map(|p| p.0.clone()).collect();
+        let mut options = poll_options_for(db, &poll_ids).await?;
+        let plist = in_list(poll_ids.len());
+        let sql = format!(
+            "SELECT message_id, option_id FROM poll_votes WHERE user_id = ? AND message_id IN ({plist})"
+        );
+        let mut q = sqlx::query_as::<Sqlite, (String, String)>(&sql).bind(viewer_id.to_string());
+        for id in &poll_ids {
+            q = q.bind(id);
+        }
+        let mut mine: HashMap<String, Vec<Uuid>> = HashMap::new();
+        for (mid, oid) in q.fetch_all(db).await? {
+            if let Ok(o) = Uuid::parse_str(&oid) {
+                mine.entry(mid).or_default().push(o);
+            }
+        }
+        for (mid, question, multi) in polls {
+            out.polls.insert(
+                mid.clone(),
+                speakapp_shared::Poll {
+                    question,
+                    multi: multi != 0,
+                    options: options.remove(&mid).unwrap_or_default(),
+                    my_votes: mine.remove(&mid).unwrap_or_default(),
+                },
+            );
+        }
+    }
+
+    let sql = format!(
+        "SELECT c.id, c.name, c.thread_message_id, (SELECT COUNT(*) FROM messages m WHERE m.channel_id = c.id)
+         FROM channels c WHERE c.thread_message_id IN ({list})"
+    );
+    let mut q = sqlx::query_as::<Sqlite, (String, String, String, i64)>(&sql);
+    for id in ids {
+        q = q.bind(id);
+    }
+    for (cid, name, mid, count) in q.fetch_all(db).await? {
+        if let Ok(id) = Uuid::parse_str(&cid) {
+            out.threads.insert(
+                mid,
+                speakapp_shared::ThreadInfo { id, name, message_count: count as u32 },
+            );
+        }
+    }
+    Ok(out)
+}
+
+/// Options with vote totals, per poll message.
+pub async fn poll_options_for(
+    db: &SqlitePool,
+    message_ids: &[String],
+) -> AppResult<HashMap<String, Vec<speakapp_shared::PollOption>>> {
+    let mut out: HashMap<String, Vec<speakapp_shared::PollOption>> = HashMap::new();
+    if message_ids.is_empty() {
+        return Ok(out);
+    }
+    let sql = format!(
+        "SELECT o.message_id, o.id, o.label, (SELECT COUNT(*) FROM poll_votes v WHERE v.option_id = o.id)
+         FROM poll_options o WHERE o.message_id IN ({}) ORDER BY o.position",
+        in_list(message_ids.len())
+    );
+    let mut q = sqlx::query_as::<Sqlite, (String, String, String, i64)>(&sql);
+    for id in message_ids {
+        q = q.bind(id);
+    }
+    for (mid, oid, label, votes) in q.fetch_all(db).await? {
+        if let Ok(id) = Uuid::parse_str(&oid) {
+            out.entry(mid).or_default().push(speakapp_shared::PollOption {
+                id,
+                label,
+                votes: votes as u32,
+            });
+        }
+    }
+    Ok(out)
 }
 
 fn parse_opt_dt(s: Option<&str>) -> Option<DateTime<Utc>> {
@@ -1137,10 +1287,11 @@ pub async fn list_messages(
         edited_at: Option<String>,
         created_at: String,
         pinned_at: Option<String>,
+        forwarded: i64,
     }
     let rows: Vec<MRow> = if let Some(before_id) = before {
         sqlx::query_as(
-            r#"SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, pinned_at
+            r#"SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, pinned_at, forwarded
                FROM messages
                WHERE channel_id = ? AND created_at < (SELECT created_at FROM messages WHERE id = ?)
                ORDER BY created_at DESC LIMIT ?"#,
@@ -1152,7 +1303,7 @@ pub async fn list_messages(
         .await?
     } else {
         sqlx::query_as(
-            r#"SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, pinned_at
+            r#"SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, pinned_at, forwarded
                FROM messages WHERE channel_id = ? ORDER BY created_at DESC LIMIT ?"#,
         )
         .bind(channel_id.to_string())
@@ -1164,6 +1315,7 @@ pub async fn list_messages(
     let ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
     let attachments = attachments_for_messages(db, &ids).await?;
     let reactions = reactions_for_messages(db, &ids, viewer_id).await?;
+    let mut extras = message_extras(db, &ids, viewer_id).await?;
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
         let id_key = row.id.clone();
@@ -1184,6 +1336,9 @@ pub async fn list_messages(
             attachments: attachments.get(&id_key).cloned().unwrap_or_default(),
             reactions: reactions.get(&id_key).cloned().unwrap_or_default(),
             pinned_at: parse_opt_dt(row.pinned_at.as_deref()),
+            forwarded: row.forwarded != 0,
+            poll: extras.polls.remove(&id_key),
+            thread: extras.threads.remove(&id_key),
         });
     }
     out.reverse();

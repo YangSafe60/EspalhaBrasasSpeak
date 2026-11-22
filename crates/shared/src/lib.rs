@@ -106,6 +106,15 @@ pub struct Channel {
     pub text_color: Option<String>,
     pub atmosphere: Option<String>,
     pub user_limit: i32,
+    /// Seconds between messages from the same person (0 = off).
+    #[serde(default)]
+    pub slowmode_seconds: i32,
+    /// Threads: the channel they were started in (None = normal channel).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_channel_id: Option<Uuid>,
+    /// Threads: the message they were started from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_message_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,6 +157,40 @@ pub struct Message {
     /// When the message was pinned in its channel (None = not pinned).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pinned_at: Option<DateTime<Utc>>,
+    /// Sent with "Forward" (a copy of another message).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub forwarded: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poll: Option<Poll>,
+    /// A thread started from this message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<ThreadInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Poll {
+    pub question: String,
+    /// More than one option can be picked.
+    pub multi: bool,
+    pub options: Vec<PollOption>,
+    /// Options the viewer picked.
+    #[serde(default)]
+    pub my_votes: Vec<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PollOption {
+    pub id: Uuid,
+    pub label: String,
+    pub votes: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadInfo {
+    /// The thread's channel id.
+    pub id: Uuid,
+    pub name: String,
+    pub message_count: u32,
 }
 
 
@@ -393,6 +436,14 @@ pub enum WsEvent {
     RoleDelete {
         server_id: Uuid,
         role_id: Uuid,
+    },
+    /// Someone voted: new totals for everyone, `option_ids` = that person's votes.
+    PollUpdate {
+        channel_id: Uuid,
+        message_id: Uuid,
+        options: Vec<PollOption>,
+        user_id: Uuid,
+        option_ids: Vec<Uuid>,
     },
     ReactionAdd {
         channel_id: Uuid,

@@ -1,3 +1,4 @@
+import { AuditLogTab, WordFilterTab } from "./ServerModerationTabs";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { copyText } from "../lib/clipboard";
 import { IMAGE_UPLOAD_HINT } from "../lib/uploadHints";
@@ -12,7 +13,7 @@ import { ColorField } from "./ColorField";
 import { useAppStore } from "../store/appStore";
 import { ROLE_PERM_GROUPS, type Invite, type ServerEmoji } from "../types";
 
-type Tab = "branding" | "roles" | "emojis" | "invites" | "danger";
+type Tab = "branding" | "roles" | "emojis" | "invites" | "wordfilter" | "audit" | "danger";
 
 const IMAGE_ACCEPT = "image/*,image/gif,.gif";
 const EMOJI_NAME_RE = /^[a-z0-9_]{2,32}$/;
@@ -134,6 +135,7 @@ export function ServerSettingsModal() {
     if (canManageRoles) tabs.push("roles");
     if (canManageEmojis) tabs.push("emojis");
     if (canCreateInvite) tabs.push("invites");
+    if (canManageServer) tabs.push("wordfilter", "audit");
     if (isOwner) tabs.push("danger");
     return tabs;
   }, [canManageServer, canManageRoles, canManageEmojis, canCreateInvite, isOwner]);
@@ -472,7 +474,11 @@ export function ServerSettingsModal() {
                 ? "Delete server"
                 : t === "emojis"
                   ? "Emojis"
-                  : t}
+                  : t === "wordfilter"
+                    ? "Word filter"
+                    : t === "audit"
+                      ? "Audit log"
+                      : t}
             </button>
           ))}
         </div>
@@ -897,6 +903,9 @@ export function ServerSettingsModal() {
             </div>
           </div>
         )}
+
+        {tab === "wordfilter" && <WordFilterTab serverId={server.id} />}
+        {tab === "audit" && <AuditLogTab serverId={server.id} />}
 
         {tab === "danger" && isOwner && (
           <div className="server-delete">

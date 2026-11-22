@@ -1,3 +1,5 @@
+import { api } from "../api/client";
+import type { UserProfileExtras } from "../types";
 import {
   useEffect,
   useLayoutEffect,
@@ -102,6 +104,21 @@ export function MiniProfileCard() {
     ? members.find((m) => sameId(m.user.id, miniProfile.userId))
     : undefined;
   const meMember = members.find((m) => sameId(m.user.id, me?.id));
+
+  /** "About me" and profile colour (fetched when the card opens). */
+  const [extras, setExtras] = useState<UserProfileExtras | null>(null);
+  const extrasFor = miniProfile?.userId;
+  useEffect(() => {
+    setExtras(null);
+    if (!extrasFor) return;
+    let alive = true;
+    api<UserProfileExtras>(`/api/users/${extrasFor}/profile`)
+      .then((p) => alive && setExtras(p))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [extrasFor]);
 
   const profile = useMemo(() => {
     if (!miniProfile) return null;
@@ -275,7 +292,11 @@ export function MiniProfileCard() {
     <div
       ref={panelRef}
       className="mini-profile"
-      style={{ left: miniProfile.x, top: miniProfile.y }}
+      style={{
+        left: miniProfile.x,
+        top: miniProfile.y,
+        ...(extras?.accent_color ? ({ "--profile-accent": extras.accent_color } as React.CSSProperties) : {}),
+      }}
       role="dialog"
       aria-label={`${display}'s profile`}
       onClick={(e: MouseEvent) => e.stopPropagation()}
@@ -310,6 +331,13 @@ export function MiniProfileCard() {
           <strong className="mini-profile-display">{display}</strong>
           <span className="mini-profile-username">@{profile.username}</span>
         </div>
+
+        {extras?.bio && (
+          <section className="mini-profile-section">
+            <h4>About me</h4>
+            <p className="mini-profile-bio">{extras.bio}</p>
+          </section>
+        )}
 
         {miniProfile.serverId && (
           <section className="mini-profile-section">

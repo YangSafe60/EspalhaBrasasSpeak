@@ -26,6 +26,16 @@ export interface UserPublic {
 export interface UserAccount extends UserPublic {
   email: string;
   disabled?: boolean;
+  /** "About me". */
+  bio?: string | null;
+  /** Profile colour "#rrggbb". */
+  accent_color?: string | null;
+}
+
+/** Someone else's card extras (GET /api/users/{id}/profile). */
+export interface UserProfileExtras {
+  bio: string | null;
+  accent_color: string | null;
 }
 
 export interface Server {
@@ -64,6 +74,12 @@ export interface Channel {
   text_color: string | null;
   atmosphere: string | null;
   user_limit: number;
+  /** Seconds between messages from the same person (0 = off). */
+  slowmode_seconds?: number;
+  /** Threads: the channel they were started in. */
+  parent_channel_id?: string | null;
+  /** Threads: the message they were started from. */
+  thread_message_id?: string | null;
 }
 
 export interface PermissionOverwrite {
@@ -112,6 +128,41 @@ export interface Message {
   reactions: ReactionSummary[];
   /** Set while the message is pinned in its channel. */
   pinned_at?: string | null;
+  /** Sent with "Forward". */
+  forwarded?: boolean;
+  poll?: Poll | null;
+  /** A thread started from this message. */
+  thread?: ThreadInfo | null;
+}
+
+export interface PollOption {
+  id: string;
+  label: string;
+  votes: number;
+}
+
+export interface Poll {
+  question: string;
+  multi: boolean;
+  options: PollOption[];
+  /** Options I picked. */
+  my_votes: string[];
+}
+
+export interface ThreadInfo {
+  /** The thread's channel id. */
+  id: string;
+  name: string;
+  message_count: number;
+}
+
+export interface AuditEntry {
+  id: string;
+  actor: UserPublic | null;
+  action: string;
+  target_id: string | null;
+  details: Record<string, unknown> | null;
+  created_at: string;
 }
 
 export interface Invite {
@@ -279,6 +330,14 @@ export type WsEvent =
   | { type: "ready"; user: UserPublic; servers: Server[] }
   | { type: "message_create"; message: Message; author: UserPublic }
   | { type: "message_update"; message: Message }
+  | {
+      type: "poll_update";
+      channel_id: string;
+      message_id: string;
+      options: PollOption[];
+      user_id: string;
+      option_ids: string[];
+    }
   | { type: "message_delete"; channel_id: string; message_id: string }
   | { type: "typing_start"; channel_id: string; user_id: string; username: string }
   | { type: "presence_update"; user_id: string; status: PresenceStatus }

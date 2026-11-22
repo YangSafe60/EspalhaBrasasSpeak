@@ -155,12 +155,39 @@ export const createWsSlice: AppStoreSlice = (set, get) => ({
         set((s) => {
           const cid = event.message.channel_id;
           if (!(cid in s.messagesByChannel)) return s;
+          // The update carries the sender's view: keep my own poll votes.
+          const old = s.messagesByChannel[cid]?.find((m) => m.id === event.message.id);
+          const message =
+            old?.poll && event.message.poll
+              ? { ...event.message, poll: { ...event.message.poll, my_votes: old.poll.my_votes } }
+              : event.message;
           return {
             messagesByChannel: {
               ...s.messagesByChannel,
-              [cid]: upsertMessage(
-                s.messagesByChannel[cid] || [],
-                event.message,
+              [cid]: upsertMessage(s.messagesByChannel[cid] || [], message),
+            },
+          };
+        });
+        break;
+      case "poll_update":
+        set((s) => {
+          const list = s.messagesByChannel[event.channel_id];
+          if (!list) return s;
+          const mine = event.user_id === s.user?.id;
+          return {
+            messagesByChannel: {
+              ...s.messagesByChannel,
+              [event.channel_id]: list.map((m) =>
+                m.id === event.message_id && m.poll
+                  ? {
+                      ...m,
+                      poll: {
+                        ...m.poll,
+                        options: event.options,
+                        my_votes: mine ? event.option_ids : m.poll.my_votes,
+                      },
+                    }
+                  : m,
               ),
             },
           };

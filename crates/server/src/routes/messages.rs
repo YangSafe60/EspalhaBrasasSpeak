@@ -8,7 +8,7 @@ use axum::{
 };
 use chrono::Utc;
 use serde::Deserialize;
-use speakapp_shared::{Message, Permissions, Server, WsEvent};
+use speakapp_shared::{Channel, Message, Permissions, Server, WsEvent};
 use uuid::Uuid;
 
 /// Max characters in a channel message or edit.
@@ -93,6 +93,9 @@ pub struct CreateMessageReq {
     pub content: String,
     pub reply_to_id: Option<Uuid>,
     pub attachment_ids: Option<Vec<Uuid>>,
+    /// A copy sent with "Forward".
+    #[serde(default)]
+    pub forwarded: bool,
 }
 
 #[derive(Deserialize)]
@@ -194,6 +197,10 @@ pub async fn create(
         .await?;
     }
 
+    if !is_moderator(&state, &server, id, user.id).await? {
+        check_slowmode(&state, &channel, user.id).await?;
+        check_word_filter(&state, &server, content).await?;
+    }
     check_message_rate(&state, &user)?;
 
     // Message + attachment links commit together, so a bad attachment never
@@ -222,7 +229,7 @@ pub async fn create(
     let msg_id = Uuid::new_v4();
     let now = Utc::now().to_rfc3339();
     sqlx::query(
-        "INSERT INTO messages (id, channel_id, author_id, content, reply_to_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO messages (id, channel_id, author_id, content, reply_to_id, created_at, forwarded) VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(msg_id.to_string())
     .bind(id.to_string())
@@ -230,6 +237,7 @@ pub async fn create(
     .bind(content)
     .bind(body.reply_to_id.map(|r| r.to_string()))
     .bind(&now)
+    .bind(body.forwarded as i64)
     .execute(&mut *tx)
     .await?;
 
@@ -248,6 +256,7 @@ pub async fn create(
         },
     )
     .await?;
+    refresh_thread_parent(&state, &server, &channel, user.id).await;
     Ok(Json(message))
 }
 
@@ -288,6 +297,9 @@ pub async fn update(
     }
     let content = body.content.trim();
     check_message_len(content)?;
+    if !is_moderator(&state, &server, channel_id, user.id).await? {
+        check_word_filter(&state, &server, content).await?;
+    }
     let now = Utc::now().to_rfc3339();
     sqlx::query("UPDATE messages SET content = ?, edited_at = ? WHERE id = ?")
         .bind(content)
@@ -662,4 +674,300 @@ pub async fn typing(
     )
     .await?;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ------------------------------------------------- slow mode / word filter
+
+/// Moderators skip slow mode and the word filter.
+async fn is_moderator(state: &AppState, server: &Server, channel_id: Uuid, user: Uuid) -> AppResult<bool> {
+    let perms = db::effective_permissions(&state.db, server, Some(channel_id), user).await?;
+    Ok(perms.has(Permissions::MANAGE_MESSAGES) || perms.has(Permissions::MANAGE_CHANNELS))
+}
+
+async fn check_slowmode(state: &AppState, channel: &Channel, user: Uuid) -> AppResult<()> {
+    if channel.slowmode_seconds <= 0 {
+        return Ok(());
+    }
+    let last: Option<String> = sqlx::query_scalar(
+        "SELECT MAX(created_at) FROM messages WHERE channel_id = ? AND author_id = ?",
+    )
+    .bind(channel.id.to_string())
+    .bind(user.to_string())
+    .fetch_one(&state.db)
+    .await?;
+    if let Some(last) = last.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok()) {
+        let wait = chrono::Duration::seconds(channel.slowmode_seconds as i64)
+            - (Utc::now() - last.with_timezone(&Utc));
+        if wait > chrono::Duration::zero() {
+            let secs = wait.num_milliseconds().max(1000) as u64;
+            return Err(AppError::TooManyRequests(std::time::Duration::from_millis(secs)));
+        }
+    }
+    Ok(())
+}
+
+/// The server's word filter (lowercase words or phrases).
+pub async fn blocked_words(db: &sqlx::SqlitePool, server_id: Uuid) -> AppResult<Vec<String>> {
+    let raw: Option<Option<String>> =
+        sqlx::query_scalar("SELECT blocked_words FROM servers WHERE id = ?")
+            .bind(server_id.to_string())
+            .fetch_optional(db)
+            .await?;
+    Ok(raw
+        .flatten()
+        .and_then(|j| serde_json::from_str::<Vec<String>>(&j).ok())
+        .unwrap_or_default())
+}
+
+/// Whole-word, case-insensitive match ("ass" doesn't match "class").
+pub fn contains_blocked(content: &str, words: &[String]) -> bool {
+    if words.is_empty() {
+        return false;
+    }
+    let text = content.to_lowercase();
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    words.iter().any(|w| {
+        let w = w.trim();
+        if w.is_empty() {
+            return false;
+        }
+        let mut from = 0;
+        while let Some(pos) = text[from..].find(w) {
+            let start = from + pos;
+            let end = start + w.len();
+            let before_ok = text[..start].chars().next_back().map_or(true, |c| !is_word(c));
+            let after_ok = text[end..].chars().next().map_or(true, |c| !is_word(c));
+            if before_ok && after_ok {
+                return true;
+            }
+            from = start + w.chars().next().map_or(1, |c| c.len_utf8());
+        }
+        false
+    })
+}
+
+async fn check_word_filter(state: &AppState, server: &Server, content: &str) -> AppResult<()> {
+    let words = blocked_words(&state.db, server.id).await?;
+    if contains_blocked(content, &words) {
+        return Err(AppError::BadRequest(
+            "Your message contains a word that isn't allowed in this server.".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// A message in a thread changes the thread's count shown on its parent message.
+async fn refresh_thread_parent(state: &AppState, server: &Server, thread: &Channel, actor: Uuid) {
+    let (Some(parent_channel), Some(parent_msg)) = (thread.parent_channel_id, thread.thread_message_id) else {
+        return;
+    };
+    if let Ok(message) = db::load_message(&state.db, parent_msg, actor).await {
+        let _ = broadcast_to_viewers(state, server, parent_channel, &WsEvent::MessageUpdate { message }).await;
+    }
+}
+
+// ------------------------------------------------------------------ polls
+
+#[derive(Deserialize)]
+pub struct CreatePollReq {
+    pub question: String,
+    pub options: Vec<String>,
+    #[serde(default)]
+    pub multi: bool,
+}
+
+pub async fn create_poll(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<CreatePollReq>,
+) -> AppResult<Json<Message>> {
+    let channel = db::get_channel(&state.db, id).await?;
+    if channel.channel_type != speakapp_shared::ChannelType::Text {
+        return Err(AppError::BadRequest("not a text channel".into()));
+    }
+    let server = db::get_server(&state.db, channel.server_id).await?;
+    db::require_perm(&state.db, &server, Some(id), user.id, Permissions::VIEW_CHANNEL).await?;
+    db::require_perm(&state.db, &server, Some(id), user.id, Permissions::SEND_MESSAGES).await?;
+    db::require_not_timed_out(&state.db, server.id, user.id).await?;
+
+    let question = body.question.trim();
+    if question.is_empty() || question.chars().count() > 300 {
+        return Err(AppError::BadRequest("the question needs 1 to 300 characters".into()));
+    }
+    let options: Vec<String> = body
+        .options
+        .iter()
+        .map(|o| o.trim().to_string())
+        .filter(|o| !o.is_empty())
+        .collect();
+    if options.len() < 2 || options.len() > 10 {
+        return Err(AppError::BadRequest("a poll needs 2 to 10 options".into()));
+    }
+    if options.iter().any(|o| o.chars().count() > 100) {
+        return Err(AppError::BadRequest("options can be up to 100 characters".into()));
+    }
+    let moderator = is_moderator(&state, &server, id, user.id).await?;
+    if !moderator {
+        check_slowmode(&state, &channel, user.id).await?;
+        let all = std::iter::once(question.to_string()).chain(options.iter().cloned()).collect::<Vec<_>>().join("\n");
+        check_word_filter(&state, &server, &all).await?;
+    }
+    check_message_rate(&state, &user)?;
+
+    let msg_id = Uuid::new_v4();
+    let mut tx = state.db.begin().await?;
+    sqlx::query(
+        "INSERT INTO messages (id, channel_id, author_id, content, reply_to_id, created_at) VALUES (?, ?, ?, ?, NULL, ?)",
+    )
+    .bind(msg_id.to_string())
+    .bind(id.to_string())
+    .bind(user.id.to_string())
+    .bind(question)
+    .bind(Utc::now().to_rfc3339())
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("INSERT INTO polls (message_id, question, multi) VALUES (?, ?, ?)")
+        .bind(msg_id.to_string())
+        .bind(question)
+        .bind(body.multi as i64)
+        .execute(&mut *tx)
+        .await?;
+    for (i, label) in options.iter().enumerate() {
+        sqlx::query("INSERT INTO poll_options (id, message_id, position, label) VALUES (?, ?, ?, ?)")
+            .bind(Uuid::new_v4().to_string())
+            .bind(msg_id.to_string())
+            .bind(i as i64)
+            .bind(label)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+
+    let message = db::load_message(&state.db, msg_id, user.id).await?;
+    let author = db::user_public(&state.db, user.id).await?;
+    broadcast_to_viewers(&state, &server, id, &WsEvent::MessageCreate { message: message.clone(), author }).await?;
+    Ok(Json(message))
+}
+
+#[derive(Deserialize)]
+pub struct VoteReq {
+    /// The options picked (replaces earlier votes; empty = remove my vote).
+    pub option_ids: Vec<Uuid>,
+}
+
+pub async fn vote_poll(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<VoteReq>,
+) -> AppResult<Json<speakapp_shared::Poll>> {
+    let message = db::load_message(&state.db, id, user.id).await?;
+    let poll = message.poll.ok_or(AppError::NotFound)?;
+    let channel = db::get_channel(&state.db, message.channel_id).await?;
+    let server = db::get_server(&state.db, channel.server_id).await?;
+    db::require_perm(&state.db, &server, Some(channel.id), user.id, Permissions::VIEW_CHANNEL).await?;
+    let mut picked: Vec<Uuid> = Vec::new();
+    for o in body.option_ids {
+        if !poll.options.iter().any(|p| p.id == o) {
+            return Err(AppError::BadRequest("unknown option".into()));
+        }
+        if !picked.contains(&o) {
+            picked.push(o);
+        }
+    }
+    if !poll.multi && picked.len() > 1 {
+        return Err(AppError::BadRequest("this poll allows one answer".into()));
+    }
+    state.limits.check(crate::ratelimit::REACTION, &user.id.to_string())?;
+
+    let mut tx = state.db.begin().await?;
+    sqlx::query("DELETE FROM poll_votes WHERE message_id = ? AND user_id = ?")
+        .bind(id.to_string())
+        .bind(user.id.to_string())
+        .execute(&mut *tx)
+        .await?;
+    for o in &picked {
+        sqlx::query("INSERT INTO poll_votes (option_id, message_id, user_id) VALUES (?, ?, ?)")
+            .bind(o.to_string())
+            .bind(id.to_string())
+            .bind(user.id.to_string())
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+
+    let options = db::poll_options_for(&state.db, &[id.to_string()])
+        .await?
+        .remove(&id.to_string())
+        .unwrap_or_default();
+    broadcast_to_viewers(
+        &state,
+        &server,
+        channel.id,
+        &WsEvent::PollUpdate {
+            channel_id: channel.id,
+            message_id: id,
+            options: options.clone(),
+            user_id: user.id,
+            option_ids: picked.clone(),
+        },
+    )
+    .await?;
+    Ok(Json(speakapp_shared::Poll {
+        question: poll.question,
+        multi: poll.multi,
+        options,
+        my_votes: picked,
+    }))
+}
+
+// ---------------------------------------------------------------- threads
+
+#[derive(Deserialize)]
+pub struct CreateThreadReq {
+    pub name: String,
+}
+
+/// Start a thread from a message (or get the one it already has).
+pub async fn create_thread(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<CreateThreadReq>,
+) -> AppResult<Json<Channel>> {
+    let message = db::load_message(&state.db, id, user.id).await?;
+    let parent = db::get_channel(&state.db, message.channel_id).await?;
+    if parent.parent_channel_id.is_some() {
+        return Err(AppError::BadRequest("threads can't have threads".into()));
+    }
+    let server = db::get_server(&state.db, parent.server_id).await?;
+    db::require_perm(&state.db, &server, Some(parent.id), user.id, Permissions::VIEW_CHANNEL).await?;
+    db::require_perm(&state.db, &server, Some(parent.id), user.id, Permissions::SEND_MESSAGES).await?;
+    if let Some(existing) = message.thread {
+        return Ok(Json(db::get_channel(&state.db, existing.id).await?));
+    }
+    let name = body.name.trim();
+    let name: String = if name.is_empty() { "Thread".into() } else { name.chars().take(100).collect() };
+    state.limits.check(crate::ratelimit::CREATE, &user.id.to_string())?;
+
+    let thread_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO channels (id, server_id, category_id, name, channel_type, position, background_blur, background_dim, user_limit, parent_channel_id, thread_message_id)
+         VALUES (?, ?, ?, ?, 'text', 0, 0, 0.45, 0, ?, ?)",
+    )
+    .bind(thread_id.to_string())
+    .bind(server.id.to_string())
+    .bind(parent.category_id.map(|c| c.to_string()))
+    .bind(&name)
+    .bind(parent.id.to_string())
+    .bind(id.to_string())
+    .execute(&state.db)
+    .await?;
+    let thread = db::get_channel(&state.db, thread_id).await?;
+    broadcast_to_viewers(&state, &server, parent.id, &WsEvent::ChannelCreate { channel: thread.clone() }).await?;
+    if let Ok(updated) = db::load_message(&state.db, id, user.id).await {
+        let _ = broadcast_to_viewers(&state, &server, parent.id, &WsEvent::MessageUpdate { message: updated }).await;
+    }
+    Ok(Json(thread))
 }

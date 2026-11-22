@@ -2,6 +2,8 @@
 export function messagePreview(content: string, maxLen = 140): string {
   const text = content
     .replace(/```[\s\S]*?```/g, "[code block]")
+    // Spoilers stay hidden in notifications too.
+    .replace(/\|\|[\s\S]+?\|\|/g, "[spoiler]")
     .replace(/`([^`]+)`/g, "$1")
     .replace(/<@!?[\w-]+>/g, "@someone")
     .replace(/<#[\w-]+>/g, "#channel")

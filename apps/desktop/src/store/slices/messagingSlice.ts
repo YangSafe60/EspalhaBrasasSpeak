@@ -1,7 +1,8 @@
 /** Channel messaging: load, send, edit, delete, reactions, and typing. */
 import { api } from "../../api/client";
 import { upsertMessage } from "../helpers/messageHelpers";
-import type { Message } from "../../types";
+import type { Channel, Message, Poll } from "../../types";
+import { upsertChannelList } from "../helpers/channelHelpers";
 import type { AppStoreSlice } from "./sliceTypes";
 
 /** Messages per page (the server allows up to 100). */
@@ -114,6 +115,86 @@ export const createMessagingSlice: AppStoreSlice = (set, get) => ({
         [message.channel_id]: upsertMessage(s.messagesByChannel[message.channel_id] || [], message),
       },
     }));
+  },
+
+  votePoll: async (messageId, optionIds) => {
+    const poll = await api<Poll>(`/api/messages/${messageId}/poll/vote`, {
+      method: "PUT",
+      body: { option_ids: optionIds },
+    });
+    set((s) => {
+      const next = { ...s.messagesByChannel };
+      for (const [cid, list] of Object.entries(next)) {
+        if (!list.some((m) => m.id === messageId)) continue;
+        next[cid] = list.map((m) => (m.id === messageId ? { ...m, poll } : m));
+      }
+      return { messagesByChannel: next };
+    });
+  },
+
+  createPoll: async (channelId, question, options, multi) => {
+    const message = await api<Message>(`/api/channels/${channelId}/polls`, {
+      method: "POST",
+      body: { question, options, multi },
+    });
+    set((s) => ({
+      messagesByChannel: {
+        ...s.messagesByChannel,
+        [channelId]: upsertMessage(s.messagesByChannel[channelId] || [], message),
+      },
+    }));
+  },
+
+  createThread: async (messageId, name) => {
+    const thread = await api<Channel>(`/api/messages/${messageId}/thread`, {
+      method: "POST",
+      body: { name },
+    });
+    set((s) => ({
+      channelsByServer: {
+        ...s.channelsByServer,
+        [thread.server_id]: upsertChannelList(s.channelsByServer[thread.server_id] || [], thread),
+      },
+    }));
+    return thread;
+  },
+
+  forwardMessage: async (source, to) => {
+    // Files are linked again (same encrypted file, new attachment record).
+    const ids: string[] = [];
+    for (const a of source.attachments) {
+      const res = await api<{ id: string }>("/api/media/remote", {
+        method: "POST",
+        body: {
+          url: a.url,
+          filename: a.filename,
+          content_type: a.content_type,
+          size: a.size,
+          enc_key: a.enc_key ?? undefined,
+        },
+      });
+      ids.push(res.id);
+    }
+    if (to.kind === "dm") {
+      // DMs are encrypted on this PC; the "forwarded" mark goes in the text.
+      const text = source.content.trim();
+      await get().sendDmMessage(to.id, text ? `*↪ Forwarded*\n${text}` : "*↪ Forwarded*", ids);
+      return;
+    }
+    const message = await api<Message>(`/api/channels/${to.id}/messages`, {
+      method: "POST",
+      body: { content: source.content, attachment_ids: ids, forwarded: true },
+    });
+    set((s) =>
+      to.id in s.messagesByChannel
+        ? {
+            messagesByChannel: {
+              ...s.messagesByChannel,
+              [to.id]: upsertMessage(s.messagesByChannel[to.id] || [], message),
+            },
+          }
+        : s,
+    );
   },
 
   toggleReaction: async (messageId, emoji, me) => {

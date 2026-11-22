@@ -49,6 +49,8 @@ export function UserSettingsModal() {
   const logout = useAppStore((s) => s.logout);
 
   const [tab, setTab] = useState<Tab>("account");
+  const [bio, setBio] = useState("");
+  const [accent, setAccent] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
@@ -90,6 +92,8 @@ export function UserSettingsModal() {
   useEffect(() => {
     if (modal !== "user-settings" || !user) return;
     setDisplayName(user.display_name || "");
+    setBio(user.bio || "");
+    setAccent(user.accent_color || "");
     setEmail(user.email || "");
     setAvatarUrl(user.avatar_url || null);
     setBannerUrl(user.banner_url || null);
@@ -166,6 +170,8 @@ export function UserSettingsModal() {
       await updateProfile({
         display_name: displayName.trim() || user.display_name,
         email: email.trim() || user.email,
+        bio: bio.trim(),
+        accent_color: accent,
       });
       setMsg("Profile saved.");
     } catch (error) {
@@ -441,6 +447,34 @@ export function UserSettingsModal() {
                     required
                   />
                 </label>
+                <label>
+                  <span className="field-label-row">
+                    <span>About me</span>
+                    <span className="field-label-hint">{bio.length}/190</span>
+                  </span>
+                  <textarea
+                    className="about-me-input"
+                    value={bio}
+                    maxLength={190}
+                    rows={3}
+                    placeholder="A few words about you"
+                    onChange={(e) => setBio(e.target.value)}
+                  />
+                </label>
+                <div className="profile-accent-row">
+                  <span>Profile colour</span>
+                  <input
+                    type="color"
+                    value={accent || "#e31b23"}
+                    aria-label="Profile colour"
+                    onChange={(e) => setAccent(e.target.value)}
+                  />
+                  {accent && (
+                    <button type="button" className="btn ghost sm" onClick={() => setAccent("")}>
+                      Reset
+                    </button>
+                  )}
+                </div>
                 <label>
                   <span className="field-label-row">
                     <span>Username</span>

@@ -135,7 +135,7 @@ export const createServerSlice: AppStoreSlice = (set, get) => ({
       });
 
       const text = channels
-        .filter((c) => c.channel_type === "text")
+        .filter((c) => c.channel_type === "text" && !c.parent_channel_id)
         .sort((a, b) => a.position - b.position)[0];
       if (text) await get().selectChannel(text.id);
       else set({ activeChannelId: null });

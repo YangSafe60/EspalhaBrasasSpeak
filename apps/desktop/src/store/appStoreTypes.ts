@@ -1,4 +1,5 @@
 import type {
+  Attachment,
   Channel,
   DmChannel,
   DmMessage,
@@ -194,6 +195,8 @@ export interface AppState {
     email?: string;
     avatar_url?: string | null;
     banner_url?: string | null;
+    bio?: string;
+    accent_color?: string;
   }) => Promise<void>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   disableAccount: (password: string) => Promise<void>;
@@ -292,6 +295,16 @@ export interface AppState {
   deleteMessage: (messageId: string, channelId: string) => Promise<void>;
   toggleReaction: (messageId: string, emoji: string, me: boolean) => Promise<void>;
   setMessagePinned: (messageId: string, pinned: boolean) => Promise<void>;
+  /** Replace my votes on a poll (empty = remove my vote). */
+  votePoll: (messageId: string, optionIds: string[]) => Promise<void>;
+  createPoll: (channelId: string, question: string, options: string[], multi: boolean) => Promise<void>;
+  /** Start (or open) the thread of a message; resolves to the thread channel. */
+  createThread: (messageId: string, name: string) => Promise<Channel>;
+  /** Send a copy of a message (text + files) to a channel or DM. */
+  forwardMessage: (
+    source: { content: string; attachments: Attachment[] },
+    to: { kind: "channel" | "dm"; id: string },
+  ) => Promise<void>;
   sendTyping: (channelId: string) => Promise<void>;
 
   openFriendsHome: () => Promise<void>;
