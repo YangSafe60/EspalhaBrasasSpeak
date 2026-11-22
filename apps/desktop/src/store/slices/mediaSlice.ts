@@ -48,28 +48,9 @@ export const createMediaSlice: AppStoreSlice = (_set, get) => ({
       });
     }
 
-    // Other files: upload from the user's machine to Litterbox, then register URL only.
-    const desktop = getElectronAPI();
-    if (!desktop?.uploadTempMedia) {
-      throw new Error(
-        "Non-image files require the desktop app (Litterbox upload from your PC).",
-      );
-    }
-    const temp = await desktop.uploadTempMedia({
-      filename: file.name || "file.bin",
-      contentType,
-      data: await file.arrayBuffer(),
-      expire: "72h",
-    });
-    return api<{ id: string; url: string }>("/api/media/remote", {
-      method: "POST",
-      body: {
-        url: temp.url,
-        filename: temp.filename || file.name,
-        content_type: temp.contentType || contentType,
-        size: temp.size ?? file.size,
-      },
-    });
+    // Message files go through uploadAttachment (encrypted); this path is for
+    // public images only (avatars, banners, server icons, emojis).
+    throw new Error("Only images can be uploaded here.");
   },
 
   uploadAttachment: async (file) => {
@@ -80,8 +61,9 @@ export const createMediaSlice: AppStoreSlice = (_set, get) => ({
       file.type || guessContentType(file.name) || "application/octet-stream";
     const isImage = contentType.toLowerCase().startsWith("image/");
     const { data, key } = await encryptAttachment(await file.arrayBuffer());
-    // Images stay (Catbox), other files expire after 72h (Litterbox), as before.
-    const up = await desktop.uploadEncrypted({ data, permanent: isImage });
+    // Everything goes to Catbox (permanent): encrypted, any file is just an
+    // opaque .bin there.
+    const up = await desktop.uploadEncrypted({ data });
     const res = await api<{ id: string; url: string }>("/api/media/remote", {
       method: "POST",
       body: {

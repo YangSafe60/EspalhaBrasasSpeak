@@ -105,7 +105,7 @@ pub async fn register_remote(
     let url = body.url.trim().to_string();
     if !is_allowed_remote_url(&url) {
         return Err(AppError::BadRequest(
-            "URL host is not allowed (ImgBB / Klipy / Litterbox / Catbox only)".into(),
+            "URL host is not allowed (ImgBB / Klipy / Catbox only)".into(),
         ));
     }
     let filename = body
@@ -224,7 +224,7 @@ fn is_allowed_remote_url(raw: &str) -> bool {
     is_klipy_url(raw)
         || is_imgbb_url(raw)
         || host_matches(raw, |h| {
-            h == "litter.catbox.moe" || h == "files.catbox.moe"
+            h == "files.catbox.moe"
         })
 }
 

@@ -1,6 +1,6 @@
 /**
- * Attachments are encrypted here before they leave the PC, so Catbox /
- * Litterbox only ever store ciphertext (their links are short and guessable).
+ * Attachments are encrypted here before they leave the PC, so Catbox only
+ * ever stores ciphertext (its links are short and guessable).
  * The key (random per file) is stored with the attachment on our server and
  * sent to people who can see the message; the VPS does no crypto work.
  *

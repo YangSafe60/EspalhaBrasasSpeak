@@ -166,7 +166,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("app:update", listener);
     return () => ipcRenderer.removeListener("app:update", listener);
   },
-  uploadTempMedia: (payload) => ipcRenderer.invoke("media:upload-temp", payload),
   uploadNotifySound: (payload) =>
     ipcRenderer.invoke("media:upload-notify-sound", payload),
   uploadImage: (payload) => ipcRenderer.invoke("media:upload-image", payload),

@@ -1237,57 +1237,10 @@ function registerIpc() {
     }
   });
 
-  /** Upload non-image files from the user's machine (bypasses VPS + CORS). */
-  ipcMain.handle("media:upload-temp", async (_evt, payload = {}) => {
-    const filename = String(payload.filename || "file.bin").replace(/[/\\]/g, "_");
-    const contentType = String(payload.contentType || "application/octet-stream");
-    const expire = ["1h", "12h", "24h", "72h"].includes(payload.expire)
-      ? payload.expire
-      : "72h";
-    const raw = payload.data;
-    if (!raw) {
-      throw new Error("file data required");
-    }
-    const buf = Buffer.isBuffer(raw)
-      ? raw
-      : Buffer.from(raw instanceof ArrayBuffer ? raw : new Uint8Array(raw));
-    if (buf.length === 0) {
-      throw new Error("empty file");
-    }
-    // Match server default MAX_UPLOAD_BYTES (25 MiB).
-    const maxBytes = 25 * 1024 * 1024;
-    if (buf.length > maxBytes) {
-      throw new Error("file too large (max 25 MB)");
-    }
-
-    const form = new FormData();
-    form.append("reqtype", "fileupload");
-    form.append("time", expire);
-    form.append(
-      "fileToUpload",
-      new Blob([new Uint8Array(buf)], { type: contentType }),
-      filename,
-    );
-
-    const res = await fetch(
-      "https://litterbox.catbox.moe/resources/internals/api.php",
-      { method: "POST", body: form },
-    );
-    const text = (await res.text()).trim();
-    if (!res.ok || !/^https:\/\/litter\.catbox\.moe\//i.test(text)) {
-      throw new Error(
-        text && text.length < 200
-          ? `Litterbox upload failed: ${text}`
-          : `Litterbox upload failed (${res.status})`,
-      );
-    }
-    return { url: text, size: buf.length, filename, contentType };
-  });
-
   /**
    * Encrypted attachments (encrypted in the page, AES-GCM): uploaded as an
-   * opaque .bin, so the host only ever stores ciphertext. Images are kept
-   * (Catbox), other files expire like before (Litterbox, 72h).
+   * opaque .bin on Catbox (permanent), so the host only ever stores
+   * ciphertext.
    */
   ipcMain.handle("media:upload-encrypted", async (_evt, payload = {}) => {
     const raw = payload.data;
@@ -1297,24 +1250,16 @@ function registerIpc() {
       : Buffer.from(raw instanceof ArrayBuffer ? raw : new Uint8Array(raw));
     if (buf.length === 0) throw new Error("empty file");
     if (buf.length > 25 * 1024 * 1024 + 64) throw new Error("file too large (max 25 MB)");
-    const permanent = Boolean(payload.permanent);
     const form = new FormData();
     form.append("reqtype", "fileupload");
-    if (!permanent) form.append("time", "72h");
     form.append("fileToUpload", new Blob([new Uint8Array(buf)], { type: "application/octet-stream" }), "file.bin");
-    const endpoint = permanent
-      ? "https://catbox.moe/user/api.php"
-      : "https://litterbox.catbox.moe/resources/internals/api.php";
-    const res = await fetch(endpoint, {
+    const res = await fetch("https://catbox.moe/user/api.php", {
       method: "POST",
       headers: { "User-Agent": "EspalhaBrasas/0.1" },
       body: form,
     });
     const text = (await res.text()).trim();
-    const expected = permanent
-      ? /^https:\/\/files\.catbox\.moe\/[a-z0-9]+\.bin$/i
-      : /^https:\/\/litter\.catbox\.moe\/[a-z0-9]+\.bin$/i;
-    if (!res.ok || !expected.test(text)) {
+    if (!res.ok || !/^https:\/\/files\.catbox\.moe\/[a-z0-9]+\.bin$/i.test(text)) {
       throw new Error(
         text && text.length < 200 ? `Upload failed: ${text}` : `Upload failed (${res.status})`,
       );
@@ -1324,8 +1269,8 @@ function registerIpc() {
 
   /**
    * Download an encrypted attachment for the page to decrypt. Done here, not
-   * in the page, so it doesn't depend on the host's CORS headers. Catbox and
-   * Litterbox links only.
+   * in the page, so it doesn't depend on the host's CORS headers. Catbox
+   * links only.
    */
   ipcMain.handle("media:fetch-encrypted", async (_evt, rawUrl) => {
     let url;
@@ -1334,7 +1279,7 @@ function registerIpc() {
     } catch {
       throw new Error("bad url");
     }
-    if (url.protocol !== "https:" || !["files.catbox.moe", "litter.catbox.moe"].includes(url.hostname)) {
+    if (url.protocol !== "https:" || url.hostname !== "files.catbox.moe") {
       throw new Error("host not allowed");
     }
     const res = await fetch(url, { headers: { "User-Agent": "EspalhaBrasas/0.1" } });
@@ -1347,8 +1292,8 @@ function registerIpc() {
   });
 
   /**
-   * Notification sounds: same off-server upload as other files, but permanent
-   * Catbox (random files.catbox.moe link) instead of a 72h Litterbox file.
+   * Notification sounds: an MP3 on Catbox (random files.catbox.moe link),
+   * uploaded from this PC like attachments, but not encrypted (played as is).
    * Only small MP3s — this is not a general upload endpoint.
    */
   ipcMain.handle("media:upload-notify-sound", async (_evt, payload = {}) => {

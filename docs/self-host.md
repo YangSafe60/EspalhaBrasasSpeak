@@ -150,7 +150,7 @@ VITE_API_BASE=https://your.domain npm run desktop
 
 ## Backups
 
-Media is not on the VPS: images go to Catbox from the desktop app (ImgBB through the server as fallback), other files to Litterbox, GIFs stay on Klipy. The database only stores the URLs.
+Media is not on the VPS: chat files and images are encrypted in the desktop app and stored on Catbox (the database keeps the link and the key — back it up, or those files can't be opened), public images (avatars, icons, emojis) go to Catbox as is (ImgBB through the server as fallback), GIFs stay on Klipy.
 
 E2E DM keys are **not** on the server either — they live on each user's PC, encrypted with the OS keystore (Electron `safeStorage`). Users back them up from the app; the server has only public keys and ciphertext.
 

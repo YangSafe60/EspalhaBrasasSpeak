@@ -144,18 +144,17 @@ In **User Settings → Appearance → Notification sounds**:
 
 - **Choose MP3** replaces the built-in tone for every alert on this device. **Preview** plays it; **Use default** restores the generated chime.
 - Only real `.mp3` files are accepted (extension and file header), and nothing over 1 MB.
-- The desktop app uploads the file the same way as other non-image files: from your PC to a public host, under a random link (`https://files.catbox.moe/…`), not onto the API disk and not into a browsable folder. This device stores only that link (`localStorage`). It is not synced to other devices.
-- Chat files still use short-lived Litterbox hosting. The notification sound uses Catbox so the link does not expire after 72 hours.
+- The desktop app uploads the file from your PC to Catbox, under a random link (`https://files.catbox.moe/…`), not onto the API disk and not into a browsable folder. Unlike chat files it is not encrypted (it's just a sound). This device stores only that link (`localStorage`). It is not synced to other devices.
 
 ### Where uploads go
 
-- **Images** (chat, avatars, banners, server icons, emojis): the desktop app uploads them straight to **Catbox** from your PC and the API stores only the link. If that fails, the image goes to the API, which re-uploads it to **ImgBB** with its own `IMGBB_API_KEY` — the key never leaves the server.
-- **Other files**: uploaded from your PC to **Litterbox** (temporary, 72 h); the API stores the link.
+- **Chat files and images** (channels and DMs): encrypted on your PC (AES-256-GCM, a new key per file), then uploaded to **Catbox** as an opaque `.bin`, permanently. The API stores the link and the key; the app downloads and decrypts to show or save. Catbox only ever holds ciphertext, so guessing its short links finds nothing readable.
+- **Public images** (avatars, banners, server icons, emojis): uploaded to **Catbox** as normal images, since everyone needs to see them. If that fails, the image goes to the API, which re-uploads it to **ImgBB** with its own `IMGBB_API_KEY` — the key never leaves the server.
 - **GIFs**: Klipy links (`KLIPY_API_KEY` on the server).
 
 ### Private DM privacy (honest limits)
 
-- The API never sees DM plaintext — only ciphertext + metadata (who, when, size). GIFs and file attachments are not inside that ciphertext: the server stores the attachment URL, and the bytes live on the same public hosts used for channel uploads.
+- The API never sees DM plaintext — only ciphertext + metadata (who, when, size). File attachments are encrypted before upload, but their key is stored on the server with the attachment (not inside the DM ciphertext), so whoever runs the server could open them; Catbox can't. GIFs are plain Klipy links.
 - Identity private keys live on this device, encrypted with the OS keystore through Electron `safeStorage` (DPAPI / Keychain / libsecret). Clearing app data without a backup means you cannot decrypt old DMs.
 - Not Signal Protocol: no Double Ratchet / multi-device sync in v1. Compare fingerprints in the DM header to verify the peer.
 
