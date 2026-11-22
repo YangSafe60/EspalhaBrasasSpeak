@@ -698,12 +698,7 @@ const MessageRow = memo(function MessageRow({
           </div>
         )}
 
-        {m.poll && (
-          <>
-            <p className="poll-question">{m.poll.question}</p>
-            <PollCard message={m} />
-          </>
-        )}
+        {m.poll && <PollCard message={m} />}
 
         {m.lfg && <PlayerGroupCard message={m} />}
 

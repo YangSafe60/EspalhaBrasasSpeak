@@ -1,3 +1,4 @@
+import { AppSelect } from "./AppSelect";
 import { useEffect, useState, type FormEvent } from "react";
 import { useAppStore } from "../store/appStore";
 import type { Message } from "../types";
@@ -150,7 +151,8 @@ function GamePicker({ value, onChange }: { value: string; onChange: (v: string) 
         value={value}
         maxLength={60}
         placeholder="Pick or type a game"
-        onFocus={() => setOpen(true)}
+        // Opens on click or typing, not on autofocus (it would cover the form).
+        onClick={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         onChange={(e) => {
           onChange(e.target.value);
@@ -158,6 +160,11 @@ function GamePicker({ value, onChange }: { value: string; onChange: (v: string) 
           setHi(0);
         }}
         onKeyDown={(e) => {
+          if (!open && e.key === "ArrowDown") {
+            e.preventDefault();
+            setOpen(true);
+            return;
+          }
           if (!open || matches.length === 0) return;
           if (e.key === "ArrowDown") {
             e.preventDefault();
@@ -225,26 +232,18 @@ export function CreateGroupForm({ channelId, onDone }: { channelId: string; onDo
     <form className="poll-dialog-body" onSubmit={(e) => void submit(e)}>
       <GamePicker value={game} onChange={setGame} />
       <div className="lfg-form-row">
-        <label>
-          Players (you included)
-          <select value={slots} onChange={(e) => setSlots(Number(e.target.value))}>
-            {Array.from({ length: 19 }, (_, i) => i + 2).map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Time limit
-          <select value={minutes} onChange={(e) => setMinutes(Number(e.target.value))}>
-            {DURATIONS.map((d) => (
-              <option key={d.minutes} value={d.minutes}>
-                {d.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <AppSelect
+          label="Players (you included)"
+          value={slots}
+          options={Array.from({ length: 19 }, (_, i) => ({ value: i + 2, label: String(i + 2) }))}
+          onChange={setSlots}
+        />
+        <AppSelect
+          label="Time limit"
+          value={minutes}
+          options={DURATIONS.map((d) => ({ value: d.minutes, label: d.label }))}
+          onChange={setMinutes}
+        />
       </div>
       {error && <p className="form-error tiny">{error}</p>}
       <footer className="group-dm-actions">

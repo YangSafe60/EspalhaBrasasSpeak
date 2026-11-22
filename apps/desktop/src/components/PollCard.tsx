@@ -32,8 +32,10 @@ export function PollCard({ message }: { message: Message }) {
   return (
     <div className="poll-card">
       <div className="poll-head">
-        <span className="poll-badge">Poll</span>
-        <span className="muted tiny">{poll.multi ? "Pick any" : "Pick one"} · {total} {total === 1 ? "vote" : "votes"}</span>
+        <h4 className="poll-title">
+          <span aria-hidden>📊</span> {poll.question}
+        </h4>
+        <span className="poll-kind">{poll.multi ? "Pick any" : "Pick one"}</span>
       </div>
       <ul className="poll-options">
         {poll.options.map((o) => {
@@ -57,6 +59,10 @@ export function PollCard({ message }: { message: Message }) {
           );
         })}
       </ul>
+      <p className="poll-foot">
+        {total} {total === 1 ? "vote" : "votes"}
+        {mine.size > 0 && <span> · you voted</span>}
+      </p>
       {error && <p className="form-error tiny">{error}</p>}
     </div>
   );
