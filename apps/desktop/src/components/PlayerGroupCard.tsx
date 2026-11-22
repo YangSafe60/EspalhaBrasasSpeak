@@ -1,5 +1,4 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { mediaUrl } from "../lib/mediaUrl";
 import { useAppStore } from "../store/appStore";
 import type { Message } from "../types";
 
@@ -57,7 +56,6 @@ export function PlayerGroupCard({ message }: { message: Message }) {
   }, [open, expiresAt]);
 
   if (!group) return null;
-  const creator = authors[message.author_id];
   const joined = me ? group.members.includes(me.id) : false;
   const name = (id: string) => authors[id]?.display_name || authors[id]?.username || "Someone";
 
@@ -76,19 +74,16 @@ export function PlayerGroupCard({ message }: { message: Message }) {
   return (
     <div className={`lfg-card${full ? " is-full" : expired ? " is-closed" : ""}`}>
       <div className="lfg-main">
-        <div className="lfg-creator">
-          {creator?.avatar_url ? (
-            <img src={mediaUrl(creator.avatar_url)} alt="" referrerPolicy="no-referrer" />
-          ) : (
-            <span className="lfg-avatar">{(creator?.display_name || "?").charAt(0).toUpperCase()}</span>
+        <div className="lfg-head">
+          <h4 className="lfg-title">
+            <span aria-hidden>🎮</span> Looking for players for {group.game}
+          </h4>
+          {open && expiresAt != null && (
+            <span className="lfg-timer" title="Closes automatically">
+              <span aria-hidden>⏰</span> {left(expiresAt - now)}
+            </span>
           )}
-          <span>
-            Created by <strong>{creator?.display_name || "someone"}</strong>
-          </span>
         </div>
-        <h4 className="lfg-title">
-          <span aria-hidden>🎮</span> Looking for players for {group.game}
-        </h4>
         <p className="lfg-section-title">
           <span aria-hidden>👥</span> Players ({group.members.length}/{group.slots})
         </p>
@@ -110,11 +105,6 @@ export function PlayerGroupCard({ message }: { message: Message }) {
             </li>
           )}
         </ol>
-        {open && expiresAt != null && (
-          <p className="lfg-section-title">
-            <span aria-hidden>⏰</span> Closes in <code className="inline-code">{left(expiresAt - now)}</code>
-          </p>
-        )}
         {full && <p className="lfg-status ok">✅ Group complete</p>}
         {expired && <p className="lfg-status">Closed before it filled up</p>}
       </div>
@@ -130,6 +120,78 @@ export function PlayerGroupCard({ message }: { message: Message }) {
           </button>
           {error && <span className="form-error tiny">{error}</span>}
         </div>
+      )}
+    </div>
+  );
+}
+
+/** Game field with suggestions in the app's style (any name is allowed). */
+function GamePicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [hi, setHi] = useState(0);
+  const q = value.trim().toLowerCase();
+  const matches = GAMES.filter((g) => !q || g.toLowerCase().includes(q));
+
+  function pick(g: string) {
+    onChange(g);
+    setOpen(false);
+  }
+
+  return (
+    <div className="game-picker">
+      <label htmlFor="lfg-game">Game</label>
+      <input
+        id="lfg-game"
+        autoFocus
+        autoComplete="off"
+        role="combobox"
+        aria-expanded={open && matches.length > 0}
+        aria-controls="lfg-game-list"
+        value={value}
+        maxLength={60}
+        placeholder="Pick or type a game"
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+          setHi(0);
+        }}
+        onKeyDown={(e) => {
+          if (!open || matches.length === 0) return;
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setHi((i) => (i + 1) % matches.length);
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setHi((i) => (i - 1 + matches.length) % matches.length);
+          } else if (e.key === "Enter") {
+            e.preventDefault();
+            pick(matches[Math.min(hi, matches.length - 1)]);
+          } else if (e.key === "Escape") {
+            setOpen(false);
+          }
+        }}
+      />
+      {open && matches.length > 0 && (
+        <ul className="game-picker-list" id="lfg-game-list" role="listbox">
+          {matches.map((g, i) => (
+            <li
+              key={g}
+              role="option"
+              aria-selected={i === hi}
+              className={i === hi ? "is-active" : undefined}
+              // mousedown, not click: runs before the input's blur closes the list
+              onMouseDown={(e) => {
+                e.preventDefault();
+                pick(g);
+              }}
+              onMouseEnter={() => setHi(i)}
+            >
+              {g}
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );
@@ -161,22 +223,7 @@ export function CreateGroupForm({ channelId, onDone }: { channelId: string; onDo
 
   return (
     <form className="poll-dialog-body" onSubmit={(e) => void submit(e)}>
-      <label>
-        Game
-        <input
-          autoFocus
-          list="lfg-games"
-          value={game}
-          maxLength={60}
-          placeholder="Valorant"
-          onChange={(e) => setGame(e.target.value)}
-        />
-        <datalist id="lfg-games">
-          {GAMES.map((g) => (
-            <option key={g} value={g} />
-          ))}
-        </datalist>
-      </label>
+      <GamePicker value={game} onChange={setGame} />
       <div className="lfg-form-row">
         <label>
           Players (you included)
