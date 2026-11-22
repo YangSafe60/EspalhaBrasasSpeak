@@ -10138,3 +10138,77 @@ html[data-underline-links="1"] .a11y-preview-msg a {
 .mini-profile-avatar-row .mini-profile-avatar-wrap {
   flex-shrink: 0;
 }
+
+
+/* Status editor: one field with the emoji inside (like Discord). */
+.status-editor-field {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0 0.4rem 0 0.25rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.status-editor-field:focus-within {
+  border-color: var(--accent);
+}
+
+.status-editor-field input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 0.55rem 0.3rem;
+}
+
+.status-editor-field input:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+.status-editor-emoji .emoji-picker-toggle {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+}
+
+.status-editor-emoji .emoji-picker-toggle:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.status-emoji-empty {
+  opacity: 0.55;
+  filter: grayscale(1);
+}
+
+.status-emoji-clear {
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-size: 0.7rem;
+  padding: 0 0.2rem;
+  cursor: pointer;
+}
+
+/* The emoji rendered by MessageContent (unicode or custom image). */
+.message-content.status-emoji,
+.status-emoji {
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.status-emoji .custom-emoji {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+}

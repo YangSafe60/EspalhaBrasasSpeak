@@ -533,7 +533,8 @@ pub async fn set_custom_status(
     if text.is_some_and(|t| t.chars().count() > 128) {
         return Err(AppError::BadRequest("status can be up to 128 characters".into()));
     }
-    if emoji.is_some_and(|e| e.chars().count() > 64) {
+    // A unicode emoji, or a custom one as "<:name:id>" (up to ~72 chars).
+    if emoji.is_some_and(|e| e.chars().count() > 100) {
         return Err(AppError::BadRequest("invalid emoji".into()));
     }
     let expires_at = match body.expires_minutes {

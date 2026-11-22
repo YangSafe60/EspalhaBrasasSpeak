@@ -3,6 +3,12 @@ import { api } from "../api/client";
 import type { UserProfileExtras } from "../types";
 import { AppSelect } from "./AppSelect";
 import { EmojiPickerButton } from "./EmojiPickerButton";
+import { MessageContent } from "./MessageContent";
+
+/** A status emoji: unicode, or a server's custom emoji token. */
+function StatusEmoji({ value }: { value: string }) {
+  return <MessageContent content={value} className="status-emoji" serverId={null} />;
+}
 
 export type CustomStatus = NonNullable<UserProfileExtras["custom_status"]>;
 
@@ -82,7 +88,7 @@ export function CustomStatusBubble({
           disabled={!editable}
           title={editable ? "Edit your status" : undefined}
         >
-          {status.emoji && <span className="status-bubble-emoji">{status.emoji}</span>}
+          {status.emoji && <StatusEmoji value={status.emoji} />}
           {status.text && <span className="status-bubble-text">{status.text}</span>}
         </button>
       ) : (
@@ -93,18 +99,27 @@ export function CustomStatusBubble({
 
       {editing && (
         <form className="status-editor" onSubmit={(e) => void save(false, e)} onClick={(e) => e.stopPropagation()}>
-          <div className="status-editor-row">
+          {/* One field like Discord's: the emoji sits inside, before the text. */}
+          <div className="status-editor-field">
             <EmojiPickerButton
               className="status-editor-emoji"
-              title="Pick an emoji"
+              title={emoji ? "Change emoji" : "Pick an emoji"}
               placement="auto"
-              onPick={(e) => {
-                // Custom server emojis are tokens; the bubble shows plain emoji.
-                if (!e.startsWith("<")) setEmoji(e);
-              }}
+              onPick={(e) => setEmoji(e.trim())}
             >
-              <span aria-hidden>{emoji || "🙂"}</span>
+              {emoji ? <StatusEmoji value={emoji} /> : <span aria-hidden className="status-emoji-empty">🙂</span>}
             </EmojiPickerButton>
+            {emoji && (
+              <button
+                type="button"
+                className="status-emoji-clear"
+                title="Remove emoji"
+                aria-label="Remove emoji"
+                onClick={() => setEmoji("")}
+              >
+                ✕
+              </button>
+            )}
             <input
               autoFocus
               value={text}
