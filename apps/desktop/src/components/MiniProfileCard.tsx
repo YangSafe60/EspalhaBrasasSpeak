@@ -177,7 +177,11 @@ export function MiniProfileCard() {
     };
     const onDown = (e: globalThis.MouseEvent) => {
       const target = e.target as Node;
-      if (panelRef.current && !panelRef.current.contains(target)) {
+      // Floating menus opened from the card (emoji picker, dropdown lists)
+      // are drawn outside it: clicks there aren't "outside the card".
+      const inPopup =
+        target instanceof Element && target.closest(".emoji-picker-panel, .app-select-list");
+      if (panelRef.current && !panelRef.current.contains(target) && !inPopup) {
         closeMiniProfile();
         return;
       }
