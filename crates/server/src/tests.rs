@@ -1266,3 +1266,54 @@ async fn profiles_and_forwarded_messages() {
         .await;
     assert!(plain.body.get("forwarded").is_none());
 }
+
+#[tokio::test]
+async fn player_groups_fill_up_and_announce() {
+    let app = test_app().await;
+    let (owner, member, _server, channel, member_id) = owner_and_member(&app).await;
+    let bad = app
+        .call(Method::POST, &format!("/api/channels/{channel}/groups"), Some(&owner), Some(json!({ "game": "Valorant", "slots": 1 })))
+        .await;
+    assert_eq!(bad.status, StatusCode::BAD_REQUEST);
+    let r = app
+        .call(
+            Method::POST,
+            &format!("/api/channels/{channel}/groups"),
+            Some(&owner),
+            Some(json!({ "game": "Valorant", "slots": 2, "duration_minutes": 60 })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["lfg"]["members"].as_array().unwrap().len(), 1, "creator is in");
+    assert!(r.body["lfg"]["expires_at"].is_string());
+    let mid = r.body["id"].as_str().unwrap().to_string();
+    let join = format!("/api/messages/{mid}/group/join");
+
+    // Join, leave, join again: the second player fills it.
+    assert_eq!(app.call(Method::PUT, &join, Some(&member), None).await.status, StatusCode::OK);
+    // (filled on the first join: 2 of 2)
+    let list = app.call(Method::GET, &format!("/api/channels/{channel}/messages"), Some(&owner), None).await;
+    let msgs = list.body.as_array().unwrap();
+    let card = msgs.iter().find(|m| m["id"] == mid.as_str()).unwrap();
+    assert!(card["lfg"]["completed_at"].is_string());
+    assert_eq!(card["lfg"]["members"][1], member_id.as_str());
+    let done = msgs.last().unwrap();
+    assert_eq!(done["reply_to_id"], mid.as_str());
+    let text = done["content"].as_str().unwrap();
+    assert!(text.contains("Valorant") && text.contains(&format!("<@{member_id}>")), "{text}");
+
+    // Closed: nobody can join or leave any more.
+    assert_eq!(app.call(Method::DELETE, &join, Some(&member), None).await.status, StatusCode::BAD_REQUEST);
+
+    // A bigger group: leaving frees the slot.
+    let r = app
+        .call(Method::POST, &format!("/api/channels/{channel}/groups"), Some(&owner), Some(json!({ "game": "CS2", "slots": 5 })))
+        .await;
+    let mid2 = r.body["id"].as_str().unwrap().to_string();
+    let join2 = format!("/api/messages/{mid2}/group/join");
+    let r = app.call(Method::PUT, &join2, Some(&member), None).await;
+    assert_eq!(r.body["lfg"]["members"].as_array().unwrap().len(), 2);
+    let r = app.call(Method::DELETE, &join2, Some(&member), None).await;
+    assert_eq!(r.body["lfg"]["members"].as_array().unwrap().len(), 1);
+    assert!(r.body["lfg"].get("completed_at").is_none());
+}

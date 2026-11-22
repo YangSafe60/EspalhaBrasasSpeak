@@ -27,6 +27,7 @@ import { MessageEmbeds } from "./MessageEmbeds";
 import { MessageSearch } from "./MessageSearch";
 import { PinIcon, PinnedMessagesButton } from "./PinnedMessagesButton";
 import { PollCard } from "./PollCard";
+import { PlayerGroupCard } from "./PlayerGroupCard";
 import { ForwardDialog } from "./ForwardDialog";
 import { useAppStore } from "../store/appStore";
 import type { Atmosphere, Channel, Member, Message, ReactionSummary, Role, UserPublic } from "../types";
@@ -675,7 +676,7 @@ const MessageRow = memo(function MessageRow({
             onSave={actions.saveEdit}
             onCancel={actions.cancelEdit}
           />
-        ) : m.poll ? null : (
+        ) : m.poll || m.lfg ? null : (
           <>
             {m.content && (
               <>
@@ -703,6 +704,8 @@ const MessageRow = memo(function MessageRow({
             <PollCard message={m} />
           </>
         )}
+
+        {m.lfg && <PlayerGroupCard message={m} />}
 
         {m.thread && (
           <button type="button" className="thread-chip" onClick={() => actions.openThread(m)}>

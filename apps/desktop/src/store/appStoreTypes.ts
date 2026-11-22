@@ -298,6 +298,9 @@ export interface AppState {
   /** Replace my votes on a poll (empty = remove my vote). */
   votePoll: (messageId: string, optionIds: string[]) => Promise<void>;
   createPoll: (channelId: string, question: string, options: string[], multi: boolean) => Promise<void>;
+  /** Post a "find players" group card (time limit in minutes, null = none). */
+  createGroup: (channelId: string, game: string, slots: number, minutes: number | null) => Promise<void>;
+  joinGroup: (messageId: string, join: boolean) => Promise<void>;
   /** Start (or open) the thread of a message; resolves to the thread channel. */
   createThread: (messageId: string, name: string) => Promise<Channel>;
   /** Send a copy of a message (text + files) to a channel or DM. */

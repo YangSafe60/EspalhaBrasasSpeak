@@ -145,6 +145,31 @@ export const createMessagingSlice: AppStoreSlice = (set, get) => ({
     }));
   },
 
+  createGroup: async (channelId, game, slots, minutes) => {
+    const message = await api<Message>(`/api/channels/${channelId}/groups`, {
+      method: "POST",
+      body: { game, slots, duration_minutes: minutes },
+    });
+    set((s) => ({
+      messagesByChannel: {
+        ...s.messagesByChannel,
+        [channelId]: upsertMessage(s.messagesByChannel[channelId] || [], message),
+      },
+    }));
+  },
+
+  joinGroup: async (messageId, join) => {
+    const message = await api<Message>(`/api/messages/${messageId}/group/join`, {
+      method: join ? "PUT" : "DELETE",
+    });
+    set((s) => ({
+      messagesByChannel: {
+        ...s.messagesByChannel,
+        [message.channel_id]: upsertMessage(s.messagesByChannel[message.channel_id] || [], message),
+      },
+    }));
+  },
+
   createThread: async (messageId, name) => {
     const thread = await api<Channel>(`/api/messages/${messageId}/thread`, {
       method: "POST",

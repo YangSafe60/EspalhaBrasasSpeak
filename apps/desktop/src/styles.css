@@ -9694,3 +9694,144 @@ html[data-underline-links="1"] .a11y-preview-msg a {
   display: block;
   margin-top: 0.15rem;
 }
+
+
+/* ---------- poll dialog tabs + "find players" groups ---------- */
+.poll-mode {
+  display: flex;
+  gap: 0.35rem;
+  padding: 0.25rem;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.poll-mode button {
+  flex: 1;
+  padding: 0.45rem;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.poll-mode button.active {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+}
+
+.poll-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.lfg-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+}
+
+.lfg-card {
+  width: min(420px, 100%);
+  margin-top: 0.3rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  background: rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.lfg-card.is-full {
+  border-left-color: #22c55e;
+}
+
+.lfg-card.is-closed {
+  border-left-color: rgba(255, 255, 255, 0.25);
+  opacity: 0.75;
+}
+
+.lfg-main {
+  padding: 0.75rem 0.9rem 0.6rem;
+}
+
+.lfg-creator {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+}
+
+.lfg-creator img,
+.lfg-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  object-fit: cover;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.1);
+  font-size: 0.7rem;
+  color: var(--text);
+}
+
+.lfg-title {
+  margin: 0.45rem 0 0.5rem;
+  font-size: 1rem;
+}
+
+.lfg-section-title {
+  margin: 0.45rem 0 0.25rem;
+  font-weight: 700;
+  font-size: 0.88rem;
+}
+
+.lfg-members {
+  margin: 0;
+  padding-left: 1.3rem;
+  display: grid;
+  gap: 0.15rem;
+  font-size: 0.88rem;
+}
+
+.lfg-members .mention {
+  padding: 0 0.25rem;
+  border-radius: 4px;
+  background: rgba(88, 101, 242, 0.2);
+  color: #c9cdfb;
+}
+
+.lfg-members li.is-free {
+  opacity: 0.6;
+}
+
+.lfg-status {
+  margin: 0.5rem 0 0;
+  font-weight: 700;
+  font-size: 0.88rem;
+  color: var(--text-dim);
+}
+
+.lfg-status.ok {
+  color: #4ade80;
+}
+
+.lfg-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.9rem 0.7rem;
+}
+
+.btn.lfg-join {
+  background: #1f8f4e;
+  border-color: #1f8f4e;
+  color: #fff;
+}
+
+.btn.lfg-join:hover:not(:disabled) {
+  background: #23a55a;
+}

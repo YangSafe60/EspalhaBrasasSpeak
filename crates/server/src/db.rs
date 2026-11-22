@@ -1008,6 +1008,7 @@ pub async fn load_message(db: &SqlitePool, id: Uuid, viewer_id: Uuid) -> AppResu
         forwarded: row.forwarded != 0,
         poll: extras.polls.remove(&row.id),
         thread: extras.threads.remove(&row.id),
+        lfg: extras.groups.remove(&row.id),
     })
 }
 
@@ -1015,6 +1016,7 @@ pub async fn load_message(db: &SqlitePool, id: Uuid, viewer_id: Uuid) -> AppResu
 pub struct MessageExtras {
     pub polls: HashMap<String, speakapp_shared::Poll>,
     pub threads: HashMap<String, speakapp_shared::ThreadInfo>,
+    pub groups: HashMap<String, speakapp_shared::PlayerGroup>,
 }
 
 fn in_list(n: usize) -> String {
@@ -1026,7 +1028,7 @@ pub async fn message_extras(
     ids: &[String],
     viewer_id: Uuid,
 ) -> AppResult<MessageExtras> {
-    let mut out = MessageExtras { polls: HashMap::new(), threads: HashMap::new() };
+    let mut out = MessageExtras { polls: HashMap::new(), threads: HashMap::new(), groups: HashMap::new() };
     if ids.is_empty() {
         return Ok(out);
     }
@@ -1081,6 +1083,44 @@ pub async fn message_extras(
             out.threads.insert(
                 mid,
                 speakapp_shared::ThreadInfo { id, name, message_count: count as u32 },
+            );
+        }
+    }
+
+    let sql = format!(
+        "SELECT message_id, game, slots, expires_at, completed_at FROM lfg_groups WHERE message_id IN ({list})"
+    );
+    let mut q = sqlx::query_as::<Sqlite, (String, String, i64, Option<String>, Option<String>)>(&sql);
+    for id in ids {
+        q = q.bind(id);
+    }
+    let groups = q.fetch_all(db).await?;
+    if !groups.is_empty() {
+        let gids: Vec<String> = groups.iter().map(|g| g.0.clone()).collect();
+        let sql = format!(
+            "SELECT message_id, user_id FROM lfg_members WHERE message_id IN ({}) ORDER BY joined_at, rowid",
+            in_list(gids.len())
+        );
+        let mut q = sqlx::query_as::<Sqlite, (String, String)>(&sql);
+        for id in &gids {
+            q = q.bind(id);
+        }
+        let mut members: HashMap<String, Vec<Uuid>> = HashMap::new();
+        for (mid, uid) in q.fetch_all(db).await? {
+            if let Ok(u) = Uuid::parse_str(&uid) {
+                members.entry(mid).or_default().push(u);
+            }
+        }
+        for (mid, game, slots, expires_at, completed_at) in groups {
+            out.groups.insert(
+                mid.clone(),
+                speakapp_shared::PlayerGroup {
+                    game,
+                    slots: slots as u32,
+                    members: members.remove(&mid).unwrap_or_default(),
+                    expires_at: parse_opt_dt(expires_at.as_deref()),
+                    completed_at: parse_opt_dt(completed_at.as_deref()),
+                },
             );
         }
     }
@@ -1339,6 +1379,7 @@ pub async fn list_messages(
             forwarded: row.forwarded != 0,
             poll: extras.polls.remove(&id_key),
             thread: extras.threads.remove(&id_key),
+            lfg: extras.groups.remove(&id_key),
         });
     }
     out.reverse();

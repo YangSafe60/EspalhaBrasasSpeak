@@ -133,6 +133,18 @@ export interface Message {
   poll?: Poll | null;
   /** A thread started from this message. */
   thread?: ThreadInfo | null;
+  /** A "find players" group card. */
+  lfg?: PlayerGroup | null;
+}
+
+export interface PlayerGroup {
+  game: string;
+  slots: number;
+  /** User ids in join order (the creator first). */
+  members: string[];
+  expires_at?: string | null;
+  /** Set when it filled up. */
+  completed_at?: string | null;
 }
 
 export interface PollOption {

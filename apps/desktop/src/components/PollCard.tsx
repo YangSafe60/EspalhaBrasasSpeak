@@ -1,3 +1,4 @@
+import { CreateGroupForm } from "./PlayerGroupCard";
 import { useState, type FormEvent } from "react";
 import { useAppStore } from "../store/appStore";
 import type { Message } from "../types";
@@ -61,8 +62,37 @@ export function PollCard({ message }: { message: Message }) {
   );
 }
 
-/** Dialog to start a poll in a channel. */
+/** Dialog behind the poll button: a poll, or a "find players" group. */
 export function CreatePollDialog({ channelId, onClose }: { channelId: string; onClose: () => void }) {
+  const [mode, setMode] = useState<"poll" | "group">("poll");
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal poll-dialog" onClick={(e) => e.stopPropagation()}>
+        <header className="modal-header">
+          <h3>{mode === "poll" ? "Create a poll" : "Find players"}</h3>
+          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
+            ✕
+          </button>
+        </header>
+        <div className="poll-mode" role="tablist">
+          <button type="button" role="tab" aria-selected={mode === "poll"} className={mode === "poll" ? "active" : ""} onClick={() => setMode("poll")}>
+            📊 Poll
+          </button>
+          <button type="button" role="tab" aria-selected={mode === "group"} className={mode === "group" ? "active" : ""} onClick={() => setMode("group")}>
+            🎮 Find players
+          </button>
+        </div>
+        {mode === "poll" ? (
+          <PollForm channelId={channelId} onDone={onClose} />
+        ) : (
+          <CreateGroupForm channelId={channelId} onDone={onClose} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PollForm({ channelId, onDone: onClose }: { channelId: string; onDone: () => void }) {
   const createPoll = useAppStore((s) => s.createPoll);
   const [question, setQuestion] = useState("");
   const [options, setOptions] = useState(["", ""]);
@@ -87,14 +117,7 @@ export function CreatePollDialog({ channelId, onClose }: { channelId: string; on
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <form className="modal poll-dialog" onClick={(e) => e.stopPropagation()} onSubmit={(e) => void submit(e)}>
-        <header className="modal-header">
-          <h3>Create a poll</h3>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
-            ✕
-          </button>
-        </header>
+      <form className="poll-dialog-body" onSubmit={(e) => void submit(e)}>
         <label>
           Question
           <input autoFocus value={question} maxLength={300} onChange={(e) => setQuestion(e.target.value)} placeholder="What time do we play?" />
@@ -141,6 +164,5 @@ export function CreatePollDialog({ channelId, onClose }: { channelId: string; on
           </button>
         </footer>
       </form>
-    </div>
   );
 }

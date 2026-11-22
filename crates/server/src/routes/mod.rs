@@ -284,6 +284,11 @@ pub fn router(state: AppState) -> Router {
             patch(messages::update).delete(messages::delete),
         )
         .route("/api/channels/{id}/polls", post(messages::create_poll))
+        .route("/api/channels/{id}/groups", post(messages::create_group))
+        .route(
+            "/api/messages/{id}/group/join",
+            put(messages::join_group).delete(messages::join_group),
+        )
         .route("/api/messages/{id}/poll/vote", put(messages::vote_poll))
         .route("/api/messages/{id}/thread", post(messages::create_thread))
         .route(

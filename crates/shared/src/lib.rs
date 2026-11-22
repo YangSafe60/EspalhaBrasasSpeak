@@ -165,6 +165,22 @@ pub struct Message {
     /// A thread started from this message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread: Option<ThreadInfo>,
+    /// A "find players" group card.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lfg: Option<PlayerGroup>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerGroup {
+    pub game: String,
+    pub slots: u32,
+    /// In join order (the creator first).
+    pub members: Vec<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<DateTime<Utc>>,
+    /// Set when it filled up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

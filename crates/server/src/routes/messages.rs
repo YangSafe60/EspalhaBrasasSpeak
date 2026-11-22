@@ -971,3 +971,165 @@ pub async fn create_thread(
     }
     Ok(Json(thread))
 }
+
+// ------------------------------------------------- "find players" groups
+
+#[derive(Deserialize)]
+pub struct CreateGroupReq {
+    pub game: String,
+    /// Players wanted, the creator included (2..=20).
+    pub slots: u32,
+    /// Time limit in minutes (None = until it's full).
+    pub duration_minutes: Option<i64>,
+}
+
+pub async fn create_group(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<CreateGroupReq>,
+) -> AppResult<Json<Message>> {
+    let channel = db::get_channel(&state.db, id).await?;
+    if channel.channel_type != speakapp_shared::ChannelType::Text {
+        return Err(AppError::BadRequest("not a text channel".into()));
+    }
+    let server = db::get_server(&state.db, channel.server_id).await?;
+    db::require_perm(&state.db, &server, Some(id), user.id, Permissions::VIEW_CHANNEL).await?;
+    db::require_perm(&state.db, &server, Some(id), user.id, Permissions::SEND_MESSAGES).await?;
+    db::require_not_timed_out(&state.db, server.id, user.id).await?;
+    let game = body.game.trim();
+    if game.is_empty() || game.chars().count() > 60 {
+        return Err(AppError::BadRequest("the game needs 1 to 60 characters".into()));
+    }
+    if !(2..=20).contains(&body.slots) {
+        return Err(AppError::BadRequest("a group has 2 to 20 players".into()));
+    }
+    let expires_at = match body.duration_minutes {
+        None | Some(0) => None,
+        Some(m) if (5..=24 * 60).contains(&m) => Some(Utc::now() + chrono::Duration::minutes(m)),
+        Some(_) => return Err(AppError::BadRequest("time limit: 5 minutes to 24 hours".into())),
+    };
+    if !is_moderator(&state, &server, id, user.id).await? {
+        check_slowmode(&state, &channel, user.id).await?;
+        check_word_filter(&state, &server, game).await?;
+    }
+    check_message_rate(&state, &user)?;
+
+    let msg_id = Uuid::new_v4();
+    let now = Utc::now().to_rfc3339();
+    let mut tx = state.db.begin().await?;
+    sqlx::query(
+        "INSERT INTO messages (id, channel_id, author_id, content, reply_to_id, created_at) VALUES (?, ?, ?, ?, NULL, ?)",
+    )
+    .bind(msg_id.to_string())
+    .bind(id.to_string())
+    .bind(user.id.to_string())
+    .bind(format!("Looking for players for {game}"))
+    .bind(&now)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("INSERT INTO lfg_groups (message_id, game, slots, expires_at) VALUES (?, ?, ?, ?)")
+        .bind(msg_id.to_string())
+        .bind(game)
+        .bind(body.slots as i64)
+        .bind(expires_at.map(|e| e.to_rfc3339()))
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("INSERT INTO lfg_members (message_id, user_id, joined_at) VALUES (?, ?, ?)")
+        .bind(msg_id.to_string())
+        .bind(user.id.to_string())
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+
+    let message = db::load_message(&state.db, msg_id, user.id).await?;
+    let author = db::user_public(&state.db, user.id).await?;
+    broadcast_to_viewers(&state, &server, id, &WsEvent::MessageCreate { message: message.clone(), author }).await?;
+    Ok(Json(message))
+}
+
+/// Join (`PUT`) or leave (`DELETE`) a group. Filling the last slot closes it
+/// and posts a message that mentions everyone in it.
+pub async fn join_group(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+    method: axum::http::Method,
+) -> AppResult<Json<Message>> {
+    let joining = method == axum::http::Method::PUT;
+    let message = db::load_message(&state.db, id, user.id).await?;
+    let group = message.lfg.clone().ok_or(AppError::NotFound)?;
+    let channel = db::get_channel(&state.db, message.channel_id).await?;
+    let server = db::get_server(&state.db, channel.server_id).await?;
+    db::require_perm(&state.db, &server, Some(channel.id), user.id, Permissions::VIEW_CHANNEL).await?;
+    if group.completed_at.is_some() {
+        return Err(AppError::BadRequest("this group is already full".into()));
+    }
+    if group.expires_at.is_some_and(|e| e < Utc::now()) {
+        return Err(AppError::BadRequest("this group has closed".into()));
+    }
+    state.limits.check(crate::ratelimit::REACTION, &user.id.to_string())?;
+
+    let mut completed = false;
+    let mut tx = state.db.begin().await?;
+    if joining {
+        if group.members.contains(&user.id) {
+            return Ok(Json(message));
+        }
+        sqlx::query("INSERT INTO lfg_members (message_id, user_id, joined_at) VALUES (?, ?, ?)")
+            .bind(id.to_string())
+            .bind(user.id.to_string())
+            .bind(Utc::now().to_rfc3339())
+            .execute(&mut *tx)
+            .await?;
+        // Count inside the transaction, so two last joiners can't both fit.
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM lfg_members WHERE message_id = ?")
+            .bind(id.to_string())
+            .fetch_one(&mut *tx)
+            .await?;
+        if count > group.slots as i64 {
+            return Err(AppError::BadRequest("this group is already full".into()));
+        }
+        if count == group.slots as i64 {
+            sqlx::query("UPDATE lfg_groups SET completed_at = ? WHERE message_id = ?")
+                .bind(Utc::now().to_rfc3339())
+                .bind(id.to_string())
+                .execute(&mut *tx)
+                .await?;
+            completed = true;
+        }
+    } else {
+        sqlx::query("DELETE FROM lfg_members WHERE message_id = ? AND user_id = ?")
+            .bind(id.to_string())
+            .bind(user.id.to_string())
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+
+    let updated = db::load_message(&state.db, id, user.id).await?;
+    broadcast_to_viewers(&state, &server, channel.id, &WsEvent::MessageUpdate { message: updated.clone() }).await?;
+
+    if completed {
+        let members = updated.lfg.as_ref().map(|g| g.members.clone()).unwrap_or_default();
+        let mentions = members.iter().map(|m| format!("<@{m}>")).collect::<Vec<_>>().join(" ");
+        let content = format!("✅ **{}** group is complete! {}", group.game, mentions);
+        let done_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO messages (id, channel_id, author_id, content, reply_to_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(done_id.to_string())
+        .bind(channel.id.to_string())
+        .bind(message.author_id.to_string())
+        .bind(&content)
+        .bind(id.to_string())
+        .bind(Utc::now().to_rfc3339())
+        .execute(&state.db)
+        .await?;
+        let done = db::load_message(&state.db, done_id, user.id).await?;
+        let author = db::user_public(&state.db, message.author_id).await?;
+        broadcast_to_viewers(&state, &server, channel.id, &WsEvent::MessageCreate { message: done, author }).await?;
+    }
+    Ok(Json(updated))
+}
