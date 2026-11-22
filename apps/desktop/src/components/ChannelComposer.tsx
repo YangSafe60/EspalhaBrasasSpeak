@@ -32,7 +32,7 @@ export function ChannelComposer({ channel, mentionCtx, canMentionEveryone }: Pro
   const channelId = channel.id;
   const sendMessage = useAppStore((s) => s.sendMessage);
   const sendTyping = useAppStore((s) => s.sendTyping);
-  const uploadFile = useAppStore((s) => s.uploadFile);
+  const uploadAttachment = useAppStore((s) => s.uploadAttachment);
   const attachRemoteMedia = useAppStore((s) => s.attachRemoteMedia);
   const authors = useAppStore((s) => s.authors);
   const pendingComposerInsert = useAppStore((s) => s.pendingComposerInsert);
@@ -204,7 +204,7 @@ export function ChannelComposer({ channel, mentionCtx, canMentionEveryone }: Pro
     setFileUploading(true);
     setComposerErr(null);
     try {
-      const uploaded = await uploadFile(file);
+      const uploaded = await uploadAttachment(file);
       const preview =
         file.type.startsWith("image/") ||
         /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(file.name || "");

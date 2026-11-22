@@ -107,6 +107,7 @@ pub async fn create_server_emoji(
     Path(id): Path<Uuid>,
     Json(body): Json<CreateEmojiReq>,
 ) -> AppResult<Json<ServerEmoji>> {
+    state.limits.check(crate::ratelimit::EMOJI_UPLOAD, &user.id.to_string())?;
     let server = db::get_server(&state.db, id).await?;
     db::require_perm(
         &state.db,

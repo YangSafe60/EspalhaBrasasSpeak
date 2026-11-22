@@ -195,21 +195,7 @@ pub async fn list_dms(
     State(state): State<AppState>,
     user: AuthUser,
 ) -> AppResult<Json<Vec<DmChannel>>> {
-    let ids: Vec<String> = sqlx::query_scalar(
-        r#"SELECT d.id FROM dm_channels d
-           INNER JOIN dm_participants p ON p.dm_channel_id = d.id
-           WHERE p.user_id = ? AND COALESCE(p.hidden, 0) = 0
-           ORDER BY d.created_at DESC"#,
-    )
-    .bind(user.id.to_string())
-    .fetch_all(&state.db)
-    .await?;
-
-    let mut out = Vec::new();
-    for id in ids {
-        out.push(load_dm_for_user(&state, Uuid::parse_str(&id).unwrap(), user.id).await?);
-    }
-    Ok(Json(out))
+    Ok(Json(db::visible_dms(&state.db, user.id).await?))
 }
 
 #[derive(Deserialize)]
@@ -922,6 +908,7 @@ pub async fn create_group(
     user: AuthUser,
     Json(body): Json<CreateGroupReq>,
 ) -> AppResult<Json<DmChannel>> {
+    state.limits.check(crate::ratelimit::CREATE, &user.id.to_string())?;
     let mut others: Vec<Uuid> = Vec::new();
     for id in body.user_ids {
         if id != user.id && !others.contains(&id) {

@@ -63,6 +63,7 @@ export function createInitialState() {
     channelNotify: loadChannelNotify(),
     unreadByChannel: {},
     mentionsByChannel: {},
+    historyDoneByChannel: {},
     unreadMarker: null,
     messageToasts: [],
     bootstrapped: false,

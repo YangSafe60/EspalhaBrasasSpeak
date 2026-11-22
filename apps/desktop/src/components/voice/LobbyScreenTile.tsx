@@ -9,6 +9,9 @@ import {
   unregisterScreenCapture,
 } from "../../lib/screenBridge";
 import { subscribeLobbyFrame } from "../../lib/lobbyFrames";
+import type { useVoice } from "../../hooks/useVoice";
+import { useAppStore } from "../../store/appStore";
+import { IconCamera, IconDisconnect, IconMic, IconScreen } from "./CallIcons";
 
 export type LobbyScreenTileProps = {
   trackSid: string;
@@ -30,7 +33,80 @@ export type LobbyScreenTileProps = {
     onVolume: (v: number) => void;
     onMute: (muted: boolean) => void;
   };
+  /** In fullscreen, shows mic / camera / screen share / disconnect too. */
+  voice?: ReturnType<typeof useVoice>;
 };
+
+/** Hide the fullscreen controls (and cursor) after this long without moving. */
+const IDLE_MS = 2500;
+
+/** Call controls in the middle of the fullscreen bar, like Discord's. */
+function FullscreenCallControls({
+  voice,
+  onLeaveFullscreen,
+}: {
+  voice: ReturnType<typeof useVoice>;
+  onLeaveFullscreen: () => void;
+}) {
+  const streaming = useAppStore((s) => s.streaming);
+  return (
+    <div className="fs-call-controls" role="toolbar" aria-label="Call controls">
+      <div className="fs-call-group">
+        <button
+          type="button"
+          className={`fs-call-btn${voice.muted ? " is-off" : ""}`}
+          title={voice.muted ? "Unmute" : "Mute"}
+          aria-label={voice.muted ? "Unmute" : "Mute"}
+          onClick={() => void voice.toggleMute()}
+        >
+          <IconMic off={voice.muted} />
+        </button>
+        <button
+          type="button"
+          className={`fs-call-btn${voice.cameraOn ? " is-on" : ""}`}
+          title={voice.cameraOn ? "Turn off camera" : "Turn on camera"}
+          aria-label={voice.cameraOn ? "Turn off camera" : "Turn on camera"}
+          disabled={!voice.connected || voice.pickerBusy}
+          onClick={() => void voice.toggleCamera()}
+        >
+          <IconCamera off={!voice.cameraOn} />
+        </button>
+      </div>
+      <div className="fs-call-group">
+        <button
+          type="button"
+          className={`fs-call-btn${streaming ? " is-on" : ""}`}
+          title={streaming ? "Stop sharing your screen" : "Share your screen"}
+          aria-label={streaming ? "Stop sharing your screen" : "Share your screen"}
+          disabled={voice.pickerBusy}
+          onClick={() => {
+            if (streaming) {
+              void voice.stopScreenShare();
+              return;
+            }
+            // The picker opens in the app, so leave fullscreen first.
+            onLeaveFullscreen();
+            voice.openScreenPicker();
+          }}
+        >
+          <IconScreen />
+        </button>
+      </div>
+      <button
+        type="button"
+        className="fs-call-btn fs-call-leave"
+        title="Disconnect"
+        aria-label="Disconnect"
+        onClick={() => {
+          onLeaveFullscreen();
+          void voice.leave();
+        }}
+      >
+        <IconDisconnect />
+      </button>
+    </div>
+  );
+}
 
 function StopStreamIcon() {
   return (
@@ -62,12 +138,37 @@ export function LobbyScreenTile({
   hoverActionLabel,
   onHoverAction,
   audioControls,
+  voice,
 }: LobbyScreenTileProps) {
   const tileRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [expanded, setExpanded] = useState(false);
+  /** Fullscreen: controls show on mouse move and hide when idle. */
+  const [idle, setIdle] = useState(false);
+  const idleTimer = useRef<number | null>(null);
+  const overControls = useRef(false);
   const useRelayPreview = useRelay;
+
+  function wake() {
+    setIdle(false);
+    if (idleTimer.current != null) window.clearTimeout(idleTimer.current);
+    idleTimer.current = window.setTimeout(() => {
+      if (!overControls.current) setIdle(true);
+    }, IDLE_MS);
+  }
+
+  useEffect(() => {
+    if (!expanded) {
+      setIdle(false);
+      return;
+    }
+    wake();
+    return () => {
+      if (idleTimer.current != null) window.clearTimeout(idleTimer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded]);
 
   useEffect(() => {
     if (useRelayPreview || !track) return;
@@ -120,8 +221,9 @@ export function LobbyScreenTile({
 
   return (
     <div
-      className={`lobby-screen-tile${expanded ? " is-expanded" : ""}`}
+      className={`lobby-screen-tile${expanded ? " is-expanded" : ""}${expanded && idle ? " is-idle" : ""}`}
       ref={tileRef}
+      onMouseMove={expanded ? wake : undefined}
     >
       {useRelayPreview ? (
         <canvas
@@ -142,11 +244,21 @@ export function LobbyScreenTile({
         className="lobby-screen-meta"
         onClick={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
+        onMouseEnter={() => {
+          overControls.current = true;
+        }}
+        onMouseLeave={() => {
+          overControls.current = false;
+          if (expanded) wake();
+        }}
       >
         <span>
           {badge && <em className="you-badge">{badge}</em>}
           {name}
         </span>
+        {expanded && voice && (voice.connected || voice.joining) && (
+          <FullscreenCallControls voice={voice} onLeaveFullscreen={() => setExpanded(false)} />
+        )}
         <div className="lobby-screen-meta-actions">
           {audioControls && (
             <div

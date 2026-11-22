@@ -157,6 +157,7 @@ export const createAuthSlice: AppStoreSlice = (set, get) => ({
       inviteChannelId: null,
       unreadByChannel: {},
       mentionsByChannel: {},
+      historyDoneByChannel: {},
       unreadMarker: null,
       messageToasts: [],
     });

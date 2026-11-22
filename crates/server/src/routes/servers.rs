@@ -154,6 +154,7 @@ pub async fn create(
     user: AuthUser,
     Json(body): Json<CreateServerReq>,
 ) -> AppResult<Json<Server>> {
+    state.limits.check(crate::ratelimit::CREATE, &user.id.to_string())?;
     let name = body.name.trim();
     if name.is_empty() {
         return Err(AppError::BadRequest("name required".into()));

@@ -1,10 +1,11 @@
+import { encryptAttachment } from "../../lib/attachmentCrypto";
 /** File uploads and remote media attachment. */
 import { api } from "../../api/client";
 import { getElectronAPI } from "../../lib/desktop";
 import { guessContentType } from "../helpers/messageHelpers";
 import type { AppStoreSlice } from "./sliceTypes";
 
-export const createMediaSlice: AppStoreSlice = () => ({
+export const createMediaSlice: AppStoreSlice = (_set, get) => ({
   uploadFile: async (file) => {
     const contentType =
       file.type || guessContentType(file.name) || "application/octet-stream";
@@ -69,6 +70,29 @@ export const createMediaSlice: AppStoreSlice = () => ({
         size: temp.size ?? file.size,
       },
     });
+  },
+
+  uploadAttachment: async (file) => {
+    const desktop = getElectronAPI();
+    // Outside the desktop app (no uploader without CORS issues): plain upload.
+    if (!desktop?.uploadEncrypted) return get().uploadFile(file);
+    const contentType =
+      file.type || guessContentType(file.name) || "application/octet-stream";
+    const isImage = contentType.toLowerCase().startsWith("image/");
+    const { data, key } = await encryptAttachment(await file.arrayBuffer());
+    // Images stay (Catbox), other files expire after 72h (Litterbox), as before.
+    const up = await desktop.uploadEncrypted({ data, permanent: isImage });
+    const res = await api<{ id: string; url: string }>("/api/media/remote", {
+      method: "POST",
+      body: {
+        url: up.url,
+        filename: file.name || (isImage ? "image" : "file"),
+        content_type: contentType,
+        size: file.size,
+        enc_key: key,
+      },
+    });
+    return { id: res.id, url: URL.createObjectURL(file) };
   },
 
   attachRemoteMedia: async (body) => {

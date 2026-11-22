@@ -170,6 +170,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   uploadNotifySound: (payload) =>
     ipcRenderer.invoke("media:upload-notify-sound", payload),
   uploadImage: (payload) => ipcRenderer.invoke("media:upload-image", payload),
+  uploadEncrypted: (payload) => ipcRenderer.invoke("media:upload-encrypted", payload),
+  fetchEncrypted: (url) => ipcRenderer.invoke("media:fetch-encrypted", String(url || "")),
   getMemorySnapshot: () => ipcRenderer.invoke("diag:memory"),
   memoryLogFromEnv: () => ipcRenderer.invoke("diag:memory-env"),
   setScreenPreviewActive: (active) => ipcRenderer.send("voice:set-preview", active),

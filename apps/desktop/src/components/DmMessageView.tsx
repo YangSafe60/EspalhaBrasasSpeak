@@ -563,7 +563,7 @@ type PendingFile = { id: string; url: string; name: string; preview: boolean };
 function DmComposer({ channel }: { channel: DmChannel }) {
   const dmId = channel.id;
   const sendDmMessage = useAppStore((s) => s.sendDmMessage);
-  const uploadFile = useAppStore((s) => s.uploadFile);
+  const uploadAttachment = useAppStore((s) => s.uploadAttachment);
   const attachRemoteMedia = useAppStore((s) => s.attachRemoteMedia);
   const sendDmTyping = useAppStore((s) => s.sendDmTyping);
 
@@ -632,7 +632,7 @@ function DmComposer({ channel }: { channel: DmChannel }) {
     setFileUploading(true);
     setComposerErr(null);
     try {
-      const uploaded = await uploadFile(file);
+      const uploaded = await uploadAttachment(file);
       const preview =
         file.type.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(file.name || "");
       setPendingFiles((prev) => [

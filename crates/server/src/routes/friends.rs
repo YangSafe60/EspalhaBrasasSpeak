@@ -348,6 +348,7 @@ pub async fn request_friend(
     user: AuthUser,
     Json(body): Json<FriendRequestReq>,
 ) -> AppResult<Json<Friendship>> {
+    state.limits.check(crate::ratelimit::FRIEND_REQUEST, &user.id.to_string())?;
     let raw = body.username.trim();
     let username = raw.trim_start_matches('@').trim();
     if username.is_empty() {

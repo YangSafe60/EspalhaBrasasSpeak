@@ -1629,6 +1629,34 @@ html[data-theme="light"] .rail-brand.rail-home {
   padding: 1rem 1.15rem 0.5rem;
 }
 
+/* Top of a channel's history (or loading the page before). */
+.history-start {
+  padding: 1rem 0.35rem 1.25rem;
+  margin-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.history-start .ch-icon {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.07);
+  font-size: 1.6rem;
+  margin-bottom: 0.6rem;
+}
+
+.history-start p {
+  margin: 0;
+  color: var(--text-dim);
+}
+
+.history-loading {
+  text-align: center;
+  padding: 0.5rem 0;
+}
+
 .message {
   display: grid;
   grid-template-columns: 40px 1fr;
@@ -3144,6 +3172,88 @@ html[data-theme="light"] .user-voice-dock {
   left: 0;
   right: 0;
   bottom: 0;
+  /* name | call controls (centered) | stream actions */
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  padding: 1.6rem 1rem 1rem;
+  border-top: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.lobby-screen-tile.is-expanded .lobby-screen-meta > span {
+  justify-self: start;
+}
+
+.lobby-screen-tile.is-expanded .lobby-screen-meta-actions {
+  justify-self: end;
+}
+
+/* Mouse idle in fullscreen: hide the controls and the cursor. */
+.lobby-screen-tile.is-expanded.is-idle {
+  cursor: none;
+}
+
+.lobby-screen-tile.is-expanded.is-idle .lobby-screen-meta {
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+}
+
+.fs-call-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.fs-call-group {
+  display: flex;
+  gap: 0.15rem;
+  padding: 0.3rem;
+  border-radius: 12px;
+  background: rgba(20, 20, 24, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.fs-call-btn {
+  width: 40px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: #e8e8ea;
+  cursor: pointer;
+}
+
+.fs-call-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.fs-call-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.fs-call-btn.is-off {
+  color: #ff6b6b;
+}
+
+.fs-call-btn.is-on {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.fs-call-leave {
+  width: 52px;
+  height: 44px;
+  border-radius: 12px;
+  background: #d9363e;
+  color: #fff;
+}
+
+.fs-call-leave:hover:not(:disabled) {
+  background: #e5484d;
 }
 
 .lobby-screen-tile video,
@@ -7956,6 +8066,43 @@ html[data-theme="light"] .mini-profile-msg {
     animation: none;
     outline: 2px solid #ff8a8a;
   }
+}
+
+/* Encrypted image attachment while it downloads and decrypts. */
+.image-loading {
+  display: block;
+  width: min(320px, 100%);
+  height: 180px;
+  border-radius: 10px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.04));
+  background-size: 200% 100%;
+  animation: image-loading 1.2s linear infinite;
+}
+
+@keyframes image-loading {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .image-loading {
+    animation: none;
+  }
+}
+
+.attachment-file-link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+  text-align: left;
 }
 
 /* ---------- create server (templates) ---------- */

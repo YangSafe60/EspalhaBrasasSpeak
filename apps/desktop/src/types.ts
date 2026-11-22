@@ -90,6 +90,8 @@ export interface Attachment {
   content_type: string;
   size: number;
   url: string;
+  /** The file at `url` is encrypted; decrypt with this key (lib/attachmentCrypto). */
+  enc_key?: string | null;
 }
 
 export interface ReactionSummary {

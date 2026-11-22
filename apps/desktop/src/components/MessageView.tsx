@@ -1,4 +1,13 @@
-import { Fragment, memo, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import {
+  Fragment,
+  memo,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+} from "react";
 import { MessageMoreMenu, ReplyIcon } from "./MessageMoreMenu";
 import type { ContextMenuItem } from "./ContextMenu";
 import logoMark from "../assets/logo-mark.png";
@@ -117,6 +126,14 @@ export function MessageView() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [deleting, setDeleting] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const loadOlderMessages = useAppStore((s) => s.loadOlderMessages);
+  const historyDone = useAppStore((s) =>
+    activeChannelId ? Boolean(s.historyDoneByChannel[activeChannelId]) : true,
+  );
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  /** Scroll height before older messages were added on top, to keep our place. */
+  const restoreFrom = useRef<number | null>(null);
 
   const me = useMemo(() => members.find((m) => m.user.id === user?.id), [members, user?.id]);
   const myPerms = useMemo(
@@ -184,9 +201,52 @@ export function MessageView() {
     return out;
   }, [messages, mentionCtx]);
 
+  // Follow new messages only when already near the bottom (or it's mine), so
+  // reading older history isn't interrupted. Older pages prepended on top
+  // don't change the newest message, so they don't scroll either.
+  const newestId = messages[messages.length - 1]?.id;
+  const newestMine = messages[messages.length - 1]?.author_id === user?.id;
+  const lastChannel = useRef<string | null>(null);
+  const lastNewest = useRef<string | undefined>(undefined);
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, activeChannelId]);
+    const el = listRef.current;
+    const switched = lastChannel.current !== activeChannelId;
+    // First page of a channel (nothing shown before): jump, don't animate.
+    const firstLoad = lastNewest.current === undefined;
+    lastChannel.current = activeChannelId;
+    lastNewest.current = newestId;
+    if (switched || firstLoad) {
+      bottomRef.current?.scrollIntoView();
+      return;
+    }
+    const nearBottom = !el || el.scrollHeight - el.scrollTop - el.clientHeight < 200;
+    if (nearBottom || newestMine) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newestId, activeChannelId]);
+
+  // After older messages land on top, keep the same messages on screen.
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    if (!el || restoreFrom.current == null) return;
+    el.scrollTop += el.scrollHeight - restoreFrom.current;
+    restoreFrom.current = null;
+  }, [messages]);
+
+  async function maybeLoadOlder() {
+    const el = listRef.current;
+    if (!el || !activeChannelId || loadingOlder || historyDone || messages.length === 0) return;
+    if (el.scrollTop > 300) return;
+    setLoadingOlder(true);
+    restoreFrom.current = el.scrollHeight;
+    try {
+      const n = await loadOlderMessages(activeChannelId);
+      if (n === 0) restoreFrom.current = null;
+    } catch {
+      restoreFrom.current = null;
+    } finally {
+      setLoadingOlder(false);
+    }
+  }
 
   useEffect(() => {
     setEditingId(null);
@@ -338,7 +398,17 @@ export function MessageView() {
         </div>
       </header>
 
-      <div className="message-list">
+      <div className="message-list" ref={listRef} onScroll={() => void maybeLoadOlder()}>
+        {historyDone && messages.length > 0 ? (
+          <div className="history-start">
+            <span className="ch-icon">#</span>
+            <p>
+              This is the start of <strong>#{channel.name}</strong>.
+            </p>
+          </div>
+        ) : loadingOlder ? (
+          <p className="muted tiny history-loading">Loading older messages…</p>
+        ) : null}
         {messages.map((m, i) => {
           return (
             <Fragment key={m.id}>

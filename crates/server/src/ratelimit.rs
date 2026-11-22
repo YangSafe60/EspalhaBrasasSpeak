@@ -45,6 +45,40 @@ pub const MESSAGE: Limit = Limit {
     period: Duration::from_secs(10),
 };
 
+/// Uploads and remote media links (both end up on a third-party host).
+pub const UPLOAD: Limit = Limit {
+    name: "upload",
+    max: 20,
+    period: Duration::from_secs(10 * 60),
+};
+pub const FRIEND_REQUEST: Limit = Limit {
+    name: "friend",
+    max: 20,
+    period: Duration::from_secs(60 * 60),
+};
+/// New servers and new group DMs.
+pub const CREATE: Limit = Limit {
+    name: "create",
+    max: 10,
+    period: Duration::from_secs(60 * 60),
+};
+/// Message search and GIF search.
+pub const SEARCH: Limit = Limit {
+    name: "search",
+    max: 30,
+    period: Duration::from_secs(60),
+};
+pub const REACTION: Limit = Limit {
+    name: "react",
+    max: 30,
+    period: Duration::from_secs(10),
+};
+pub const EMOJI_UPLOAD: Limit = Limit {
+    name: "emoji",
+    max: 20,
+    period: Duration::from_secs(60 * 60),
+};
+
 /// Longest period of any limit; entries idle longer than this are dropped.
 const MAX_PERIOD: Duration = Duration::from_secs(60 * 60);
 const SWEEP_EVERY: u64 = 1024;

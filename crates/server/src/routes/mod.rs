@@ -366,8 +366,13 @@ async fn ws_upgrade(
     for (server_id, members) in crate::db::member_ids_of_users_servers(&state.db, user_id).await? {
         state.hub.set_server_members(server_id, members);
     }
-    // Echo the auth subprotocol, or browsers reject the connection.
-    let ws = ws.protocols([WS_AUTH_PROTOCOL]);
+    // Echo the auth subprotocol, or browsers reject the connection. Clients
+    // don't send anything that needs more than a few KB, so big frames are
+    // refused instead of buffered (the default allows 64 MB).
+    let ws = ws
+        .protocols([WS_AUTH_PROTOCOL])
+        .max_message_size(16 * 1024)
+        .max_frame_size(16 * 1024);
     Ok(ws.on_upgrade(move |socket| ws::handle_socket(socket, user_id, state)))
 }
 

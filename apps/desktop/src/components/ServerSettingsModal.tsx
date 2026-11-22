@@ -727,7 +727,7 @@ export function ServerSettingsModal() {
               </label>
             </div>
             <p className="muted tiny">
-              {IMAGE_UPLOAD_HINT} Max 50 emojis. GIFs animate.
+              Max 50 emojis. GIFs animate.
             </p>
             {serverEmojis.length === 0 ? (
               <p className="muted">No custom emojis yet.</p>

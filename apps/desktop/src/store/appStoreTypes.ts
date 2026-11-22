@@ -128,6 +128,8 @@ export interface AppState {
   unreadByChannel: Record<string, number>;
   /** Unread messages that mention me (@me, my roles, @everyone/@here). */
   mentionsByChannel: Record<string, number>;
+  /** Channels whose whole history is loaded (no older messages left). */
+  historyDoneByChannel: Record<string, true>;
   /** Where the "New messages" divider goes in the channel just opened. */
   unreadMarker: { channelId: string; count: number } | null;
   messageToasts: MessageToast[];
@@ -275,6 +277,8 @@ export interface AppState {
   ) => Promise<PermissionOverwrite[]>;
 
   loadMessages: (channelId: string) => Promise<void>;
+  /** Loads the page before the oldest loaded message; resolves to how many came. */
+  loadOlderMessages: (channelId: string) => Promise<number>;
   sendMessage: (
     channelId: string,
     content: string,
@@ -343,6 +347,11 @@ export interface AppState {
   dropDmChannel: (dmId: string) => void;
 
   uploadFile: (file: File) => Promise<{ id: string; url: string }>;
+  /**
+   * A message attachment: encrypted on this PC before upload (the host only
+   * sees ciphertext). `url` is a local preview of the original file.
+   */
+  uploadAttachment: (file: File) => Promise<{ id: string; url: string }>;
   attachRemoteMedia: (body: {
     url: string;
     filename?: string;

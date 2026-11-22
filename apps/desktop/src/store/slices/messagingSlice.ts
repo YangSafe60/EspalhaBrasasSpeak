@@ -4,16 +4,49 @@ import { upsertMessage } from "../helpers/messageHelpers";
 import type { Message } from "../../types";
 import type { AppStoreSlice } from "./sliceTypes";
 
+/** Messages per page (the server allows up to 100). */
+const PAGE = 50;
+
 export const createMessagingSlice: AppStoreSlice = (set, get) => ({
   loadMessages: async (channelId) => {
-    const messages = await api<Message[]>(`/api/channels/${channelId}/messages`);
-    set((s) => ({
-      messagesByChannel: {
-        ...s.messagesByChannel,
-        // API returns chronological (oldest → newest)
-        [channelId]: messages,
-      },
-    }));
+    const messages = await api<Message[]>(`/api/channels/${channelId}/messages`, {
+      query: { limit: PAGE },
+    });
+    set((s) => {
+      const { [channelId]: _d, ...historyDoneByChannel } = s.historyDoneByChannel;
+      void _d;
+      return {
+        messagesByChannel: {
+          ...s.messagesByChannel,
+          // API returns chronological (oldest → newest)
+          [channelId]: messages,
+        },
+        historyDoneByChannel:
+          messages.length < PAGE ? { ...historyDoneByChannel, [channelId]: true } : historyDoneByChannel,
+      };
+    });
+  },
+
+  loadOlderMessages: async (channelId) => {
+    const current = get().messagesByChannel[channelId] || [];
+    const oldest = current[0];
+    if (!oldest || get().historyDoneByChannel[channelId]) return 0;
+    const older = await api<Message[]>(`/api/channels/${channelId}/messages`, {
+      query: { before: oldest.id, limit: PAGE },
+    });
+    set((s) => {
+      const list = s.messagesByChannel[channelId] || [];
+      const have = new Set(list.map((m) => m.id));
+      const fresh = older.filter((m) => !have.has(m.id));
+      return {
+        messagesByChannel: { ...s.messagesByChannel, [channelId]: [...fresh, ...list] },
+        historyDoneByChannel:
+          older.length < PAGE
+            ? { ...s.historyDoneByChannel, [channelId]: true }
+            : s.historyDoneByChannel,
+      };
+    });
+    return older.length;
   },
 
   setReplyTo: (channelId, messageId) =>

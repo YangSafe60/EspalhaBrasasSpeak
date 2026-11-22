@@ -77,7 +77,9 @@ pub fn issue_access_token(user_id: Uuid, secret: &str) -> AppResult<String> {
     let claims = Claims {
         sub: user_id,
         iat: now.timestamp(),
-        exp: (now + Duration::hours(12)).timestamp(),
+        // Short-lived: a leaked access token is only useful for a while. The
+        // client refreshes it automatically (refresh tokens rotate).
+        exp: (now + Duration::minutes(30)).timestamp(),
         typ: "access".into(),
     };
     encode(

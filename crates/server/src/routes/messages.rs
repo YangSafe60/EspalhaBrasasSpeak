@@ -397,6 +397,7 @@ pub async fn search(
     Path(server_id): Path<Uuid>,
     Query(q): Query<SearchQuery>,
 ) -> AppResult<Json<SearchResults>> {
+    state.limits.check(crate::ratelimit::SEARCH, &user.id.to_string())?;
     let server = db::get_server(&state.db, server_id).await?;
     if !db::is_member(&state.db, server_id, user.id).await? && server.owner_id != user.id {
         return Err(AppError::Forbidden);
@@ -551,6 +552,7 @@ pub async fn add_reaction(
     user: AuthUser,
     Path((id, emoji)): Path<(Uuid, String)>,
 ) -> AppResult<Json<serde_json::Value>> {
+    state.limits.check(crate::ratelimit::REACTION, &user.id.to_string())?;
     let message = db::load_message(&state.db, id, user.id).await?;
     let channel = db::get_channel(&state.db, message.channel_id).await?;
     let server = db::get_server(&state.db, channel.server_id).await?;

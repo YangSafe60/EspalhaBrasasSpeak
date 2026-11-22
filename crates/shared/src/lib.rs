@@ -159,6 +159,9 @@ pub struct Attachment {
     pub content_type: String,
     pub size: u64,
     pub url: String,
+    /// Set when the file at `url` is encrypted (AES-256-GCM, base64url key).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enc_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

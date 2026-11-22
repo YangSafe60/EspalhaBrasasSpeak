@@ -98,6 +98,13 @@ export type ElectronAPI = {
     filename: string;
     contentType: string;
   }>;
+  /** Upload already-encrypted bytes (Catbox if `permanent`, else Litterbox 72h). */
+  uploadEncrypted?: (payload: { data: ArrayBuffer; permanent: boolean }) => Promise<{
+    url: string;
+    size: number;
+  }>;
+  /** Download an encrypted attachment (Catbox / Litterbox links only). */
+  fetchEncrypted?: (url: string) => Promise<ArrayBuffer>;
   /** Upload an image to a direct public file URL from the desktop process. */
   uploadImage: (payload: {
     filename: string;

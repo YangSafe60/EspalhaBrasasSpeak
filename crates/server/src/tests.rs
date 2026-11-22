@@ -997,3 +997,106 @@ async fn templates_create_channels_roles_and_permissions() {
     assert_eq!(post(id_of("announcements")).await, StatusCode::FORBIDDEN);
     assert_eq!(post(id_of("general")).await, StatusCode::OK);
 }
+
+#[tokio::test]
+async fn creating_servers_is_rate_limited() {
+    let app = test_app().await;
+    let owner = app.register("owner").await;
+    for i in 0..10 {
+        let r = app
+            .call(Method::POST, "/api/servers", Some(&owner), Some(json!({ "name": format!("S{i}") })))
+            .await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    }
+    let r = app
+        .call(Method::POST, "/api/servers", Some(&owner), Some(json!({ "name": "one too many" })))
+        .await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn websocket_drops_oversized_frames() {
+    use futures_util::SinkExt;
+    use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValue, Message};
+
+    let app = test_app().await;
+    let auth = app.register("alice").await;
+    let token = auth.trim_start_matches("Bearer ").to_string();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let router = app.router.clone();
+    tokio::spawn(async move {
+        axum::serve(listener, router.into_make_service_with_connect_info::<std::net::SocketAddr>())
+            .await
+            .unwrap();
+    });
+    let mut req = format!("ws://{addr}/api/ws").into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_str(&format!("speakapp.auth, {token}")).unwrap(),
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    // 1 MB of text: far over the 16 KB cap, the server closes the socket.
+    let _ = ws.send(Message::Text("x".repeat(1 << 20).into())).await;
+    let mut closed = false;
+    for _ in 0..50 {
+        match tokio::time::timeout(std::time::Duration::from_millis(100), futures_util::StreamExt::next(&mut ws)).await {
+            Ok(None) | Ok(Some(Err(_))) | Ok(Some(Ok(Message::Close(_)))) => {
+                closed = true;
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert!(closed, "server kept the connection after a 1 MB frame");
+}
+
+#[tokio::test]
+async fn encrypted_attachments_keep_their_key() {
+    let app = test_app().await;
+    let owner = app.register("owner").await;
+    let (_server, channel) = app.server_with_text_channel(&owner).await;
+    let key = "A".repeat(43);
+    let bad = app
+        .call(
+            Method::POST,
+            "/api/media/remote",
+            Some(&owner),
+            Some(json!({ "url": "https://files.catbox.moe/abc123.bin", "enc_key": "short" })),
+        )
+        .await;
+    assert_eq!(bad.status, StatusCode::BAD_REQUEST);
+    let up = app
+        .call(
+            Method::POST,
+            "/api/media/remote",
+            Some(&owner),
+            Some(json!({
+                "url": "https://files.catbox.moe/abc123.bin",
+                "filename": "photo.png",
+                "content_type": "image/png",
+                "size": 1234,
+                "enc_key": key,
+            })),
+        )
+        .await;
+    assert_eq!(up.status, StatusCode::OK, "{}", up.body);
+    let att = up.body["id"].as_str().unwrap();
+    let msg = app
+        .call(
+            Method::POST,
+            &format!("/api/channels/{channel}/messages"),
+            Some(&owner),
+            Some(json!({ "content": "", "attachment_ids": [att] })),
+        )
+        .await;
+    assert_eq!(msg.status, StatusCode::OK, "{}", msg.body);
+    let a = &msg.body["attachments"][0];
+    assert_eq!(a["enc_key"], key.as_str());
+    assert_eq!(a["filename"], "photo.png");
+    assert_eq!(a["content_type"], "image/png");
+    let list = app
+        .call(Method::GET, &format!("/api/channels/{channel}/messages"), Some(&owner), None)
+        .await;
+    assert_eq!(list.body[0]["attachments"][0]["enc_key"], key.as_str());
+}

@@ -67,13 +67,37 @@ pub async fn user_me(db: &SqlitePool, id: Uuid) -> AppResult<UserMe> {
     })
 }
 
+/// Every authenticated request asks "is this account disabled?". The answer
+/// is cached for a minute; disabling or deleting an account (in this process,
+/// the only API instance) updates the cache right away, and accounts are never
+/// re-enabled, so a cached `true` can't go stale.
+static DISABLED_CACHE: std::sync::LazyLock<dashmap::DashMap<Uuid, (bool, std::time::Instant)>> =
+    std::sync::LazyLock::new(dashmap::DashMap::new);
+const DISABLED_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+fn mark_disabled(id: Uuid) {
+    DISABLED_CACHE.insert(id, (true, std::time::Instant::now()));
+}
+
+/// Disabled, or deleted (a token can outlive its account).
 pub async fn is_user_disabled(db: &SqlitePool, id: Uuid) -> AppResult<bool> {
+    if let Some(hit) = DISABLED_CACHE.get(&id) {
+        let (disabled, at) = *hit;
+        if disabled || at.elapsed() < DISABLED_TTL {
+            return Ok(disabled);
+        }
+    }
     let row: Option<Option<String>> =
         sqlx::query_scalar("SELECT disabled_at FROM users WHERE id = ?")
             .bind(id.to_string())
             .fetch_optional(db)
             .await?;
-    Ok(matches!(row, Some(Some(_))))
+    let disabled = !matches!(row, Some(None));
+    if DISABLED_CACHE.len() > 50_000 {
+        DISABLED_CACHE.retain(|_, (d, at)| *d || at.elapsed() < DISABLED_TTL);
+    }
+    DISABLED_CACHE.insert(id, (disabled, std::time::Instant::now()));
+    Ok(disabled)
 }
 
 pub async fn user_password_hash(db: &SqlitePool, id: Uuid) -> AppResult<String> {
@@ -102,11 +126,13 @@ pub async fn disable_user(db: &SqlitePool, user_id: Uuid) -> AppResult<()> {
     if res.rows_affected() == 0 {
         return Err(AppError::NotFound);
     }
+    mark_disabled(user_id);
     revoke_refresh_tokens(db, user_id).await?;
     Ok(())
 }
 
 pub async fn delete_user_account(db: &SqlitePool, user_id: Uuid) -> AppResult<()> {
+    mark_disabled(user_id);
     let uid = user_id.to_string();
     let mut tx = db.begin().await?;
     sqlx::query("DELETE FROM messages WHERE author_id = ?")
@@ -155,6 +181,95 @@ pub async fn delete_user_account(db: &SqlitePool, user_id: Uuid) -> AppResult<()
     }
     tx.commit().await?;
     Ok(())
+}
+
+/// Every visible DM of `viewer` with its people, in two queries (the DM list
+/// used to load each DM and each group member one by one).
+pub async fn visible_dms(
+    db: &SqlitePool,
+    viewer: Uuid,
+) -> AppResult<Vec<speakapp_shared::DmChannel>> {
+    #[derive(sqlx::FromRow)]
+    struct DmRow {
+        id: String,
+        friendship_id: Option<String>,
+        created_at: String,
+        is_group: i64,
+        name: Option<String>,
+        owner_id: Option<String>,
+    }
+    #[derive(sqlx::FromRow)]
+    struct MemberRow {
+        dm_channel_id: String,
+        #[sqlx(flatten)]
+        user: UserRow,
+    }
+    let vid = viewer.to_string();
+    let dms = sqlx::query_as::<_, DmRow>(
+        r#"SELECT d.id, d.friendship_id, d.created_at, COALESCE(d.is_group, 0) AS is_group, d.name, d.owner_id
+           FROM dm_channels d
+           INNER JOIN dm_participants p ON p.dm_channel_id = d.id
+           WHERE p.user_id = ? AND COALESCE(p.hidden, 0) = 0
+           ORDER BY d.created_at DESC"#,
+    )
+    .bind(&vid)
+    .fetch_all(db)
+    .await?;
+    let members = sqlx::query_as::<_, MemberRow>(
+        r#"SELECT dp.dm_channel_id, u.id, u.username, u.display_name, u.avatar_url, u.banner_url, u.created_at
+           FROM dm_participants dp
+           INNER JOIN users u ON u.id = dp.user_id
+           WHERE dp.dm_channel_id IN (
+             SELECT dm_channel_id FROM dm_participants WHERE user_id = ? AND COALESCE(hidden, 0) = 0
+           )
+           ORDER BY dp.user_id"#,
+    )
+    .bind(&vid)
+    .fetch_all(db)
+    .await?;
+
+    let mut by_dm: HashMap<String, Vec<UserPublic>> = HashMap::new();
+    for m in members {
+        by_dm.entry(m.dm_channel_id).or_default().push(m.user.into());
+    }
+    let parse = |s: &str| {
+        DateTime::parse_from_rfc3339(s)
+            .map(|d| d.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now())
+    };
+    let mut out = Vec::with_capacity(dms.len());
+    for d in dms {
+        let Ok(id) = Uuid::parse_str(&d.id) else { continue };
+        let people = by_dm.remove(&d.id).unwrap_or_default();
+        let is_group = d.is_group != 0;
+        // Same choice as load_dm_for_user: lowest other user id.
+        let peer = match people.iter().find(|u| u.id != viewer) {
+            Some(p) => p.clone(),
+            None if is_group => match people.iter().find(|u| u.id == viewer) {
+                Some(me) => me.clone(),
+                None => continue,
+            },
+            None => continue,
+        };
+        let members = if is_group {
+            let mut m = people;
+            m.sort_by(|a, b| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()));
+            m
+        } else {
+            Vec::new()
+        };
+        out.push(speakapp_shared::DmChannel {
+            id,
+            friendship_id: d.friendship_id.and_then(|s| Uuid::parse_str(&s).ok()),
+            peer,
+            created_at: parse(&d.created_at),
+            is_group,
+            name: d.name,
+            owner_id: d.owner_id.and_then(|s| Uuid::parse_str(&s).ok()),
+            members,
+        });
+    }
+    Ok(out)
 }
 
 #[derive(sqlx::FromRow)]
@@ -866,9 +981,10 @@ pub async fn message_attachments(db: &SqlitePool, message_id: Uuid) -> AppResult
         content_type: String,
         size: i64,
         url: String,
+        enc_key: Option<String>,
     }
     let rows = sqlx::query_as::<_, ARow>(
-        "SELECT id, message_id, filename, content_type, size, url FROM attachments WHERE message_id = ?",
+        "SELECT id, message_id, filename, content_type, size, url, enc_key FROM attachments WHERE message_id = ?",
     )
     .bind(message_id.to_string())
     .fetch_all(db)
@@ -882,6 +998,7 @@ pub async fn message_attachments(db: &SqlitePool, message_id: Uuid) -> AppResult
             content_type: r.content_type,
             size: r.size as u64,
             url: r.url,
+            enc_key: r.enc_key,
         })
         .collect())
 }
@@ -932,10 +1049,11 @@ pub async fn attachments_for_messages(
         content_type: String,
         size: i64,
         url: String,
+        enc_key: Option<String>,
     }
     let placeholders = vec!["?"; message_ids.len()].join(",");
     let sql = format!(
-        "SELECT id, message_id, filename, content_type, size, url FROM attachments WHERE message_id IN ({placeholders}) ORDER BY rowid"
+        "SELECT id, message_id, filename, content_type, size, url, enc_key FROM attachments WHERE message_id IN ({placeholders}) ORDER BY rowid"
     );
     let mut query = sqlx::query_as::<Sqlite, ARow>(&sql);
     for id in message_ids {
@@ -953,6 +1071,7 @@ pub async fn attachments_for_messages(
                 content_type: r.content_type,
                 size: r.size as u64,
                 url: r.url,
+                enc_key: r.enc_key,
             });
     }
     Ok(grouped)

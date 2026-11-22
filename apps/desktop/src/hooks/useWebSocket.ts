@@ -3,6 +3,16 @@ import { getAccessToken, refreshAccessToken, wsProtocols, wsUrl } from "../api/c
 import { useAppStore } from "../store/appStore";
 import type { WsEvent } from "../types";
 
+/** True when a JWT expires within `marginMs` (or can't be read). */
+function expiresSoon(token: string, marginMs = 60_000): boolean {
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return typeof payload.exp !== "number" || payload.exp * 1000 - Date.now() < marginMs;
+  } catch {
+    return true;
+  }
+}
+
 export function useWebSocket(enabled: boolean) {
   const applyWsEvent = useAppStore((s) => s.applyWsEvent);
   const userId = useAppStore((s) => s.user?.id);
@@ -15,8 +25,13 @@ export function useWebSocket(enabled: boolean) {
 
     let cancelled = false;
 
-    const connect = () => {
-      const token = getAccessToken();
+    const connect = async () => {
+      let token = getAccessToken();
+      // Access tokens are short-lived: refresh first instead of being refused.
+      if (token && expiresSoon(token)) {
+        await refreshAccessToken();
+        token = getAccessToken();
+      }
       if (!token || cancelled) return;
       const ws = new WebSocket(wsUrl(), wsProtocols(token));
       wsRef.current = ws;
@@ -43,7 +58,7 @@ export function useWebSocket(enabled: boolean) {
         if (!opened) void refreshAccessToken();
         const delay = Math.min(1000 * 2 ** retryRef.current, 15000);
         retryRef.current += 1;
-        timerRef.current = window.setTimeout(connect, delay);
+        timerRef.current = window.setTimeout(() => void connect(), delay);
       };
 
       ws.onerror = () => {
@@ -51,7 +66,7 @@ export function useWebSocket(enabled: boolean) {
       };
     };
 
-    connect();
+    void connect();
 
     return () => {
       cancelled = true;

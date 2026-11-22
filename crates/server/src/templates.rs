@@ -140,6 +140,7 @@ fn friends_rules() -> Vec<(&'static str, &'static str)> {
 
 // ---------------------------------------------------------------- templates
 
+#[cfg(test)]
 pub const KEYS: [&str; 6] = ["gaming", "friends", "study", "school_club", "creators", "local_community"];
 
 /// The template for `key`, small group or community version.

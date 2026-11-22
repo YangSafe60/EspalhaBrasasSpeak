@@ -23,6 +23,14 @@ pub struct RemoteMediaBody {
     pub filename: Option<String>,
     pub content_type: Option<String>,
     pub size: Option<u64>,
+    /// The file at `url` is encrypted with this key (see migration 024).
+    #[serde(default)]
+    pub enc_key: Option<String>,
+}
+
+/// A 256-bit key in unpadded base64url (43 chars).
+fn valid_enc_key(key: &str) -> bool {
+    key.len() == 43 && key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 #[derive(Deserialize)]
@@ -48,6 +56,7 @@ pub async fn upload(
     user: AuthUser,
     mut multipart: Multipart,
 ) -> AppResult<Json<UploadResponse>> {
+    state.limits.check(crate::ratelimit::UPLOAD, &user.id.to_string())?;
     let field = multipart
         .next_field()
         .await
@@ -84,7 +93,7 @@ pub async fn upload(
         .await
         .map_err(|e| AppError::BadRequest(format!("ImgBB upload failed: {e}")))?;
 
-    insert_attachment(&state, user.id, &filename, &content_type, data.len() as i64, &url).await
+    insert_attachment(&state, user.id, &filename, &content_type, data.len() as i64, &url, None).await
 }
 
 pub async fn register_remote(
@@ -92,6 +101,7 @@ pub async fn register_remote(
     user: AuthUser,
     Json(body): Json<RemoteMediaBody>,
 ) -> AppResult<Json<UploadResponse>> {
+    state.limits.check(crate::ratelimit::UPLOAD, &user.id.to_string())?;
     let url = body.url.trim().to_string();
     if !is_allowed_remote_url(&url) {
         return Err(AppError::BadRequest(
@@ -122,6 +132,12 @@ pub async fn register_remote(
     if reported > state.config.max_upload_bytes {
         return Err(AppError::BadRequest("file too large".into()));
     }
+    let enc_key = body.enc_key.as_deref().map(str::trim).filter(|k| !k.is_empty());
+    if let Some(k) = enc_key {
+        if !valid_enc_key(k) {
+            return Err(AppError::BadRequest("invalid enc_key".into()));
+        }
+    }
     insert_attachment(
         &state,
         user.id,
@@ -129,15 +145,17 @@ pub async fn register_remote(
         &content_type,
         reported as i64,
         &url,
+        enc_key,
     )
     .await
 }
 
 pub async fn search_gifs(
     State(state): State<AppState>,
-    _user: AuthUser,
+    user: AuthUser,
     Query(q): Query<GifSearchQuery>,
 ) -> AppResult<Json<GifSearchResponse>> {
+    state.limits.check(crate::ratelimit::SEARCH, &user.id.to_string())?;
     let key = state.config.klipy_api_key.as_deref().ok_or_else(|| {
         AppError::BadRequest("GIF search is not configured (set KLIPY_API_KEY)".into())
     })?;
@@ -155,6 +173,7 @@ async fn insert_attachment(
     content_type: &str,
     size: i64,
     url: &str,
+    enc_key: Option<&str>,
 ) -> AppResult<Json<UploadResponse>> {
     let id = Uuid::new_v4();
     // Sanitize filename: strip path components to avoid client-side confusion.
@@ -166,7 +185,7 @@ async fn insert_attachment(
         .take(180)
         .collect::<String>();
     sqlx::query(
-        "INSERT INTO attachments (id, message_id, filename, content_type, size, url, uploader_id) VALUES (?, NULL, ?, ?, ?, ?, ?)",
+        "INSERT INTO attachments (id, message_id, filename, content_type, size, url, uploader_id, enc_key) VALUES (?, NULL, ?, ?, ?, ?, ?, ?)",
     )
     .bind(id.to_string())
     .bind(&safe_name)
@@ -174,6 +193,7 @@ async fn insert_attachment(
     .bind(size)
     .bind(url)
     .bind(uploader_id.to_string())
+    .bind(enc_key)
     .execute(&state.db)
     .await?;
 

@@ -143,6 +143,7 @@ export function VoiceLobbyView({ voice }: Props) {
           <section className="voice-lobby-stage">
             {voice.localScreens.map((s, i) => (
               <LobbyScreenTile
+                voice={voice}
                 key={s.trackSid}
                 trackSid={s.trackSid}
                 track={"track" in s ? s.track : null}
@@ -174,6 +175,7 @@ export function VoiceLobbyView({ voice }: Props) {
             {otherScreens.map((s) =>
               s.subscribed ? (
                 <LobbyScreenTile
+                voice={voice}
                   key={s.trackSid}
                   trackSid={s.trackSid}
                   track={s.track}

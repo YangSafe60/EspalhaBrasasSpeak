@@ -1285,6 +1285,68 @@ function registerIpc() {
   });
 
   /**
+   * Encrypted attachments (encrypted in the page, AES-GCM): uploaded as an
+   * opaque .bin, so the host only ever stores ciphertext. Images are kept
+   * (Catbox), other files expire like before (Litterbox, 72h).
+   */
+  ipcMain.handle("media:upload-encrypted", async (_evt, payload = {}) => {
+    const raw = payload.data;
+    if (!raw) throw new Error("file data required");
+    const buf = Buffer.isBuffer(raw)
+      ? raw
+      : Buffer.from(raw instanceof ArrayBuffer ? raw : new Uint8Array(raw));
+    if (buf.length === 0) throw new Error("empty file");
+    if (buf.length > 25 * 1024 * 1024 + 64) throw new Error("file too large (max 25 MB)");
+    const permanent = Boolean(payload.permanent);
+    const form = new FormData();
+    form.append("reqtype", "fileupload");
+    if (!permanent) form.append("time", "72h");
+    form.append("fileToUpload", new Blob([new Uint8Array(buf)], { type: "application/octet-stream" }), "file.bin");
+    const endpoint = permanent
+      ? "https://catbox.moe/user/api.php"
+      : "https://litterbox.catbox.moe/resources/internals/api.php";
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "User-Agent": "EspalhaBrasas/0.1" },
+      body: form,
+    });
+    const text = (await res.text()).trim();
+    const expected = permanent
+      ? /^https:\/\/files\.catbox\.moe\/[a-z0-9]+\.bin$/i
+      : /^https:\/\/litter\.catbox\.moe\/[a-z0-9]+\.bin$/i;
+    if (!res.ok || !expected.test(text)) {
+      throw new Error(
+        text && text.length < 200 ? `Upload failed: ${text}` : `Upload failed (${res.status})`,
+      );
+    }
+    return { url: text, size: buf.length };
+  });
+
+  /**
+   * Download an encrypted attachment for the page to decrypt. Done here, not
+   * in the page, so it doesn't depend on the host's CORS headers. Catbox and
+   * Litterbox links only.
+   */
+  ipcMain.handle("media:fetch-encrypted", async (_evt, rawUrl) => {
+    let url;
+    try {
+      url = new URL(String(rawUrl));
+    } catch {
+      throw new Error("bad url");
+    }
+    if (url.protocol !== "https:" || !["files.catbox.moe", "litter.catbox.moe"].includes(url.hostname)) {
+      throw new Error("host not allowed");
+    }
+    const res = await fetch(url, { headers: { "User-Agent": "EspalhaBrasas/0.1" } });
+    if (!res.ok) throw new Error(`download failed (${res.status})`);
+    const len = Number(res.headers.get("content-length") || 0);
+    if (len > 30 * 1024 * 1024) throw new Error("file too large");
+    const buf = await res.arrayBuffer();
+    if (buf.byteLength > 30 * 1024 * 1024) throw new Error("file too large");
+    return buf;
+  });
+
+  /**
    * Notification sounds: same off-server upload as other files, but permanent
    * Catbox (random files.catbox.moe link) instead of a 72h Litterbox file.
    * Only small MP3s — this is not a general upload endpoint.
