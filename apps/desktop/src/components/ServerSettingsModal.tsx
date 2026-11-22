@@ -107,7 +107,8 @@ export function ServerSettingsModal() {
     name: string;
   } | null>(null);
   const [deletingRole, setDeletingRole] = useState(false);
-  const [confirmServerName, setConfirmServerName] = useState("");
+  /** Delete Server needs a second click within a few seconds. */
+  const [deleteArmed, setDeleteArmed] = useState(false);
   const [deletingServer, setDeletingServer] = useState(false);
 
   const user = useAppStore((s) => s.user);
@@ -164,7 +165,7 @@ export function ServerSettingsModal() {
     setBusy(false);
     setSelectedRoleId(null);
     setCreatingNew(false);
-    setConfirmServerName("");
+    setDeleteArmed(false);
     setDeletingServer(false);
     setTab(allowedTabs[0]);
     void (async () => {
@@ -230,6 +231,16 @@ export function ServerSettingsModal() {
     selectedRole?.color,
   ]);
 
+  useEffect(() => {
+    if (!deleteArmed) return;
+    const t = window.setTimeout(() => setDeleteArmed(false), 4000);
+    return () => window.clearTimeout(t);
+  }, [deleteArmed]);
+
+  useEffect(() => {
+    setDeleteArmed(false);
+  }, [tab]);
+
   if (modal !== "server-settings" || !server || !activeServerId) return null;
   if (allowedTabs.length === 0) return null;
 
@@ -293,8 +304,9 @@ export function ServerSettingsModal() {
 
   async function onDeleteServer() {
     if (!server || !isOwner) return;
-    if (confirmServerName !== server.name) {
-      setErr("Type the server name to confirm.");
+    // First click arms the button; the second one deletes.
+    if (!deleteArmed) {
+      setDeleteArmed(true);
       return;
     }
     setDeletingServer(true);
@@ -895,24 +907,18 @@ export function ServerSettingsModal() {
                 messages, roles, and members will be permanently removed. This cannot be
                 undone.
               </p>
-              <label>
-                Type <strong>{server?.name}</strong> to confirm
-                <input
-                  value={confirmServerName}
-                  onChange={(e) => setConfirmServerName(e.target.value)}
-                  placeholder={server?.name}
-                />
-              </label>
               {err && <p className="form-error">{err}</p>}
               <button
                 type="button"
-                className="btn danger"
-                disabled={
-                  deletingServer || !server || confirmServerName !== server.name
-                }
+                className={`btn danger${deleteArmed ? " is-armed" : ""}`}
+                disabled={deletingServer || !server}
                 onClick={() => void onDeleteServer()}
               >
-                {deletingServer ? "Deleting…" : "Delete Server"}
+                {deletingServer
+                  ? "Deleting…"
+                  : deleteArmed
+                    ? "Click again to delete"
+                    : "Delete Server"}
               </button>
             </div>
           </div>

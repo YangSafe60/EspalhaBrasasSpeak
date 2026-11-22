@@ -7812,6 +7812,27 @@ html[data-theme="light"] .mini-profile-msg {
   line-height: 1.1rem;
 }
 
+/* Delete Server, waiting for the second click. */
+.btn.danger.is-armed {
+  animation: danger-armed 0.9s ease-in-out infinite alternate;
+}
+
+@keyframes danger-armed {
+  from {
+    box-shadow: 0 0 0 0 rgba(227, 27, 35, 0.55);
+  }
+  to {
+    box-shadow: 0 0 0 5px rgba(227, 27, 35, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn.danger.is-armed {
+    animation: none;
+    outline: 2px solid #ff8a8a;
+  }
+}
+
 /* ---------- create server (templates) ---------- */
 .create-server-modal {
   width: min(460px, calc(100vw - 32px));
