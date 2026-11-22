@@ -40,13 +40,62 @@ export type LobbyScreenTileProps = {
 /** Hide the fullscreen controls (and cursor) after this long without moving. */
 const IDLE_MS = 2500;
 
-/** Call controls in the middle of the fullscreen bar, like Discord's. */
-function FullscreenCallControls({
+function StopStreamIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
+      <path
+        fill="currentColor"
+        d="M5 4h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-5.8l1.9 2.8a1 1 0 0 1-.9 1.5H9.8a1 1 0 0 1-.9-1.5L10.8 15H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm0 2v7h14V6H5zm4.9 11h4.2l.9-1.3H9l.9 1.3z"
+      />
+      <path
+        fill="currentColor"
+        d="M9.1 7.4 10.5 8.8 12 7.3l1.5 1.5 1.4-1.4L13.4 5.9 14.8 4.5 13.4 3.1 12 4.5 10.6 3.1 9.1 4.5l1.4 1.4L9.1 7.4z"
+      />
+    </svg>
+  );
+}
+
+/** Volume icon (speaker, or speaker with a cross when muted). */
+function SpeakerIcon({ muted }: { muted: boolean }) {
+  return muted ? (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
+      <path
+        fill="currentColor"
+        d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4 9.91 6.09 12 8.18V4z"
+      />
+    </svg>
+  ) : (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
+      <path
+        fill="currentColor"
+        d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"
+      />
+    </svg>
+  );
+}
+
+/**
+ * Fullscreen bar, all in the centre like Discord's: my mic / camera, screen
+ * share, this stream's volume, exit fullscreen, pop out, stop watching
+ * (other people's streams) and disconnect. For my own stream the screen-share
+ * button is the stop button, so there's no second one.
+ */
+function FullscreenBar({
   voice,
-  onLeaveFullscreen,
+  own,
+  audioControls,
+  busy,
+  onPopout,
+  onStopWatching,
+  onExitFullscreen,
 }: {
   voice: ReturnType<typeof useVoice>;
-  onLeaveFullscreen: () => void;
+  own: boolean;
+  audioControls?: LobbyScreenTileProps["audioControls"];
+  busy: boolean;
+  onPopout: () => void;
+  onStopWatching: () => void;
+  onExitFullscreen: () => void;
 }) {
   const streaming = useAppStore((s) => s.streaming);
   return (
@@ -71,8 +120,6 @@ function FullscreenCallControls({
         >
           <IconCamera off={!voice.cameraOn} />
         </button>
-      </div>
-      <div className="fs-call-group">
         <button
           type="button"
           className={`fs-call-btn${streaming ? " is-on" : ""}`}
@@ -85,41 +132,94 @@ function FullscreenCallControls({
               return;
             }
             // The picker opens in the app, so leave fullscreen first.
-            onLeaveFullscreen();
+            onExitFullscreen();
             voice.openScreenPicker();
           }}
         >
           <IconScreen />
         </button>
       </div>
+
+      <div className="fs-call-group">
+        {audioControls && (
+          <div className="fs-volume">
+            <button
+              type="button"
+              className={`fs-call-btn${audioControls.muted ? " is-off" : ""}`}
+              title={audioControls.muted ? "Unmute stream audio" : "Mute stream audio"}
+              aria-label={audioControls.muted ? "Unmute stream audio" : "Mute stream audio"}
+              onClick={() => audioControls.onMute(!audioControls.muted)}
+            >
+              <SpeakerIcon muted={audioControls.muted} />
+            </button>
+            <input
+              type="range"
+              className="lobby-screen-volume"
+              min={0}
+              max={100}
+              value={Math.round(audioControls.volume * 100)}
+              style={{ "--range-fill": `${Math.round(audioControls.volume * 100)}%` } as CSSProperties}
+              aria-label="Stream audio volume"
+              title="Stream volume"
+              onChange={(e) => audioControls.onVolume(Number(e.target.value) / 100)}
+            />
+          </div>
+        )}
+        <button
+          type="button"
+          className="fs-call-btn"
+          title="Pop out"
+          aria-label="Pop out"
+          disabled={busy}
+          onClick={() => {
+            onExitFullscreen();
+            onPopout();
+          }}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden fill="currentColor">
+            <path d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42L17.59 5H14V3zM5 5h6v2H5v12h12v-6h2v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          className="fs-call-btn"
+          title="Exit fullscreen"
+          aria-label="Exit fullscreen"
+          onClick={onExitFullscreen}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden fill="currentColor">
+            <path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z" />
+          </svg>
+        </button>
+        {!own && (
+          <button
+            type="button"
+            className="fs-call-btn"
+            title="Stop watching"
+            aria-label="Stop watching"
+            onClick={() => {
+              onExitFullscreen();
+              onStopWatching();
+            }}
+          >
+            <StopStreamIcon />
+          </button>
+        )}
+      </div>
+
       <button
         type="button"
         className="fs-call-btn fs-call-leave"
         title="Disconnect"
         aria-label="Disconnect"
         onClick={() => {
-          onLeaveFullscreen();
+          onExitFullscreen();
           void voice.leave();
         }}
       >
         <IconDisconnect />
       </button>
     </div>
-  );
-}
-
-function StopStreamIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
-      <path
-        fill="currentColor"
-        d="M5 4h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-5.8l1.9 2.8a1 1 0 0 1-.9 1.5H9.8a1 1 0 0 1-.9-1.5L10.8 15H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm0 2v7h14V6H5zm4.9 11h4.2l.9-1.3H9l.9 1.3z"
-      />
-      <path
-        fill="currentColor"
-        d="M9.1 7.4 10.5 8.8 12 7.3l1.5 1.5 1.4-1.4L13.4 5.9 14.8 4.5 13.4 3.1 12 4.5 10.6 3.1 9.1 4.5l1.4 1.4L9.1 7.4z"
-      />
-    </svg>
   );
 }
 
@@ -149,6 +249,8 @@ export function LobbyScreenTile({
   const idleTimer = useRef<number | null>(null);
   const overControls = useRef(false);
   const useRelayPreview = useRelay;
+  /** Fullscreen in a call: one centred bar replaces the corner buttons. */
+  const fsBar = expanded && Boolean(voice && (voice.connected || voice.joining));
 
   function wake() {
     setIdle(false);
@@ -256,9 +358,18 @@ export function LobbyScreenTile({
           {badge && <em className="you-badge">{badge}</em>}
           {name}
         </span>
-        {expanded && voice && (voice.connected || voice.joining) && (
-          <FullscreenCallControls voice={voice} onLeaveFullscreen={() => setExpanded(false)} />
+        {fsBar && voice && (
+          <FullscreenBar
+            voice={voice}
+            own={badge === "You"}
+            audioControls={audioControls}
+            busy={busy}
+            onPopout={onPopout}
+            onStopWatching={onHoverAction}
+            onExitFullscreen={() => setExpanded(false)}
+          />
         )}
+        {!fsBar && (
         <div className="lobby-screen-meta-actions">
           {audioControls && (
             <div
@@ -351,6 +462,7 @@ export function LobbyScreenTile({
             <StopStreamIcon />
           </button>
         </div>
+        )}
       </div>
     </div>
   );

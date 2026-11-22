@@ -3188,6 +3188,18 @@ html[data-theme="light"] .user-voice-dock {
   justify-self: end;
 }
 
+/* Volume (mute + slider) inside the fullscreen bar. */
+.fs-volume {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding-right: 0.35rem;
+}
+
+.fs-volume .lobby-screen-volume {
+  width: 90px;
+}
+
 /* Mouse idle in fullscreen: hide the controls and the cursor. */
 .lobby-screen-tile.is-expanded.is-idle {
   cursor: none;
