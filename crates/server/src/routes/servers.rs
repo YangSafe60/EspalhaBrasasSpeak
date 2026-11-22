@@ -55,6 +55,12 @@ async fn sync_server_channel_visibility(state: &AppState, server: &Server) -> Ap
 #[derive(Deserialize)]
 pub struct CreateServerReq {
     pub name: String,
+    /// One of `templates::KEYS`; None = the plain default server.
+    #[serde(default)]
+    pub template: Option<String>,
+    /// Template size: true = community version, false = small group.
+    #[serde(default)]
+    pub community: bool,
 }
 
 #[derive(Deserialize)]
@@ -152,6 +158,16 @@ pub async fn create(
     if name.is_empty() {
         return Err(AppError::BadRequest("name required".into()));
     }
+    if name.chars().count() > 100 {
+        return Err(AppError::BadRequest("name is too long (max 100)".into()));
+    }
+    let template = match body.template.as_deref() {
+        None | Some("") => None,
+        Some(key) => Some(
+            crate::templates::get(key, body.community)
+                .ok_or_else(|| AppError::BadRequest("unknown template".into()))?,
+        ),
+    };
     let server_id = Uuid::new_v4();
     let now = Utc::now().to_rfc3339();
     let everyone_id = Uuid::new_v4();
@@ -188,6 +204,13 @@ pub async fn create(
     .bind(&now)
     .execute(&mut *tx)
     .await?;
+
+    if let Some(t) = template {
+        apply_template(&mut tx, server_id, everyone_id, &t).await?;
+        tx.commit().await?;
+        state.hub.set_server_members(server_id, vec![user.id]);
+        return Ok(Json(db::get_server(&state.db, server_id).await?));
+    }
 
     // Default channels
     let cat_id = Uuid::new_v4();
@@ -226,6 +249,117 @@ pub async fn create(
     state.hub.set_server_members(server_id, vec![user.id]);
     let server = db::get_server(&state.db, server_id).await?;
     Ok(Json(server))
+}
+
+/// Roles, categories, channels, channel permissions and rules of a template,
+/// inside the server-creation transaction.
+async fn apply_template(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    server_id: Uuid,
+    everyone_id: Uuid,
+    t: &crate::templates::Template,
+) -> AppResult<()> {
+    use crate::templates::Target;
+    let sid = server_id.to_string();
+
+    // Roles: first in the list is the highest.
+    let mut role_ids = Vec::with_capacity(t.roles.len());
+    for (i, r) in t.roles.iter().enumerate() {
+        let id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO roles (id, server_id, name, color, position, permissions, is_everyone) VALUES (?, ?, ?, ?, ?, ?, 0)",
+        )
+        .bind(id.to_string())
+        .bind(&sid)
+        .bind(r.name)
+        .bind(r.color)
+        .bind((t.roles.len() - i) as i64)
+        .bind(r.permissions.bits() as i64)
+        .execute(&mut **tx)
+        .await?;
+        role_ids.push(id);
+    }
+    let target_id = |target: Target| match target {
+        Target::Everyone => everyone_id,
+        Target::Role(i) => role_ids[i],
+    };
+
+    let mut position = 0i64;
+    for c in &t.categories {
+        let cat_id = Uuid::new_v4();
+        let mut rows = vec![(cat_id, None, c.name, "category", None, 0i64, &c.overwrites, &c.overwrites)];
+        let ids: Vec<Uuid> = c.channels.iter().map(|_| Uuid::new_v4()).collect();
+        for (ch, id) in c.channels.iter().zip(&ids) {
+            rows.push((
+                *id,
+                Some(cat_id),
+                ch.name,
+                if ch.voice { "voice" } else { "text" },
+                ch.topic,
+                ch.user_limit,
+                &c.overwrites,
+                &ch.overwrites,
+            ));
+        }
+        for (id, parent, name, kind, topic, limit, cat_ows, own_ows) in rows {
+            sqlx::query(
+                "INSERT INTO channels (id, server_id, category_id, name, channel_type, position, topic, background_blur, background_dim, user_limit) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0.45, ?)",
+            )
+            .bind(id.to_string())
+            .bind(&sid)
+            .bind(parent.map(|p: Uuid| p.to_string()))
+            .bind(name)
+            .bind(kind)
+            .bind(position)
+            .bind(topic)
+            .bind(limit)
+            .execute(&mut **tx)
+            .await?;
+            position += 1;
+
+            // Category overwrites apply to each of its channels too (channels
+            // don't inherit them at check time). Same target: merge the bits.
+            let mut merged: Vec<(Uuid, u64, u64)> = Vec::new();
+            let own: &[crate::templates::Overwrite] =
+                if parent.is_some() { own_ows } else { &[] };
+            for o in cat_ows.iter().chain(own) {
+                let tid = target_id(o.target);
+                match merged.iter_mut().find(|m| m.0 == tid) {
+                    Some(m) => {
+                        m.1 |= o.allow.bits();
+                        m.2 |= o.deny.bits();
+                    }
+                    None => merged.push((tid, o.allow.bits(), o.deny.bits())),
+                }
+            }
+            for (tid, allow_bits, deny_bits) in merged {
+                sqlx::query(
+                    "INSERT INTO permission_overwrites (id, channel_id, target_type, target_id, allow_bits, deny_bits) VALUES (?, ?, 'role', ?, ?, ?)",
+                )
+                .bind(Uuid::new_v4().to_string())
+                .bind(id.to_string())
+                .bind(tid.to_string())
+                .bind(allow_bits as i64)
+                .bind(deny_bits as i64)
+                .execute(&mut **tx)
+                .await?;
+            }
+        }
+    }
+
+    for (i, (title, body)) in t.rules.iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO server_rules (id, server_id, title, body, position) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(&sid)
+        .bind(title)
+        .bind(body)
+        .bind(i as i64)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
 }
 
 pub async fn get(

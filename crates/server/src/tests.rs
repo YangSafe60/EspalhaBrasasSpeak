@@ -922,3 +922,78 @@ async fn group_dms_need_friends_and_an_envelope_per_member() {
     assert_ne!(g["owner_id"], alice_id.as_str());
     assert_eq!(app.call(Method::GET, &msgs, Some(&alice), None).await.status, StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn templates_create_channels_roles_and_permissions() {
+    let app = test_app().await;
+    let owner = app.register("owner").await;
+    let member = app.register("member").await;
+
+    let bad = app
+        .call(Method::POST, "/api/servers", Some(&owner), Some(json!({ "name": "X", "template": "nope" })))
+        .await;
+    assert_eq!(bad.status, StatusCode::BAD_REQUEST);
+
+    let small = app
+        .call(Method::POST, "/api/servers", Some(&owner), Some(json!({ "name": "Small", "template": "gaming" })))
+        .await;
+    assert_eq!(small.status, StatusCode::OK, "{}", small.body);
+    let r = app
+        .call(
+            Method::POST,
+            "/api/servers",
+            Some(&owner),
+            Some(json!({ "name": "Big", "template": "gaming", "community": true })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let sid = r.body["id"].as_str().unwrap().to_string();
+    let small_id = small.body["id"].as_str().unwrap().to_string();
+
+    let names = |body: &Value| -> Vec<String> {
+        body.as_array().unwrap().iter().map(|c| c["name"].as_str().unwrap().to_string()).collect()
+    };
+    let owner_view = app.call(Method::GET, &format!("/api/servers/{sid}/channels"), Some(&owner), None).await;
+    let owner_names = names(&owner_view.body);
+    for n in ["announcements", "general", "Squad 1", "Stream Room", "staff-chat", "Staff"] {
+        assert!(owner_names.contains(&n.to_string()), "missing {n}: {owner_names:?}");
+    }
+    let small_view = app
+        .call(Method::GET, &format!("/api/servers/{small_id}/channels"), Some(&owner), None)
+        .await;
+    assert!(names(&small_view.body).len() < owner_names.len());
+
+    let roles = app.call(Method::GET, &format!("/api/servers/{sid}/roles"), Some(&owner), None).await;
+    let role_names: Vec<String> = roles.body.as_array().unwrap().iter()
+        .map(|r| r["name"].as_str().unwrap().to_string()).collect();
+    for n in ["Admin", "Moderator", "Streamer"] {
+        assert!(role_names.contains(&n.to_string()), "missing role {n}: {role_names:?}");
+    }
+
+    // A plain member: no staff channels, can't post announcements, can chat.
+    let inv = app
+        .call(Method::POST, &format!("/api/servers/{sid}/invites"), Some(&owner), Some(json!({})))
+        .await;
+    let code = inv.body["code"].as_str().unwrap();
+    app.call(Method::POST, &format!("/api/invites/{code}"), Some(&member), Some(json!({}))).await;
+    app.call(Method::POST, &format!("/api/servers/{sid}/rules/accept"), Some(&member), Some(json!({}))).await;
+    let member_view = app.call(Method::GET, &format!("/api/servers/{sid}/channels"), Some(&member), None).await;
+    let member_names = names(&member_view.body);
+    assert!(!member_names.contains(&"staff-chat".to_string()), "{member_names:?}");
+    assert!(member_names.contains(&"general".to_string()));
+    let id_of = |n: &str| {
+        owner_view.body.as_array().unwrap().iter()
+            .find(|c| c["name"] == n).unwrap()["id"].as_str().unwrap().to_string()
+    };
+    let post = |ch: String| {
+        let app = &app;
+        let member = member.clone();
+        async move {
+            app.call(Method::POST, &format!("/api/channels/{ch}/messages"), Some(&member), Some(json!({ "content": "hi" })))
+                .await
+                .status
+        }
+    };
+    assert_eq!(post(id_of("announcements")).await, StatusCode::FORBIDDEN);
+    assert_eq!(post(id_of("general")).await, StatusCode::OK);
+}

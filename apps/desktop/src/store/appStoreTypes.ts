@@ -206,7 +206,11 @@ export interface AppState {
   pushMessageToast: (toast: MessageToast) => void;
   dismissMessageToast: (id: string) => void;
   openMessageAlert: (toast: MessageToast) => Promise<void>;
-  createServer: (name: string) => Promise<Server>;
+  /** `template`: a server template key (see CreateServerModal); none = plain server. */
+  createServer: (
+    name: string,
+    opts?: { template?: string | null; community?: boolean },
+  ) => Promise<Server>;
   joinInvite: (code: string) => Promise<Server>;
   updateServer: (id: string, body: Partial<Server>) => Promise<void>;
   transferOwnership: (serverId: string, userId: string) => Promise<void>;

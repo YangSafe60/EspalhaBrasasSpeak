@@ -226,10 +226,10 @@ export const createServerSlice: AppStoreSlice = (set, get) => ({
     await focusMainWindow();
   },
 
-  createServer: async (name) => {
+  createServer: async (name, opts) => {
     const server = await api<Server>("/api/servers", {
       method: "POST",
-      body: { name },
+      body: { name, template: opts?.template ?? null, community: Boolean(opts?.community) },
     });
     set((s) => ({ servers: [...s.servers, server] }));
     await get().selectServer(server.id);

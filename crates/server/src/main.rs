@@ -6,6 +6,7 @@ mod livekit;
 mod ratelimit;
 mod routes;
 mod state;
+mod templates;
 mod ws;
 
 #[cfg(test)]

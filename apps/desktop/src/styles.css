@@ -7812,6 +7812,109 @@ html[data-theme="light"] .mini-profile-msg {
   line-height: 1.1rem;
 }
 
+/* ---------- create server (templates) ---------- */
+.create-server-modal {
+  width: min(460px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+}
+
+.create-server-step {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.create-server-lead {
+  margin: 0 0 0.4rem;
+  font-size: 0.9rem;
+}
+
+.create-server-section {
+  margin: 0.6rem 0 0.1rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+
+.create-server-option {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  width: 100%;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.create-server-option:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.create-server-option.tall {
+  padding: 0.9rem;
+}
+
+.create-server-icon {
+  font-size: 1.3rem;
+  width: 1.8rem;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.create-server-label {
+  font-weight: 600;
+}
+
+.create-server-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.create-server-option > .create-server-label {
+  flex: 1;
+}
+
+.create-server-chevron {
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.create-server-skip {
+  margin: 0.4rem 0 0;
+  text-align: center;
+}
+
+.create-server-skip .link-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+}
+
+.create-server-skip .link-btn:hover {
+  text-decoration: underline;
+}
+
+.create-server-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
 /* ---------- group DMs ---------- */
 .friends-section-head {
   display: flex;
