@@ -221,6 +221,10 @@ pub struct Attachment {
     /// Set when the file at `url` is encrypted (AES-256-GCM, base64url key).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enc_key: Option<String>,
+    /// Temporary copy (Catbox was down): when it expires unless the server
+    /// manages to move it to Catbox first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temporary_until: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

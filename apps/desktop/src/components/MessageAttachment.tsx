@@ -105,8 +105,20 @@ export function MessageAttachment({
     setMenu({ x: e.clientX, y: e.clientY });
   }
 
+  const temporary = attachment.temporary_until
+    ? new Date(attachment.temporary_until).getTime() > Date.now()
+    : false;
+
   return (
-    <>
+    <div className={`attachment-item${temporary ? " is-temporary" : ""}`}>
+      {temporary && (
+        <span
+          className="attachment-temporary"
+          title="Catbox was down, so this file is on a temporary host. The server moves it to Catbox automatically when Catbox is back (within 72 hours)."
+        >
+          Temporary · saving permanently
+        </span>
+      )}
       {image ? (
         encrypted && !src && !broken ? (
           <span className="image-loading" aria-label="Loading image" />
@@ -186,6 +198,6 @@ export function MessageAttachment({
           ]}
         />
       ) : null}
-    </>
+    </div>
   );
 }

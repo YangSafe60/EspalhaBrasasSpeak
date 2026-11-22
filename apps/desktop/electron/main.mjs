@@ -214,6 +214,36 @@ async function catboxUpload(buf, filename, contentType, linkPattern) {
   );
 }
 
+/**
+ * Fallback when Catbox is down: Litterbox (same people, temporary, 72 h).
+ * The server later moves the file to Catbox (see catbox_mover.rs).
+ */
+async function litterboxUpload(buf, filename, contentType) {
+  for (const wait of [0, 1000]) {
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    const form = new FormData();
+    form.append("reqtype", "fileupload");
+    form.append("time", "72h");
+    form.append("fileToUpload", new Blob([new Uint8Array(buf)], { type: contentType }), filename);
+    let res;
+    try {
+      res = await fetch("https://litterbox.catbox.moe/resources/internals/api.php", {
+        method: "POST",
+        headers: { "User-Agent": "EspalhaBrasas/0.1" },
+        body: form,
+      });
+    } catch {
+      continue;
+    }
+    const text = (await res.text()).trim();
+    if (res.ok && /^https:\/\/litter\.catbox\.moe\/[a-z0-9]+\.[a-z0-9]+$/i.test(text)) {
+      const stored = await storedSize(text);
+      if (stored === null || stored === buf.length) return text;
+    }
+  }
+  throw new Error("Upload failed: Catbox and Litterbox are both unavailable right now. Try again later.");
+}
+
 async function uploadImageToCatbox(buf, filename, contentType) {
   const ext = imageFileExt(filename, contentType);
   const safe = `image.${ext === "jpeg" ? "jpg" : ext}`;
@@ -1295,13 +1325,20 @@ function registerIpc() {
       : Buffer.from(raw instanceof ArrayBuffer ? raw : new Uint8Array(raw));
     if (buf.length === 0) throw new Error("empty file");
     if (buf.length > 25 * 1024 * 1024 + 64) throw new Error("file too large (max 25 MB)");
-    const url = await catboxUpload(
-      buf,
-      "file.dat",
-      "application/octet-stream",
-      /^https:\/\/files\.catbox\.moe\/[a-z0-9]+\.[a-z0-9]+$/i,
-    );
-    return { url, size: buf.length };
+    try {
+      const url = await catboxUpload(
+        buf,
+        "file.dat",
+        "application/octet-stream",
+        /^https:\/\/files\.catbox\.moe\/[a-z0-9]+\.[a-z0-9]+$/i,
+      );
+      return { url, size: buf.length, temporary: false };
+    } catch {
+      // Catbox down: keep it on Litterbox for 72 h; the server moves it to
+      // Catbox as soon as Catbox works again.
+      const url = await litterboxUpload(buf, "file.dat", "application/octet-stream");
+      return { url, size: buf.length, temporary: true };
+    }
   });
 
   /**
@@ -1316,7 +1353,7 @@ function registerIpc() {
     } catch {
       throw new Error("bad url");
     }
-    if (url.protocol !== "https:" || url.hostname !== "files.catbox.moe") {
+    if (url.protocol !== "https:" || !["files.catbox.moe", "litter.catbox.moe"].includes(url.hostname)) {
       throw new Error("host not allowed");
     }
     const res = await fetch(url, { headers: { "User-Agent": "EspalhaBrasas/0.1" } });

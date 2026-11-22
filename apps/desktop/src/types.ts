@@ -108,6 +108,8 @@ export interface Attachment {
   url: string;
   /** The file at `url` is encrypted; decrypt with this key (lib/attachmentCrypto). */
   enc_key?: string | null;
+  /** Temporary copy (Catbox was down): expires then, unless the server moves it first. */
+  temporary_until?: string | null;
 }
 
 export interface ReactionSummary {

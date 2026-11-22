@@ -9949,3 +9949,29 @@ html[data-underline-links="1"] .a11y-preview-msg a {
 .btn.lfg-join:hover:not(:disabled) {
   background: #23a55a;
 }
+
+
+/* Attachment kept on Litterbox until the server moves it to Catbox. */
+.attachment-temporary {
+  display: inline-block;
+  margin-bottom: 0.25rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.attachment-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: 100%;
+}
+
+/* Voice and file cards size against the message width, not their own. */
+.attachment-item:has(> .file-card),
+.attachment-item:has(> .voice-message) {
+  width: 100%;
+}

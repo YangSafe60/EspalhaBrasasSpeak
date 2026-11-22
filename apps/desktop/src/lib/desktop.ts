@@ -90,6 +90,8 @@ export type ElectronAPI = {
   uploadEncrypted?: (payload: { data: ArrayBuffer }) => Promise<{
     url: string;
     size: number;
+    /** Went to Litterbox (72 h) because Catbox was down. */
+    temporary?: boolean;
   }>;
   /** Download an encrypted attachment (Catbox links only). */
   fetchEncrypted?: (url: string) => Promise<ArrayBuffer>;

@@ -1,5 +1,6 @@
 mod audit;
 mod auth;
+mod catbox_mover;
 mod config;
 mod db;
 mod error;
@@ -28,6 +29,8 @@ async fn main() -> anyhow::Result<()> {
 
     let config = Config::from_env()?;
     let state = AppState::new(config.clone()).await?;
+    // Moves attachments that went to Litterbox (Catbox was down) to Catbox.
+    catbox_mover::spawn(state.clone());
     let app = routes::router(state);
 
     let listener = tokio::net::TcpListener::bind(&config.bind).await.map_err(|e| {

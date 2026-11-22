@@ -1172,9 +1172,10 @@ pub async fn message_attachments(db: &SqlitePool, message_id: Uuid) -> AppResult
         size: i64,
         url: String,
         enc_key: Option<String>,
+        temporary_until: Option<String>,
     }
     let rows = sqlx::query_as::<_, ARow>(
-        "SELECT id, message_id, filename, content_type, size, url, enc_key FROM attachments WHERE message_id = ?",
+        "SELECT id, message_id, filename, content_type, size, url, enc_key, temporary_until FROM attachments WHERE message_id = ?",
     )
     .bind(message_id.to_string())
     .fetch_all(db)
@@ -1189,6 +1190,7 @@ pub async fn message_attachments(db: &SqlitePool, message_id: Uuid) -> AppResult
             size: r.size as u64,
             url: r.url,
             enc_key: r.enc_key,
+            temporary_until: parse_opt_dt(r.temporary_until.as_deref()),
         })
         .collect())
 }
@@ -1240,10 +1242,11 @@ pub async fn attachments_for_messages(
         size: i64,
         url: String,
         enc_key: Option<String>,
+        temporary_until: Option<String>,
     }
     let placeholders = vec!["?"; message_ids.len()].join(",");
     let sql = format!(
-        "SELECT id, message_id, filename, content_type, size, url, enc_key FROM attachments WHERE message_id IN ({placeholders}) ORDER BY rowid"
+        "SELECT id, message_id, filename, content_type, size, url, enc_key, temporary_until FROM attachments WHERE message_id IN ({placeholders}) ORDER BY rowid"
     );
     let mut query = sqlx::query_as::<Sqlite, ARow>(&sql);
     for id in message_ids {
@@ -1262,6 +1265,7 @@ pub async fn attachments_for_messages(
                 size: r.size as u64,
                 url: r.url,
                 enc_key: r.enc_key,
+                temporary_until: parse_opt_dt(r.temporary_until.as_deref()),
             });
     }
     Ok(grouped)

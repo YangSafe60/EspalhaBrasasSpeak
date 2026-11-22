@@ -93,7 +93,7 @@ pub async fn upload(
         .await
         .map_err(|e| AppError::BadRequest(format!("ImgBB upload failed: {e}")))?;
 
-    insert_attachment(&state, user.id, &filename, &content_type, data.len() as i64, &url, None).await
+    insert_attachment(&state, user.id, &filename, &content_type, data.len() as i64, &url, None, None).await
 }
 
 pub async fn register_remote(
@@ -138,6 +138,12 @@ pub async fn register_remote(
             return Err(AppError::BadRequest("invalid enc_key".into()));
         }
     }
+    // Litterbox (72 h) is only the fallback for encrypted attachments while
+    // Catbox is down; the server moves them to Catbox later.
+    let temporary = is_litterbox_url(&url);
+    if temporary && enc_key.is_none() {
+        return Err(AppError::BadRequest("temporary links are for encrypted files only".into()));
+    }
     insert_attachment(
         &state,
         user.id,
@@ -146,6 +152,7 @@ pub async fn register_remote(
         reported as i64,
         &url,
         enc_key,
+        temporary.then(|| (chrono::Utc::now() + chrono::Duration::hours(72)).to_rfc3339()),
     )
     .await
 }
@@ -174,6 +181,7 @@ async fn insert_attachment(
     size: i64,
     url: &str,
     enc_key: Option<&str>,
+    temporary_until: Option<String>,
 ) -> AppResult<Json<UploadResponse>> {
     let id = Uuid::new_v4();
     // Sanitize filename: strip path components to avoid client-side confusion.
@@ -185,7 +193,7 @@ async fn insert_attachment(
         .take(180)
         .collect::<String>();
     sqlx::query(
-        "INSERT INTO attachments (id, message_id, filename, content_type, size, url, uploader_id, enc_key) VALUES (?, NULL, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO attachments (id, message_id, filename, content_type, size, url, uploader_id, enc_key, temporary_until) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(id.to_string())
     .bind(&safe_name)
@@ -194,6 +202,7 @@ async fn insert_attachment(
     .bind(url)
     .bind(uploader_id.to_string())
     .bind(enc_key)
+    .bind(temporary_until)
     .execute(&state.db)
     .await?;
 
@@ -223,9 +232,14 @@ fn is_imgbb_url(raw: &str) -> bool {
 fn is_allowed_remote_url(raw: &str) -> bool {
     is_klipy_url(raw)
         || is_imgbb_url(raw)
+        || is_litterbox_url(raw)
         || host_matches(raw, |h| {
             h == "files.catbox.moe"
         })
+}
+
+fn is_litterbox_url(raw: &str) -> bool {
+    host_matches(raw, |h| h == "litter.catbox.moe")
 }
 
 fn host_matches(raw: &str, pred: impl FnOnce(&str) -> bool) -> bool {

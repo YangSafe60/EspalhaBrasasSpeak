@@ -1317,3 +1317,37 @@ async fn player_groups_fill_up_and_announce() {
     assert_eq!(r.body["lfg"]["members"].as_array().unwrap().len(), 1);
     assert!(r.body["lfg"].get("completed_at").is_none());
 }
+
+#[tokio::test]
+async fn litterbox_fallback_is_temporary_and_encrypted_only() {
+    let app = test_app().await;
+    let owner = app.register("owner").await;
+    let (_server, channel) = app.server_with_text_channel(&owner).await;
+    let plain = app
+        .call(Method::POST, "/api/media/remote", Some(&owner), Some(json!({ "url": "https://litter.catbox.moe/abc123.dat" })))
+        .await;
+    assert_eq!(plain.status, StatusCode::BAD_REQUEST, "plain files must not use the temporary host");
+    let up = app
+        .call(
+            Method::POST,
+            "/api/media/remote",
+            Some(&owner),
+            Some(json!({
+                "url": "https://litter.catbox.moe/abc123.dat",
+                "filename": "voice-message.webm",
+                "content_type": "audio/webm",
+                "size": 1000,
+                "enc_key": "B".repeat(43),
+            })),
+        )
+        .await;
+    assert_eq!(up.status, StatusCode::OK, "{}", up.body);
+    let att = up.body["id"].as_str().unwrap();
+    let msg = app
+        .call(Method::POST, &format!("/api/channels/{channel}/messages"), Some(&owner), Some(json!({ "content": "", "attachment_ids": [att] })))
+        .await;
+    let until = msg.body["attachments"][0]["temporary_until"].as_str().expect("marked temporary");
+    let until = chrono::DateTime::parse_from_rfc3339(until).unwrap();
+    let hours = (until.with_timezone(&chrono::Utc) - chrono::Utc::now()).num_hours();
+    assert!((71..=72).contains(&hours), "{hours}");
+}
