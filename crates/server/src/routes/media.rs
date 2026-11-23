@@ -193,7 +193,7 @@ async fn insert_attachment(
         .take(180)
         .collect::<String>();
     sqlx::query(
-        "INSERT INTO attachments (id, message_id, filename, content_type, size, url, uploader_id, enc_key, temporary_until) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO attachments (id, message_id, filename, content_type, size, url, uploader_id, enc_key, temporary_until, uploaded_at) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(id.to_string())
     .bind(&safe_name)
@@ -203,6 +203,7 @@ async fn insert_attachment(
     .bind(uploader_id.to_string())
     .bind(enc_key)
     .bind(temporary_until)
+    .bind(chrono::Utc::now().to_rfc3339())
     .execute(&state.db)
     .await?;
 

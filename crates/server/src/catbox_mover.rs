@@ -19,6 +19,9 @@ pub fn spawn(state: AppState) {
         // First pass shortly after start, then hourly.
         tokio::time::sleep(Duration::from_secs(60)).await;
         loop {
+            if let Err(e) = remove_unsent(&state).await {
+                tracing::warn!("unsent uploads cleanup: {e}");
+            }
             if let Err(e) = run_once(&state).await {
                 tracing::warn!("catbox mover: {e}");
             }
@@ -32,6 +35,18 @@ fn client() -> Result<reqwest::Client, String> {
         .user_agent("EspalhaBrasas/0.1")
         .timeout(Duration::from_secs(60))
         .build()
+        .map_err(|e| e.to_string())
+}
+
+/// Uploads never attached to a message (cancelled before sending) are
+/// dropped after a day. Returns how many were removed.
+pub async fn remove_unsent(state: &AppState) -> Result<u64, String> {
+    let cutoff = (Utc::now() - chrono::Duration::hours(24)).to_rfc3339();
+    sqlx::query("DELETE FROM attachments WHERE message_id IS NULL AND uploaded_at IS NOT NULL AND uploaded_at < ?")
+        .bind(cutoff)
+        .execute(&state.db)
+        .await
+        .map(|r| r.rows_affected())
         .map_err(|e| e.to_string())
 }
 

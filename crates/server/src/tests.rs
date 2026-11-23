@@ -1101,6 +1101,68 @@ async fn encrypted_attachments_keep_their_key() {
     assert_eq!(list.body[0]["attachments"][0]["enc_key"], key.as_str());
 }
 
+#[tokio::test]
+async fn attachments_are_removed_with_their_message_and_when_never_sent() {
+    let app = test_app().await;
+    let owner = app.register("owner").await;
+    let (server_id, channel) = app.server_with_text_channel(&owner).await;
+    let upload = |name: &'static str| {
+        let app = &app;
+        let owner = owner.clone();
+        async move {
+            let up = app
+                .call(
+                    Method::POST,
+                    "/api/media/remote",
+                    Some(&owner),
+                    Some(json!({
+                        "url": format!("https://files.catbox.moe/{name}.dat"),
+                        "filename": "a.zip",
+                        "content_type": "application/zip",
+                        "size": 10,
+                        "enc_key": "A".repeat(43),
+                    })),
+                )
+                .await;
+            assert_eq!(up.status, StatusCode::OK, "{}", up.body);
+            up.body["id"].as_str().unwrap().to_string()
+        }
+    };
+    let count = "SELECT COUNT(1) FROM attachments WHERE id = ?";
+
+    // Deleting a message deletes its attachment row (link + key).
+    let a = upload("aaa111").await;
+    let msg = app
+        .call(Method::POST, &format!("/api/channels/{channel}/messages"), Some(&owner), Some(json!({ "content": "", "attachment_ids": [a] })))
+        .await;
+    let msg_id = msg.body["id"].as_str().unwrap().to_string();
+    assert_eq!(app.count(count, &a).await, 1);
+    let r = app.call(Method::DELETE, &format!("/api/messages/{msg_id}"), Some(&owner), None).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    assert_eq!(app.count(count, &a).await, 0, "attachment kept after its message was deleted");
+
+    // Deleting the whole server (cascade) also removes them.
+    let b = upload("bbb222").await;
+    app.call(Method::POST, &format!("/api/channels/{channel}/messages"), Some(&owner), Some(json!({ "content": "", "attachment_ids": [b] })))
+        .await;
+    let r = app.call(Method::DELETE, &format!("/api/servers/{server_id}"), Some(&owner), None).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    assert_eq!(app.count(count, &b).await, 0, "attachment kept after its server was deleted");
+
+    // Uploads never sent: kept for a day, then removed.
+    let fresh = upload("ccc333").await;
+    let old = upload("ddd444").await;
+    sqlx::query("UPDATE attachments SET uploaded_at = '2000-01-01T00:00:00+00:00' WHERE id = ?")
+        .bind(&old)
+        .execute(&app.state.db)
+        .await
+        .unwrap();
+    let removed = crate::catbox_mover::remove_unsent(&app.state).await.unwrap();
+    assert_eq!(removed, 1);
+    assert_eq!(app.count(count, &fresh).await, 1);
+    assert_eq!(app.count(count, &old).await, 0);
+}
+
 /// Owner + a plain member in one server; returns (owner, member, server, channel, member id).
 async fn owner_and_member(app: &TestApp) -> (String, String, String, String, String) {
     let owner = app.register("owner").await;
