@@ -2,6 +2,7 @@ import { useEffect, useState, type MouseEvent } from "react";
 import { decryptedUrl } from "../lib/attachmentCrypto";
 import { downloadRemoteFile } from "../lib/downloadMedia";
 import { imageSrc } from "../lib/mediaUrl";
+import { openImage } from "../lib/imageViewer";
 import { isImageAttachment } from "../store/helpers/messageHelpers";
 import type { Attachment } from "../types";
 import { ContextMenu } from "./ContextMenu";
@@ -126,10 +127,12 @@ export function MessageAttachment({
         encrypted && !src && !broken ? (
           <span className="image-loading" aria-label="Loading image" />
         ) : src && !broken ? (
-          <a
-            href={src}
-            target="_blank"
-            rel="noreferrer"
+          <button
+            type="button"
+            className="attachment-image-btn"
+            title={attachment.filename}
+            aria-label={`View ${attachment.filename}`}
+            onClick={() => openImage({ src, filename: attachment.filename || "image.png" })}
             onContextMenu={onAttachmentContextMenu}
           >
             <img
@@ -140,7 +143,7 @@ export function MessageAttachment({
               onError={() => setBroken(true)}
               onContextMenu={onAttachmentContextMenu}
             />
-          </a>
+          </button>
         ) : (
           <span className="image-unavailable" onContextMenu={onAttachmentContextMenu}>
             Image unavailable

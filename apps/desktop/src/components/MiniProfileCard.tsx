@@ -13,6 +13,7 @@ import {
 import { createPortal } from "react-dom";
 import { insertAtCursor } from "../lib/emojis";
 import { mediaCssUrl, mediaUrl } from "../lib/mediaUrl";
+import { nameFromUrl, openImage } from "../lib/imageViewer";
 import {
   assignableRoles,
   canManageTargetMemberRoles,
@@ -180,7 +181,7 @@ export function MiniProfileCard() {
       // Floating menus opened from the card (emoji picker, dropdown lists)
       // are drawn outside it: clicks there aren't "outside the card".
       const inPopup =
-        target instanceof Element && target.closest(".emoji-picker-panel, .app-select-list");
+        target instanceof Element && target.closest(".emoji-picker-panel, .app-select-list, .image-viewer");
       if (panelRef.current && !panelRef.current.contains(target) && !inPopup) {
         closeMiniProfile();
         return;
@@ -306,20 +307,36 @@ export function MiniProfileCard() {
       aria-label={`${display}'s profile`}
       onClick={(e: MouseEvent) => e.stopPropagation()}
     >
-      <div
-        className={`mini-profile-banner${banner ? "" : " is-empty"}`}
-        style={banner ? { backgroundImage: mediaCssUrl(banner) } : undefined}
-      />
+      {banner ? (
+        <button
+          type="button"
+          className="mini-profile-banner is-viewable"
+          style={{ backgroundImage: mediaCssUrl(banner) }}
+          title="View banner"
+          aria-label="View banner"
+          onClick={() => openImage({ src: mediaUrl(banner), filename: nameFromUrl(banner, `${display}-banner`) })}
+        />
+      ) : (
+        <div className="mini-profile-banner is-empty" />
+      )}
 
       <div className="mini-profile-avatar-row">
         <div className="mini-profile-avatar-wrap">
           {avatar ? (
-            <img
-              className="mini-profile-avatar"
-              src={mediaUrl(avatar)}
-              alt=""
-              referrerPolicy="no-referrer"
-            />
+            <button
+              type="button"
+              className="mini-profile-avatar-btn"
+              title="View avatar"
+              aria-label="View avatar"
+              onClick={() => openImage({ src: mediaUrl(avatar), filename: nameFromUrl(avatar, `${display}-avatar`) })}
+            >
+              <img
+                className="mini-profile-avatar"
+                src={mediaUrl(avatar)}
+                alt=""
+                referrerPolicy="no-referrer"
+              />
+            </button>
           ) : (
             <span className="mini-profile-avatar placeholder">{initial}</span>
           )}

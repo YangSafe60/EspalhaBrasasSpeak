@@ -9089,7 +9089,8 @@ html[data-animated-emoji="0"] img.emoji-animated {
   animation: none !important;
 }
 
-html[data-image-descriptions="1"] .attachments a {
+html[data-image-descriptions="1"] .attachments a,
+html[data-image-descriptions="1"] .attachments .attachment-image-btn {
   display: inline-flex;
   flex-direction: column;
   gap: 0.2rem;
@@ -10407,4 +10408,175 @@ html[data-underline-links="1"] .a11y-preview-msg a {
   width: 20px;
   height: 20px;
   object-fit: contain;
+}
+
+/* ---------- full-screen image viewer ---------- */
+.attachment-image-btn,
+.mini-profile-avatar-btn {
+  display: inline-block;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: zoom-in;
+  font: inherit;
+  color: inherit;
+  line-height: 0;
+}
+
+.attachment-image-btn:focus-visible,
+.mini-profile-avatar-btn:focus-visible,
+.mini-profile-banner.is-viewable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.mini-profile-avatar-btn {
+  border-radius: 50%;
+}
+
+.mini-profile-avatar-btn:hover .mini-profile-avatar {
+  filter: brightness(0.85);
+}
+
+.mini-profile-banner.is-viewable {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  cursor: zoom-in;
+}
+
+.mini-profile-banner.is-viewable:hover {
+  filter: brightness(0.9);
+}
+
+.image-viewer {
+  position: fixed;
+  /* Below the custom title bar, so the window buttons stay usable. */
+  inset: var(--titlebar-height, 0px) 0 0 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  background: rgba(0, 0, 0, 0.86);
+  backdrop-filter: blur(6px);
+  animation: image-viewer-in 0.14s ease-out;
+}
+
+@keyframes image-viewer-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.image-viewer-bar {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.6rem 0.9rem;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.55), transparent);
+}
+
+.image-viewer-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #e8eaed;
+}
+
+.image-viewer-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(20, 23, 26, 0.85);
+}
+
+.image-viewer-tools button {
+  min-width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  padding: 0 0.4rem;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: #d4d7dc;
+  font: inherit;
+  cursor: pointer;
+}
+
+.image-viewer-tools button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.09);
+  color: #fff;
+}
+
+.image-viewer-tools button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.image-viewer-pct {
+  min-width: 3.4rem !important;
+  font-size: 0.8rem !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.image-viewer-sep {
+  width: 1px;
+  height: 20px;
+  margin: 0 0.2rem;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.image-viewer-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: 0 2rem 2rem;
+}
+
+.image-viewer-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  cursor: zoom-in;
+  user-select: none;
+  touch-action: none;
+  transform-origin: center center;
+  transition: transform 0.12s ease-out;
+}
+
+.image-viewer-img.is-zoomed {
+  cursor: grab;
+}
+
+.image-viewer-img.is-zoomed:active {
+  cursor: grabbing;
+  transition: none;
+}
+
+.image-viewer-img.is-loading {
+  opacity: 0;
+}
+
+.image-viewer-stage > .image-loading {
+  position: absolute;
+}
+
+.image-viewer-error {
+  color: #c9ccd1;
+  font-size: 0.9rem;
 }
