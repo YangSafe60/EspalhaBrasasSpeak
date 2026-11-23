@@ -5,6 +5,7 @@ import { imageSrc } from "../lib/mediaUrl";
 import { isImageAttachment } from "../store/helpers/messageHelpers";
 import type { Attachment } from "../types";
 import { ContextMenu } from "./ContextMenu";
+import { VoicePlayer } from "./VoicePlayer";
 
 /** "Casa.blend1" -> "BLEND1" (shown on the file icon). */
 function fileExt(name: string): string {
@@ -145,15 +146,12 @@ export function MessageAttachment({
         )
       ) : audio ? (
         <div className="voice-message" onContextMenu={onAttachmentContextMenu}>
-          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden fill="currentColor" className="voice-message-icon">
-            <path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z" />
-          </svg>
           {broken ? (
-            <span className="muted tiny">Voice message unavailable</span>
+            <span className="muted tiny voice-message-note">Voice message unavailable</span>
           ) : encrypted && !plainUrl ? (
-            <span className="muted tiny">Loading voice message…</span>
+            <span className="muted tiny voice-message-note">Loading voice message…</span>
           ) : (
-            <audio controls preload="metadata" src={encrypted ? plainUrl ?? undefined : attachment.url} />
+            <VoicePlayer src={encrypted ? plainUrl! : attachment.url} />
           )}
         </div>
       ) : (
