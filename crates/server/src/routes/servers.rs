@@ -1048,6 +1048,7 @@ pub async fn invite_friend(
     state
         .hub
         .broadcast_server(id, &WsEvent::MemberJoin { member: member.clone() });
+    crate::routes::community::post_welcome(&state, id, body.user_id).await;
 
     let (member_count, online_count) = invite_presence_counts(&state, id).await?;
     let invited_by = db::user_public(&state.db, user.id).await?;
@@ -1139,6 +1140,7 @@ pub async fn join_invite(
     state
         .hub
         .broadcast_server(invite.server_id, &WsEvent::MemberJoin { member });
+    crate::routes::community::post_welcome(&state, invite.server_id, user.id).await;
 
     Ok(Json(db::get_server(&state.db, invite.server_id).await?))
 }

@@ -1,3 +1,4 @@
+import { ServerEventsButton } from "../ServerEvents";
 import {
   Fragment,
   useEffect,
@@ -505,6 +506,7 @@ export function ChannelSidebar({
       <header className="sidebar-header">
         <h2>{server.name}</h2>
         <div className="sidebar-header-actions">
+          <ServerEventsButton serverId={server.id} canManage={hasPerm(myPerms, Perm.MANAGE_SERVER)} />
           {canInvitePeople && (
             <button
               type="button"

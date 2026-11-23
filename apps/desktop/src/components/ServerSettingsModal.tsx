@@ -1,5 +1,5 @@
 import { AppSelect } from "./AppSelect";
-import { AuditLogTab, WordFilterTab } from "./ServerModerationTabs";
+import { AuditLogTab, WelcomeTab, WordFilterTab } from "./ServerModerationTabs";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { copyText } from "../lib/clipboard";
 import { mediaCssUrl, mediaUrl } from "../lib/mediaUrl";
@@ -13,7 +13,7 @@ import { ColorField } from "./ColorField";
 import { useAppStore } from "../store/appStore";
 import { ROLE_PERM_GROUPS, type Invite, type ServerEmoji } from "../types";
 
-type Tab = "branding" | "roles" | "emojis" | "invites" | "wordfilter" | "audit" | "danger";
+type Tab = "branding" | "roles" | "emojis" | "invites" | "welcome" | "wordfilter" | "audit" | "danger";
 
 const IMAGE_ACCEPT = "image/*,image/gif,.gif";
 const EMOJI_NAME_RE = /^[a-z0-9_]{2,32}$/;
@@ -135,7 +135,7 @@ export function ServerSettingsModal() {
     if (canManageRoles) tabs.push("roles");
     if (canManageEmojis) tabs.push("emojis");
     if (canCreateInvite) tabs.push("invites");
-    if (canManageServer) tabs.push("wordfilter", "audit");
+    if (canManageServer) tabs.push("welcome", "wordfilter", "audit");
     if (isOwner) tabs.push("danger");
     return tabs;
   }, [canManageServer, canManageRoles, canManageEmojis, canCreateInvite, isOwner]);
@@ -474,6 +474,8 @@ export function ServerSettingsModal() {
                 ? "Delete server"
                 : t === "emojis"
                   ? "Emojis"
+                  : t === "welcome"
+                    ? "Welcome"
                   : t === "wordfilter"
                     ? "Word filter"
                     : t === "audit"
@@ -889,6 +891,7 @@ export function ServerSettingsModal() {
           </div>
         )}
 
+        {tab === "welcome" && <WelcomeTab serverId={server.id} />}
         {tab === "wordfilter" && <WordFilterTab serverId={server.id} />}
         {tab === "audit" && <AuditLogTab serverId={server.id} />}
 

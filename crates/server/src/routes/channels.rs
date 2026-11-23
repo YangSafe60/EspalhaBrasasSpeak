@@ -550,6 +550,7 @@ pub async fn invite_to_channel(
         state
             .hub
             .broadcast_server(server.id, &WsEvent::MemberJoin { member });
+        crate::routes::community::post_welcome(&state, server.id, body.user_id).await;
     }
 
     grant_member_channel_access(&state, &channel, body.user_id).await?;

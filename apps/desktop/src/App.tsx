@@ -1,3 +1,5 @@
+import { configureReminders, loadEvents } from "./lib/serverEvents";
+import { deliverMessageAlert } from "./lib/notifyHelpers";
 import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { BrowserPreviewGate } from "./components/BrowserPreviewGate";
 import { ChannelSidebar } from "./components/ChannelSidebar";
@@ -205,6 +207,32 @@ function MainApp() {
   }, [activeServerId, friendsHome, servers]);
 
   useWebSocket(!!user);
+
+  // Event reminders ("starts in 15 minutes") for events I said I'm going to.
+  const serverIdsKey = servers.map((sv) => sv.id).join(",");
+  useEffect(() => {
+    if (!user) return;
+    configureReminders(user.id, (e) => {
+      const server = useAppStore.getState().servers.find((sv) => sv.id === e.server_id);
+      deliverMessageAlert({
+        toast: {
+          id: `event-${e.id}`,
+          kind: "channel",
+          channelId: e.channel_id || "",
+          serverId: e.server_id,
+          channelName: "Event",
+          authorName: server?.name || "Event",
+          preview: `${e.title} starts in 15 minutes`,
+        },
+        onOpen: async () => {
+          await useAppStore.getState().selectServer(e.server_id);
+          window.dispatchEvent(new CustomEvent("open-server-events", { detail: e.server_id }));
+        },
+      });
+    });
+    // Load every server's events so reminders work without opening each one.
+    for (const id of serverIdsKey.split(",").filter(Boolean)) void loadEvents(id);
+  }, [user, serverIdsKey]);
   useAutoIdlePresence(!!user);
   useMemoryDiagnostics(!!user);
 

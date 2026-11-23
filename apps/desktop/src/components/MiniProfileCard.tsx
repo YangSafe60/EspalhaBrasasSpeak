@@ -14,6 +14,7 @@ import { createPortal } from "react-dom";
 import { insertAtCursor } from "../lib/emojis";
 import { mediaCssUrl, mediaUrl } from "../lib/mediaUrl";
 import { nameFromUrl, openImage } from "../lib/imageViewer";
+import { UserNoteField } from "./UserNoteField";
 import {
   assignableRoles,
   canManageTargetMemberRoles,
@@ -365,6 +366,8 @@ export function MiniProfileCard() {
             <p className="mini-profile-bio">{extras.bio}</p>
           </section>
         )}
+
+        {!isSelf && <UserNoteField userId={profile.id} />}
 
         {miniProfile.serverId && (
           <section className="mini-profile-section">

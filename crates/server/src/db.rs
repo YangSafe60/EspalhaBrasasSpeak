@@ -1002,9 +1002,10 @@ pub async fn load_message(db: &SqlitePool, id: Uuid, viewer_id: Uuid) -> AppResu
         created_at: String,
         pinned_at: Option<String>,
         forwarded: i64,
+        system_kind: Option<String>,
     }
     let row = sqlx::query_as::<_, MRow>(
-        "SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, pinned_at, forwarded FROM messages WHERE id = ?",
+        "SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, pinned_at, forwarded, system_kind FROM messages WHERE id = ?",
     )
     .bind(id.to_string())
     .fetch_optional(db)
@@ -1036,6 +1037,7 @@ pub async fn load_message(db: &SqlitePool, id: Uuid, viewer_id: Uuid) -> AppResu
         poll: extras.polls.remove(&row.id),
         thread: extras.threads.remove(&row.id),
         lfg: extras.groups.remove(&row.id),
+        system: row.system_kind,
     })
 }
 
@@ -1359,10 +1361,11 @@ pub async fn list_messages(
         created_at: String,
         pinned_at: Option<String>,
         forwarded: i64,
+        system_kind: Option<String>,
     }
     let rows: Vec<MRow> = if let Some(before_id) = before {
         sqlx::query_as(
-            r#"SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, pinned_at, forwarded
+            r#"SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, pinned_at, forwarded, system_kind
                FROM messages
                WHERE channel_id = ? AND created_at < (SELECT created_at FROM messages WHERE id = ?)
                ORDER BY created_at DESC LIMIT ?"#,
@@ -1374,7 +1377,7 @@ pub async fn list_messages(
         .await?
     } else {
         sqlx::query_as(
-            r#"SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, pinned_at, forwarded
+            r#"SELECT id, channel_id, author_id, content, reply_to_id, edited_at, created_at, pinned_at, forwarded, system_kind
                FROM messages WHERE channel_id = ? ORDER BY created_at DESC LIMIT ?"#,
         )
         .bind(channel_id.to_string())
@@ -1411,6 +1414,7 @@ pub async fn list_messages(
             poll: extras.polls.remove(&id_key),
             thread: extras.threads.remove(&id_key),
             lfg: extras.groups.remove(&id_key),
+            system: row.system_kind,
         });
     }
     out.reverse();

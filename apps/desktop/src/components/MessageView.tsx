@@ -43,6 +43,8 @@ const GROUP_WINDOW_MS = 7 * 60 * 1000;
 
 function shouldStartGroup(prev: Message | undefined, current: Message): boolean {
   if (!prev) return true;
+  // App-written messages (welcome) stand alone, and so does what follows.
+  if (prev.system || current.system) return true;
   if (prev.author_id !== current.author_id) return true;
   const gap = new Date(current.created_at).getTime() - new Date(prev.created_at).getTime();
   return gap > GROUP_WINDOW_MS;
@@ -597,6 +599,31 @@ const MessageRow = memo(function MessageRow({
   const displayName = author?.display_name || "Unknown";
   const onReact = (emoji: string) => actions.react(m, emoji);
   const [menuOpen, setMenuOpen] = useState(false);
+
+  // Welcome message written by the app when someone joins.
+  if (m.system === "member_join") {
+    return (
+      <article id={`msg-${m.id}`} className="message system-message">
+        <span className="system-message-icon" aria-hidden>
+          👋
+        </span>
+        <div className="system-message-body">
+          <MessageContent content={m.content} serverId={serverId} />
+          <time dateTime={m.created_at} title={new Date(m.created_at).toLocaleString()}>
+            {formatTime(m.created_at)}
+          </time>
+        </div>
+        {canDelete && (
+          <div className={`message-actions${menuOpen ? " is-open" : ""}`}>
+            <MessageMoreMenu
+              onOpenChange={setMenuOpen}
+              items={[{ label: "Delete message", danger: true, onClick: () => actions.remove(m) }]}
+            />
+          </div>
+        )}
+      </article>
+    );
+  }
 
   return (
     <article

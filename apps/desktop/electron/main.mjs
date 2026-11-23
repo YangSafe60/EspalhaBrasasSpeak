@@ -83,6 +83,22 @@ function openExternalSafe(raw) {
   }
 }
 
+/**
+ * YouTube refuses embeds that arrive without a Referer (error 153), and the
+ * packaged app is a file:// page, which sends none. Give the "watch together"
+ * player one. Only YouTube's own hosts are touched.
+ */
+function allowYouTubeEmbeds() {
+  session.defaultSession.webRequest.onBeforeSendHeaders(
+    { urls: ["https://www.youtube-nocookie.com/*", "https://www.youtube.com/*"] },
+    (details, callback) => {
+      const headers = details.requestHeaders;
+      if (!headers.Referer && !headers.referer) headers.Referer = "https://espalhabrasas.app/";
+      callback({ requestHeaders: headers });
+    },
+  );
+}
+
 app.on("web-contents-created", (_event, contents) => {
   contents.on("will-navigate", (event, url) => {
     if (isAppUrl(url)) return;
@@ -1591,6 +1607,7 @@ app.whenReady().then(() => {
   // keeps it for reload / DevTools shortcuts.
   if (process.platform !== "darwin" && !isDev) Menu.setApplicationMenu(null);
   installSessionHandlers();
+  allowYouTubeEmbeds();
   registerIpc();
   createMainWindow();
   setupAutoUpdate();

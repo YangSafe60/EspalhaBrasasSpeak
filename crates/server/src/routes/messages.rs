@@ -103,7 +103,7 @@ pub struct UpdateMessageReq {
     pub content: String,
 }
 
-async fn broadcast_to_viewers(
+pub(crate) async fn broadcast_to_viewers(
     state: &AppState,
     server: &Server,
     channel_id: Uuid,

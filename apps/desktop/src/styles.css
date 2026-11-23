@@ -10609,3 +10609,546 @@ html[data-underline-links="1"] .a11y-preview-msg a {
   border: 1px dashed var(--border);
   background: rgba(255, 255, 255, 0.03);
 }
+
+/* ---------- private note on a profile card ---------- */
+.user-note h4 {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.user-note-state {
+  font-size: 0.66rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  opacity: 0.75;
+}
+
+.user-note textarea {
+  width: 100%;
+  min-height: 0;
+  resize: none;
+  padding: 0.3rem 0.4rem;
+  margin: 0 -0.4rem;
+  width: calc(100% + 0.8rem);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  box-shadow: none;
+}
+
+.user-note textarea:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.user-note textarea:focus {
+  outline: none;
+  border-color: var(--border);
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* ---------- app-written messages (welcome) ---------- */
+.message.system-message {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding-top: 0.45rem;
+  padding-bottom: 0.45rem;
+}
+
+.system-message-icon {
+  width: 40px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  font-size: 1.15rem;
+}
+
+.system-message-body {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.15rem 0.6rem;
+  min-width: 0;
+  color: var(--text-dim);
+}
+
+.system-message-body .message-content {
+  margin: 0;
+  color: var(--text);
+}
+
+.system-message-body time {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  opacity: 0.8;
+}
+
+.welcome-preview {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 0.88rem;
+}
+
+/* "Seen" under my last DM message. */
+.dm-seen {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.3rem;
+  padding: 0.1rem 1rem 0.4rem;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+.dm-seen svg {
+  color: var(--accent);
+}
+
+/* ---------- server folders (drag a server onto another) ---------- */
+.server-orb.is-dragging {
+  opacity: 0.35;
+}
+
+.server-orb.drop-merge,
+.server-folder.drop-merge,
+.server-folder-head.drop-merge {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.server-orb.drop-before,
+.server-folder.drop-before,
+.server-folder-head.drop-before {
+  box-shadow: 0 -6px 0 -3px var(--accent);
+}
+
+.server-orb.drop-after,
+.server-folder.drop-after,
+.server-folder-head.drop-after {
+  box-shadow: 0 6px 0 -3px var(--accent);
+}
+
+.server-folder {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  padding: 5px;
+  border-radius: 14px;
+  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--folder-color) 28%, #0c1316);
+  cursor: pointer;
+  transition: border-color 160ms ease, transform 160ms ease;
+}
+
+.server-folder:hover {
+  transform: translateY(-1px);
+}
+
+.server-folder.has-active {
+  border-color: var(--accent);
+}
+
+/* Same unread pip as a server. */
+.server-folder.has-unread::before {
+  content: "";
+  position: absolute;
+  left: -11px;
+  top: 50%;
+  width: 4px;
+  height: 8px;
+  margin-top: -4px;
+  border-radius: 0 4px 4px 0;
+  background: var(--text);
+}
+
+.server-folder-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 3px;
+  width: 100%;
+  height: 100%;
+}
+
+.server-folder-mini {
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  background-size: cover;
+  background-position: center;
+  font-size: 0.55rem;
+  font-weight: 700;
+  color: #fff;
+  overflow: hidden;
+}
+
+.server-folder-open {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0 0 0.45rem;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--folder-color) 16%, transparent);
+}
+
+.server-folder-head {
+  width: 44px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 14px;
+  background: none;
+  color: var(--folder-color);
+  cursor: pointer;
+}
+
+.server-folder-head:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.rail-rename {
+  position: fixed;
+  z-index: 60;
+  padding: 0.4rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #10181c;
+  box-shadow: var(--shadow);
+}
+
+.rail-rename input {
+  width: 190px;
+}
+
+/* ---------- scheduled events ---------- */
+.events-btn {
+  position: relative;
+}
+
+.events-btn.is-soon {
+  color: var(--accent);
+}
+
+.events-btn-count {
+  position: absolute;
+  top: -4px;
+  right: -5px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.6rem;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+}
+
+.events-modal {
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(720px, calc(100vh - 80px));
+  display: flex;
+  flex-direction: column;
+}
+
+.events-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  overflow: auto;
+  padding-right: 0.15rem;
+}
+
+.event-form {
+  padding: 0.85rem;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.event-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  align-items: end;
+}
+
+.event-form input[type="datetime-local"] {
+  color-scheme: dark;
+}
+
+.event-card {
+  display: flex;
+  gap: 0.9rem;
+  padding: 0.85rem;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.event-card.is-soon {
+  border-color: rgba(227, 27, 35, 0.45);
+}
+
+.event-card.is-live {
+  border-color: var(--accent);
+  background: rgba(227, 27, 35, 0.08);
+}
+
+.event-date {
+  flex-shrink: 0;
+  width: 52px;
+  height: 58px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border);
+}
+
+.event-date-month {
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+}
+
+.event-date-day {
+  font-size: 1.35rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.event-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.event-when {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.6rem;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  text-transform: capitalize;
+}
+
+.event-until {
+  font-weight: 700;
+  color: var(--accent);
+  text-transform: none;
+}
+
+.event-title {
+  margin: 0;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.event-desc {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.event-channel {
+  align-self: flex-start;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.event-channel:hover {
+  border-color: var(--accent);
+}
+
+.event-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-top: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.event-going {
+  display: flex;
+  align-items: center;
+}
+
+.event-going img,
+.event-going span {
+  width: 24px;
+  height: 24px;
+  margin-right: -6px;
+  border-radius: 50%;
+  border: 2px solid #11181c;
+  object-fit: cover;
+  display: grid;
+  place-items: center;
+  background: var(--bg-3);
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
+.event-going em {
+  margin-left: 12px;
+  font-style: normal;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.btn.going {
+  background: rgba(34, 197, 94, 0.15);
+  border-color: rgba(34, 197, 94, 0.5);
+  color: #4ade80;
+}
+
+/* ---------- watch together (voice channel) ---------- */
+.watch {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 0.9rem;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.watch-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.watch-header h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.watch-header svg {
+  color: var(--accent);
+}
+
+.watch-player {
+  position: relative;
+  width: 100%;
+  max-width: 960px;
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #000;
+}
+
+.watch-player iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.watch-now {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.watch-now-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.watch-now-text strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.watch-add {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.watch-add input {
+  flex: 1;
+  min-width: 0;
+}
+
+.watch-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.watch-queue li {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0.4rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.watch-queue-n {
+  width: 1.2rem;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.watch-queue img {
+  width: 64px;
+  height: 36px;
+  border-radius: 5px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.watch-queue-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

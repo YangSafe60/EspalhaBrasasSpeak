@@ -23,7 +23,7 @@ fn parse_dt(s: &str) -> DateTime<Utc> {
         .unwrap_or_else(|_| Utc::now())
 }
 
-async fn require_participant(
+pub(crate) async fn require_participant(
     db: &sqlx::SqlitePool,
     dm_id: Uuid,
     user_id: Uuid,
@@ -111,7 +111,7 @@ async fn require_can_message_peer(db: &sqlx::SqlitePool, a: Uuid, b: Uuid) -> Ap
     Ok(())
 }
 
-async fn dm_participant_ids(db: &sqlx::SqlitePool, dm_id: Uuid) -> AppResult<Vec<Uuid>> {
+pub(crate) async fn dm_participant_ids(db: &sqlx::SqlitePool, dm_id: Uuid) -> AppResult<Vec<Uuid>> {
     let rows: Vec<String> =
         sqlx::query_scalar("SELECT user_id FROM dm_participants WHERE dm_channel_id = ?")
             .bind(dm_id.to_string())

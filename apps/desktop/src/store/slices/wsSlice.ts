@@ -8,6 +8,9 @@ import {
   serverNotifyOf,
 } from "../../lib/serverNotifyPrefs";
 import { messagePreview } from "../../lib/messagePreview";
+import { applyDmRead } from "../../lib/dmReads";
+import { removeEvent, upsertEvent } from "../../lib/serverEvents";
+import { applyWatch } from "../../lib/watchTogether";
 import {
   deliverFriendRequestAlert,
   deliverMessageAlert,
@@ -783,6 +786,18 @@ export const createWsSlice: AppStoreSlice = (set, get) => ({
             ).filter((m) => m.id !== event.message_id),
           },
         }));
+        break;
+      case "dm_read":
+        applyDmRead(event.dm_channel_id, event.user_id, { message_id: event.message_id, read_at: event.read_at });
+        break;
+      case "event_upsert":
+        upsertEvent(event.event);
+        break;
+      case "event_delete":
+        removeEvent(event.server_id, event.event_id);
+        break;
+      case "watch_update":
+        applyWatch(event.channel_id, event.state);
         break;
       case "dm_typing_start": {
         const expires = Date.now() + 4000;

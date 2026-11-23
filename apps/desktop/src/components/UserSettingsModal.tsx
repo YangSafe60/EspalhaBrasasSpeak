@@ -1,4 +1,5 @@
 import { ColorField } from "./ColorField";
+import { readReceiptsOn, setReadReceiptsOn } from "../lib/dmReads";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { mediaCssUrl, mediaUrl } from "../lib/mediaUrl";
 import { getElectronAPI } from "../lib/desktop";
@@ -662,6 +663,8 @@ export function UserSettingsModal() {
                 </div>
               </div>
 
+              <ReadReceiptsSetting />
+
               <div className="stack settings-form danger-zone">
                 <h4>Danger zone</h4>
                 <div className="danger-card">
@@ -889,6 +892,33 @@ export function UserSettingsModal() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Privacy: "Seen" in DMs (works both ways, like WhatsApp). */
+function ReadReceiptsSetting() {
+  const [on, setOn] = useState(readReceiptsOn);
+  return (
+    <div className="stack settings-form">
+      <h4>Privacy</h4>
+      <label className="toggle-row">
+        <span>
+          Read receipts
+          <em className="muted tiny">
+            Show "Seen" in direct messages. When off, others don't see when you read their messages, and you don't
+            see theirs.
+          </em>
+        </span>
+        <input
+          type="checkbox"
+          checked={on}
+          onChange={(e) => {
+            setOn(e.target.checked);
+            setReadReceiptsOn(e.target.checked);
+          }}
+        />
+      </label>
     </div>
   );
 }

@@ -144,6 +144,41 @@ export interface Message {
   thread?: ThreadInfo | null;
   /** A "find players" group card. */
   lfg?: PlayerGroup | null;
+  /** Written by the app, not typed by a person ("member_join"). */
+  system?: string | null;
+}
+
+/** A scheduled server event. */
+export interface ServerEvent {
+  id: string;
+  server_id: string;
+  creator_id: string;
+  title: string;
+  description?: string | null;
+  starts_at: string;
+  /** Voice channel to meet in. */
+  channel_id?: string | null;
+  /** User ids going, in the order they said it. */
+  going: string[];
+  created_at: string;
+}
+
+/** A video in a voice channel's watch-together queue. */
+export interface WatchItem {
+  id: string;
+  video_id: string;
+  title: string;
+  added_by: string;
+}
+
+export interface WatchState {
+  /** The current one first. */
+  queue: WatchItem[];
+  current?: string | null;
+  playing: boolean;
+  /** Seconds into the current video at updated_at. */
+  position: number;
+  updated_at: string;
 }
 
 export interface PlayerGroup {
@@ -425,6 +460,10 @@ export type WsEvent =
       user_id: string;
       username: string;
     }
+  | { type: "dm_read"; dm_channel_id: string; user_id: string; message_id: string; read_at: string }
+  | { type: "event_upsert"; event: ServerEvent }
+  | { type: "event_delete"; server_id: string; event_id: string }
+  | { type: "watch_update"; channel_id: string; state: WatchState }
   | {
       type: "dm_call_update";
       dm_channel_id: string;

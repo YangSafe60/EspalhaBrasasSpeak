@@ -2,6 +2,89 @@ import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { useAppStore } from "../store/appStore";
 import type { AuditEntry } from "../types";
+import { AppSelect } from "./AppSelect";
+
+const DEFAULT_WELCOME = "Welcome {user}! 👋";
+
+/** Server settings > Welcome: a message posted when someone joins. */
+export function WelcomeTab({ serverId }: { serverId: string }) {
+  const channels = useAppStore((s) => s.channelsByServer[serverId]);
+  const [channelId, setChannelId] = useState<string>("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    api<{ channel_id: string | null; message: string | null }>(`/api/servers/${serverId}/welcome`)
+      .then((r) => {
+        if (!alive) return;
+        setChannelId(r.channel_id ?? "");
+        setMessage(r.message ?? "");
+      })
+      .catch((e) => alive && setError(e instanceof Error ? e.message : "Couldn't load"));
+    return () => {
+      alive = false;
+    };
+  }, [serverId]);
+
+  const textChannels = (channels || []).filter((c) => c.channel_type === "text" && !c.parent_channel_id);
+  const options = [{ value: "", label: "Off" }, ...textChannels.map((c) => ({ value: c.id, label: `#${c.name}` }))];
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    setSaved(null);
+    try {
+      await api(`/api/servers/${serverId}/welcome`, {
+        method: "PUT",
+        body: { channel_id: channelId || null, message: message.trim() || null },
+      });
+      setSaved(channelId ? "Saved. New members get a welcome message." : "Welcome message is off.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't save");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const preview = (message.trim() || DEFAULT_WELCOME).replace("{user}", "@NewMember");
+
+  return (
+    <div className="stack welcome-settings">
+      <p className="muted">
+        When someone joins, the app posts a welcome message in this channel. Write <code>{"{user}"}</code> where their
+        name should go (it becomes a mention).
+      </p>
+      <AppSelect label="Channel" value={channelId} options={options} onChange={setChannelId} />
+      <label>
+        Message
+        <textarea
+          rows={3}
+          maxLength={300}
+          value={message}
+          placeholder={DEFAULT_WELCOME}
+          disabled={!channelId}
+          onChange={(e) => setMessage(e.target.value)}
+        />
+      </label>
+      {channelId && (
+        <div className="welcome-preview">
+          <span className="welcome-preview-icon" aria-hidden>👋</span>
+          <span>{preview}</span>
+        </div>
+      )}
+      {error && <p className="form-error">{error}</p>}
+      {saved && <p className="form-hint">{saved}</p>}
+      <div>
+        <button type="button" className="btn primary" disabled={busy} onClick={() => void save()}>
+          {busy ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 /** Server settings > Word filter: messages with these words are refused. */
 export function WordFilterTab({ serverId }: { serverId: string }) {

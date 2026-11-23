@@ -1434,3 +1434,201 @@ async fn custom_status_set_read_and_clear() {
     let p = app.call(Method::GET, &format!("/api/users/{member_id}/profile"), Some(&owner), None).await;
     assert!(p.body.get("custom_status").is_none(), "{}", p.body);
 }
+
+#[tokio::test]
+async fn user_notes_are_private_to_their_owner() {
+    let app = test_app().await;
+    let (owner, member, _server, _channel, member_id) = owner_and_member(&app).await;
+    let path = format!("/api/users/{member_id}/note");
+    let r = app.call(Method::PUT, &path, Some(&owner), Some(json!({ "note": "  primo do João  " }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["note"], "primo do João");
+    assert_eq!(app.call(Method::GET, &path, Some(&owner), None).await.body["note"], "primo do João");
+    // Someone else sees their own (empty) note, not mine.
+    let other = app.register("other").await;
+    assert!(app.call(Method::GET, &path, Some(&other), None).await.body["note"].is_null());
+    // No note about yourself; too long is refused; empty clears.
+    let r = app.call(Method::PUT, &path, Some(&member), Some(json!({ "note": "x" }))).await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    let r = app.call(Method::PUT, &path, Some(&owner), Some(json!({ "note": "a".repeat(257) }))).await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    app.call(Method::PUT, &path, Some(&owner), Some(json!({ "note": "" }))).await;
+    assert!(app.call(Method::GET, &path, Some(&owner), None).await.body["note"].is_null());
+}
+
+#[tokio::test]
+async fn welcome_message_is_posted_when_someone_joins() {
+    let app = test_app().await;
+    let owner = app.register("owner").await;
+    let (server_id, channel) = app.server_with_text_channel(&owner).await;
+    let path = format!("/api/servers/{server_id}/welcome");
+    let r = app
+        .call(Method::PUT, &path, Some(&owner), Some(json!({ "channel_id": channel, "message": "Bem-vindo {user}, lê as regras!" })))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(app.call(Method::GET, &path, Some(&owner), None).await.body["message"], "Bem-vindo {user}, lê as regras!");
+
+    let member = app.register("member").await;
+    let inv = app.call(Method::POST, &format!("/api/servers/{server_id}/invites"), Some(&owner), Some(json!({}))).await;
+    let code = inv.body["code"].as_str().unwrap().to_string();
+    app.call(Method::POST, &format!("/api/invites/{code}"), Some(&member), Some(json!({}))).await;
+    let me = app.call(Method::GET, "/api/auth/me", Some(&member), None).await;
+    let member_id = me.body["id"].as_str().unwrap().to_string();
+
+    let list = app.call(Method::GET, &format!("/api/channels/{channel}/messages"), Some(&owner), None).await;
+    let last = list.body.as_array().unwrap().last().unwrap().clone();
+    assert_eq!(last["system"], "member_join");
+    assert_eq!(last["author_id"], member_id.as_str());
+    assert_eq!(last["content"], format!("Bem-vindo <@{member_id}>, lê as regras!"));
+
+    // Only managers can change it.
+    let r = app.call(Method::PUT, &path, Some(&member), Some(json!({ "channel_id": null }))).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    // Off: nobody gets a message.
+    app.call(Method::PUT, &path, Some(&owner), Some(json!({ "channel_id": null }))).await;
+    let third = app.register("third").await;
+    app.call(Method::POST, &format!("/api/invites/{code}"), Some(&third), Some(json!({}))).await;
+    let again = app.call(Method::GET, &format!("/api/channels/{channel}/messages"), Some(&owner), None).await;
+    assert_eq!(again.body.as_array().unwrap().len(), list.body.as_array().unwrap().len());
+}
+
+#[tokio::test]
+async fn events_rsvp_and_delete_rules() {
+    let app = test_app().await;
+    let (owner, member, server_id, _channel, member_id) = owner_and_member(&app).await;
+    let starts = (chrono::Utc::now() + chrono::Duration::days(1)).to_rfc3339();
+    let r = app
+        .call(
+            Method::POST,
+            &format!("/api/servers/{server_id}/events"),
+            Some(&member),
+            Some(json!({ "title": "CS2", "description": "5 stack", "starts_at": starts })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let event_id = r.body["id"].as_str().unwrap().to_string();
+    assert_eq!(r.body["going"], json!([member_id]), "creator is going");
+
+    let r = app.call(Method::PUT, &format!("/api/events/{event_id}/rsvp"), Some(&owner), None).await;
+    assert_eq!(r.body["going"].as_array().unwrap().len(), 2);
+    let r = app.call(Method::DELETE, &format!("/api/events/{event_id}/rsvp"), Some(&member), None).await;
+    assert_eq!(r.body["going"].as_array().unwrap().len(), 1);
+
+    let list = app.call(Method::GET, &format!("/api/servers/{server_id}/events"), Some(&owner), None).await;
+    assert_eq!(list.body.as_array().unwrap().len(), 1);
+
+    // Past times and outsiders are refused.
+    let past = (chrono::Utc::now() - chrono::Duration::days(1)).to_rfc3339();
+    let r = app
+        .call(Method::POST, &format!("/api/servers/{server_id}/events"), Some(&owner), Some(json!({ "title": "old", "starts_at": past })))
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    let outsider = app.register("outsider").await;
+    let r = app.call(Method::GET, &format!("/api/servers/{server_id}/events"), Some(&outsider), None).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+
+    // A plain member can't delete someone else's event; the owner can.
+    let r = app
+        .call(Method::POST, &format!("/api/servers/{server_id}/events"), Some(&owner), Some(json!({ "title": "Owner event", "starts_at": starts })))
+        .await;
+    let owners_event = r.body["id"].as_str().unwrap().to_string();
+    let r = app.call(Method::DELETE, &format!("/api/events/{owners_event}"), Some(&member), None).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    let r = app.call(Method::DELETE, &format!("/api/events/{event_id}"), Some(&owner), None).await;
+    assert!(r.status.is_success());
+    let list = app.call(Method::GET, &format!("/api/servers/{server_id}/events"), Some(&owner), None).await;
+    assert_eq!(list.body.as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn dm_seen_only_moves_forward() {
+    let app = test_app().await;
+    let (owner, member, _server, _channel, member_id) = owner_and_member(&app).await;
+    let dm = app.call(Method::POST, &format!("/api/dms/by-peer/{member_id}/open"), Some(&owner), None).await;
+    assert_eq!(dm.status, StatusCode::OK, "{}", dm.body);
+    let dm_id = dm.body["id"].as_str().unwrap().to_string();
+    let owner_id = app.call(Method::GET, "/api/auth/me", Some(&owner), None).await.body["id"].as_str().unwrap().to_string();
+    // Two messages straight in the DB (the real ones are end-to-end encrypted).
+    let msgs = [
+        ("11111111-1111-4111-8111-111111111111", "2026-01-01T10:00:00+00:00"),
+        ("22222222-2222-4222-8222-222222222222", "2026-01-01T10:05:00+00:00"),
+    ];
+    for (id, at) in msgs {
+        sqlx::query("INSERT INTO dm_messages (id, dm_channel_id, author_id, ciphertext, nonce, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+            .bind(id)
+            .bind(&dm_id)
+            .bind(&owner_id)
+            .bind("x")
+            .bind("y")
+            .bind(at)
+            .execute(&app.state.db)
+            .await
+            .unwrap();
+    }
+    let path = format!("/api/dms/{dm_id}/read");
+    let r = app.call(Method::PUT, &path, Some(&member), Some(json!({ "message_id": msgs[1].0 }))).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let r = app.call(Method::PUT, &path, Some(&member), Some(json!({ "message_id": msgs[0].0 }))).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let reads = app.call(Method::GET, &format!("/api/dms/{dm_id}/reads"), Some(&owner), None).await;
+    assert_eq!(reads.body[0]["message_id"], msgs[1].0, "never goes back");
+    assert_eq!(reads.body[0]["user_id"], member_id.as_str());
+    // Outsiders can't see it.
+    let outsider = app.register("outsider").await;
+    let r = app.call(Method::GET, &format!("/api/dms/{dm_id}/reads"), Some(&outsider), None).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn watch_together_queue() {
+    let app = test_app().await;
+    let (owner, member, server_id, _channel, member_id) = owner_and_member(&app).await;
+    let channels = app.call(Method::GET, &format!("/api/servers/{server_id}/channels"), Some(&owner), None).await;
+    let voice = channels
+        .body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["channel_type"] == "voice")
+        .expect("voice channel")["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let path = format!("/api/channels/{voice}/watch");
+    let add = |url: &'static str| {
+        let app = &app;
+        let member = member.clone();
+        let path = path.clone();
+        async move { app.call(Method::POST, &path, Some(&member), Some(json!({ "action": "add", "url": url }))).await }
+    };
+    // Not in the voice channel yet.
+    assert_eq!(add("https://youtu.be/dQw4w9WgXcQ").await.status, StatusCode::BAD_REQUEST);
+    sqlx::query("INSERT INTO voice_states (user_id, channel_id, updated_at) VALUES (?, ?, ?)")
+        .bind(&member_id)
+        .bind(&voice)
+        .bind(chrono::Utc::now().to_rfc3339())
+        .execute(&app.state.db)
+        .await
+        .unwrap();
+    let r = add("https://youtu.be/dQw4w9WgXcQ").await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["playing"], true, "first video starts");
+    let first = r.body["queue"][0]["id"].as_str().unwrap().to_string();
+    assert_eq!(r.body["current"], first.as_str());
+    let r = add("https://www.youtube.com/watch?v=9bZkp7q19f0").await;
+    assert_eq!(r.body["queue"].as_array().unwrap().len(), 2);
+    assert_eq!(add("https://vimeo.com/1").await.status, StatusCode::BAD_REQUEST);
+
+    let r = app.call(Method::POST, &path, Some(&member), Some(json!({ "action": "pause", "position": 42.5 }))).await;
+    assert_eq!(r.body["playing"], false);
+    assert_eq!(r.body["position"], 42.5);
+    // Two apps report the same end: it only advances once.
+    for _ in 0..2 {
+        app.call(Method::POST, &path, Some(&member), Some(json!({ "action": "next", "item_id": first }))).await;
+    }
+    let r = app.call(Method::GET, &path, Some(&owner), None).await;
+    assert_eq!(r.body["queue"].as_array().unwrap().len(), 1);
+    assert_eq!(r.body["queue"][0]["video_id"], "9bZkp7q19f0");
+    assert_eq!(r.body["playing"], true);
+    assert_eq!(r.body["position"], 0.0);
+}

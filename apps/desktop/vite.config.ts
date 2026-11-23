@@ -25,7 +25,8 @@ function contentSecurityPolicy(dev: boolean): string {
     "media-src 'self' data: blob: https: http:",
     "connect-src 'self' data: blob: https: http: wss: ws:",
     "worker-src 'self' blob:",
-    "frame-src 'none'",
+    // Only YouTube embeds ("watch together" in voice channels).
+    "frame-src https://www.youtube-nocookie.com https://www.youtube.com",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'none'",

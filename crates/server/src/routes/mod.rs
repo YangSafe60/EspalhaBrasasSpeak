@@ -1,5 +1,6 @@
 mod auth_routes;
 mod channels;
+mod community;
 mod diagnostics;
 mod dms;
 mod emojis;
@@ -195,6 +196,14 @@ pub fn router(state: AppState) -> Router {
         .route("/api/users/{user_id}/block", post(friends::block_user))
         .route("/api/users/{user_id}/profile", get(auth_routes::profile))
         .route("/api/users/me/custom-status", put(auth_routes::set_custom_status))
+        .route("/api/users/{user_id}/note", get(community::get_note).put(community::set_note))
+        .route("/api/servers/{id}/welcome", get(community::get_welcome).put(community::set_welcome))
+        .route("/api/servers/{id}/events", get(community::list_events).post(community::create_event))
+        .route("/api/events/{id}", delete(community::delete_event))
+        .route("/api/events/{id}/rsvp", put(community::rsvp_event).delete(community::rsvp_event))
+        .route("/api/dms/{id}/read", put(community::mark_dm_read))
+        .route("/api/dms/{id}/reads", get(community::list_dm_reads))
+        .route("/api/channels/{id}/watch", get(community::get_watch).post(community::watch_action))
         .route(
             "/api/servers/{id}/automod",
             get(servers::get_automod).put(servers::set_automod),

@@ -1,3 +1,4 @@
+import { WatchTogether } from "./WatchTogether";
 import { useMemo, useState } from "react";
 import type { useVoice } from "../hooks/useVoice";
 import { useLobbyPreview } from "../hooks/useLobbyPreview";
@@ -215,6 +216,8 @@ export function VoiceLobbyView({ voice }: Props) {
             )}
           </section>
         )}
+
+        {selfConnected && <WatchTogether channelId={channel.id} />}
 
         <section className="voice-lobby-people">
           <h3>In lobby</h3>

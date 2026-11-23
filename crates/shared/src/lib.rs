@@ -168,6 +168,51 @@ pub struct Message {
     /// A "find players" group card.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lfg: Option<PlayerGroup>,
+    /// Written by the app, not typed by a person ("member_join").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system: Option<String>,
+}
+
+/// A scheduled server event ("Friday 21h - CS2").
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerEvent {
+    pub id: Uuid,
+    pub server_id: Uuid,
+    pub creator_id: Uuid,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub starts_at: DateTime<Utc>,
+    /// Voice channel to meet in, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_id: Option<Uuid>,
+    /// Who said they're going (in the order they said it).
+    pub going: Vec<Uuid>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// A video in a voice channel's "watch together" queue.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WatchItem {
+    pub id: Uuid,
+    /// YouTube video id (11 chars).
+    pub video_id: String,
+    pub title: String,
+    pub added_by: Uuid,
+}
+
+/// What a voice channel is watching together.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WatchState {
+    /// Up next, the current one first.
+    pub queue: Vec<WatchItem>,
+    /// The item playing now (the queue's first), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current: Option<Uuid>,
+    pub playing: bool,
+    /// Seconds into the current video at `updated_at`.
+    pub position: f64,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -508,6 +553,26 @@ pub enum WsEvent {
         dm_channel_id: Uuid,
         user_id: Uuid,
         username: String,
+    },
+    /// Someone read a DM up to `message_id` ("Seen").
+    DmRead {
+        dm_channel_id: Uuid,
+        user_id: Uuid,
+        message_id: Uuid,
+        read_at: DateTime<Utc>,
+    },
+    /// A scheduled event was created or changed (incl. who's going).
+    EventUpsert {
+        event: ServerEvent,
+    },
+    EventDelete {
+        server_id: Uuid,
+        event_id: Uuid,
+    },
+    /// A voice channel's watch-together queue / playback changed.
+    WatchUpdate {
+        channel_id: Uuid,
+        state: WatchState,
     },
     /// Peer joined or left a private DM voice call.
     DmCallUpdate {

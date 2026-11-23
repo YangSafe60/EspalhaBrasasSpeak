@@ -13,6 +13,8 @@ pub struct AppState {
     pub hub: WsHub,
     pub limits: Arc<RateLimiter>,
     pub trusted_proxies: Arc<TrustedProxies>,
+    /// Watch-together queue + playback per voice channel (in memory only).
+    pub watch: Arc<std::sync::Mutex<std::collections::HashMap<uuid::Uuid, speakapp_shared::WatchState>>>,
 }
 
 impl AppState {
@@ -59,6 +61,7 @@ impl AppState {
             hub: WsHub::new(),
             limits: Arc::new(RateLimiter::new()),
             trusted_proxies: Arc::new(TrustedProxies::from_env()),
+            watch: Arc::default(),
         })
     }
 }

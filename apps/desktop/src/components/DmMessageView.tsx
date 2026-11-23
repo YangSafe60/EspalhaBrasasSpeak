@@ -14,6 +14,8 @@ import { GifPickerButton, type GifHit } from "./GifPickerButton";
 import { MessageAttachment } from "./MessageAttachment";
 import { MessageContent } from "./MessageContent";
 import { DmInviteCard } from "./DmInviteCard";
+import { DmSeenMarker } from "./DmSeenMarker";
+import { loadDmReads, markDmRead } from "../lib/dmReads";
 import { parseInviteMessage } from "../lib/inviteMessage";
 import { MessageEmbeds } from "./MessageEmbeds";
 import { TypingIndicator } from "./TypingIndicator";
@@ -109,6 +111,20 @@ export function DmMessageView() {
     setPendingBulkDelete(false);
     setPendingDelete(null);
   }, [activeDmId]);
+
+  // "Seen": tell the others how far I've read (only while the window has focus).
+  useEffect(() => {
+    if (!activeDmId) return;
+    void loadDmReads(activeDmId);
+    const mark = () => {
+      if (!document.hasFocus()) return;
+      const lastFromOthers = [...messages].reverse().find((m) => m.author_id !== user?.id);
+      if (lastFromOthers) markDmRead(activeDmId, lastFromOthers.id);
+    };
+    mark();
+    window.addEventListener("focus", mark);
+    return () => window.removeEventListener("focus", mark);
+  }, [activeDmId, messages, user?.id]);
 
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -337,6 +353,9 @@ export function DmMessageView() {
             actions={actions}
           />
         ))}
+        {channel && !channel.is_group && (
+          <DmSeenMarker dmId={channel.id} peerId={channel.peer.id} messages={messages} myId={user?.id} />
+        )}
         <div ref={bottomRef} />
       </div>
 
