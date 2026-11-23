@@ -10580,3 +10580,32 @@ html[data-underline-links="1"] .a11y-preview-msg a {
   color: #c9ccd1;
   font-size: 0.9rem;
 }
+
+/* ---------- invite card inside a DM ---------- */
+.dm-invite {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  width: min(340px, 100%);
+  margin: 0.25rem 0;
+}
+
+.dm-invite-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.dm-invite-gone {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  width: min(340px, 100%);
+  margin: 0.25rem 0;
+  padding: 0.7rem 0.85rem;
+  border-radius: 10px;
+  border: 1px dashed var(--border);
+  background: rgba(255, 255, 255, 0.03);
+}

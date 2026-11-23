@@ -1,5 +1,9 @@
+import { invitePreview } from "./inviteMessage";
+
 /** Short plain-text preview for toast notifications. */
 export function messagePreview(content: string, maxLen = 140): string {
+  const invite = invitePreview(content);
+  if (invite) return invite;
   const text = content
     .replace(/```[\s\S]*?```/g, "[code block]")
     // Spoilers stay hidden in notifications too.

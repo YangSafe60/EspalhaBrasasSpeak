@@ -13,6 +13,8 @@ import { EmojiPickerButton } from "./EmojiPickerButton";
 import { GifPickerButton, type GifHit } from "./GifPickerButton";
 import { MessageAttachment } from "./MessageAttachment";
 import { MessageContent } from "./MessageContent";
+import { DmInviteCard } from "./DmInviteCard";
+import { parseInviteMessage } from "../lib/inviteMessage";
 import { MessageEmbeds } from "./MessageEmbeds";
 import { TypingIndicator } from "./TypingIndicator";
 import { useAppStore } from "../store/appStore";
@@ -463,6 +465,12 @@ const DmMessageRow = memo(function DmMessageRow({
             Unable to decrypt this message on this device.
             {m.edited_at && <span className="edited"> (edited)</span>}
           </p>
+        ) : parseInviteMessage(m.content) ? (
+          <DmInviteCard
+            invite={parseInviteMessage(m.content)!}
+            authorName={author?.display_name || author?.username || "someone"}
+            mine={mine}
+          />
         ) : m.content ? (
           <>
             <MessageContent content={m.content}>
@@ -487,10 +495,10 @@ const DmMessageRow = memo(function DmMessageRow({
             <MessageMoreMenu
               onOpenChange={setMenuOpen}
               items={[
-                ...(mine && canEdit
+                ...(mine && canEdit && !parseInviteMessage(m.content)
                   ? [{ label: "Edit message", onClick: () => actions.startEdit(m.id) }]
                   : []),
-                ...(m.content
+                ...(m.content && !parseInviteMessage(m.content)
                   ? [{ label: "Copy text", onClick: () => void navigator.clipboard?.writeText(m.content) }]
                   : []),
                 ...(mine && canEdit

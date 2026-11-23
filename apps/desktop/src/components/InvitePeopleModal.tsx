@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { copyText } from "../lib/clipboard";
+import { channelInviteMessage, serverInviteMessage } from "../lib/inviteMessage";
 import { mediaUrl } from "../lib/mediaUrl";
 import { useAppStore } from "../store/appStore";
 import type { UserPublic } from "../types";
@@ -92,6 +93,8 @@ export function InvitePeopleModal() {
   const createInvite = useAppStore((s) => s.createInvite);
   const inviteFriend = useAppStore((s) => s.inviteFriend);
   const inviteToChannel = useAppStore((s) => s.inviteToChannel);
+  const ensureDmWithPeer = useAppStore((s) => s.ensureDmWithPeer);
+  const sendDmMessage = useAppStore((s) => s.sendDmMessage);
 
   const [query, setQuery] = useState("");
   const [inviteCode, setInviteCode] = useState<string | null>(null);
@@ -215,6 +218,22 @@ export function InvitePeopleModal() {
         await inviteFriend(activeServerId!, userId);
       }
       setInvitedIds((prev) => new Set(prev).add(userId));
+      // Also drop the invite in our DM as a card (DMs are end-to-end
+      // encrypted, so it has to be sent from here, not by the server).
+      // The invite itself already worked; a DM failure isn't shown as one.
+      void (async () => {
+        try {
+          const dmId = await ensureDmWithPeer(userId);
+          if (dmId) {
+            await sendDmMessage(
+              dmId,
+              channel ? channelInviteMessage(activeServerId!, channel.id) : serverInviteMessage(activeServerId!),
+            );
+          }
+        } catch {
+          /* blocked, or no encryption key yet: the pop-up invite still arrived */
+        }
+      })();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Invite failed");
     } finally {
