@@ -9702,7 +9702,7 @@ html[data-underline-links="1"] .a11y-preview-msg a {
   min-height: 3px;
   border-radius: 999px;
   background: rgba(227, 27, 35, 0.42);
-  transition: background 0.15s ease;
+  /* No transition: animating each bar's colour kept the GPU drawing frames. */
 }
 
 .voice-player-bar.is-played {

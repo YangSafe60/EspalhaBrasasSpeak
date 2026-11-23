@@ -131,20 +131,20 @@ export function VoicePlayer({ src }: { src: string }) {
     };
   }, [src]);
 
-  // Progress while playing. Re-rendering 60 times a second was heavy on the
-  // CPU, so the time is rounded to the smallest step anything on screen can
-  // show (one bar, or one second); React skips the render when it's the same.
+  // Progress while playing. A requestAnimationFrame loop kept Chromium making
+  // a frame every refresh (GPU + CPU busy the whole time), so this is a plain
+  // timer that ticks only as often as a bar can fill (or once a second), and
+  // the time is rounded to that step so React skips renders that change nothing.
   useEffect(() => {
     if (!playing) return;
     const step = duration > 0 ? Math.min(1, duration / BARS) : 1;
-    let raf = 0;
     const tick = () => {
       const a = audioRef.current;
       if (a) setTime(Math.floor(a.currentTime / step) * step);
-      raf = requestAnimationFrame(tick);
     };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    tick();
+    const id = window.setInterval(tick, Math.max(50, Math.round((step * 1000) / 2)));
+    return () => window.clearInterval(id);
   }, [playing, duration]);
 
   function toggle() {
