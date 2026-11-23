@@ -56,6 +56,8 @@ export function MessageAttachment({
   const [plainUrl, setPlainUrl] = useState<string | null>(null);
   const image = isImageAttachment(attachment);
   const audio = !image && (attachment.content_type || "").toLowerCase().startsWith("audio/");
+  /** Recorded in the app (VoiceRecorder names them "voice-message.<ext>"). */
+  const voice = audio && /^voice-message\.[a-z0-9]+$/i.test(attachment.filename || "");
 
   useEffect(() => {
     if (!encrypted) return;
@@ -144,7 +146,7 @@ export function MessageAttachment({
             Image unavailable
           </span>
         )
-      ) : audio ? (
+      ) : voice ? (
         <div className="voice-message" onContextMenu={onAttachmentContextMenu}>
           {broken ? (
             <span className="muted tiny voice-message-note">Voice message unavailable</span>
@@ -155,7 +157,7 @@ export function MessageAttachment({
           )}
         </div>
       ) : (
-        <div className="file-card" onContextMenu={onAttachmentContextMenu}>
+        <div className={`file-card${audio ? " is-audio" : ""}`} onContextMenu={onAttachmentContextMenu}>
           <FileIcon ext={fileExt(attachment.filename)} />
           <div className="file-card-text">
             <span className="file-card-name" title={attachment.filename}>
@@ -181,6 +183,16 @@ export function MessageAttachment({
               <path d="M12 3a1 1 0 0 1 1 1v9.59l3.3-3.3a1 1 0 1 1 1.4 1.42l-5 5a1 1 0 0 1-1.4 0l-5-5a1 1 0 1 1 1.4-1.42l3.3 3.3V4a1 1 0 0 1 1-1zM5 19a1 1 0 0 1 1-1h12a1 1 0 1 1 0 2H6a1 1 0 0 1-1-1z" />
             </svg>
           </button>
+          {/* Music / sound files: the same player as voice messages, under the name. */}
+          {audio && !broken && (
+            <div className="file-card-player">
+              {encrypted && !plainUrl ? (
+                <span className="muted tiny">Loading audio…</span>
+              ) : (
+                <VoicePlayer src={encrypted ? plainUrl! : attachment.url} />
+              )}
+            </div>
+          )}
         </div>
       )}
       {menu ? (

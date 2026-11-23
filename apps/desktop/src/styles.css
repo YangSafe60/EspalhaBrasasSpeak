@@ -10059,6 +10059,19 @@ html[data-underline-links="1"] .a11y-preview-msg a {
   width: 100%;
 }
 
+/* Audio files (mp3…): file card with the waveform player on a second row. */
+.file-card.is-audio {
+  flex-wrap: wrap;
+  row-gap: 0.65rem;
+}
+
+.file-card-player {
+  flex-basis: 100%;
+  min-width: 0;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+}
+
 /* AppSelect inside a settings row (next to its text). */
 .app-select-inline {
   width: auto;
