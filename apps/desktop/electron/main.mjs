@@ -157,13 +157,22 @@ function imageFileExt(filename, contentType) {
  * file but answers with an empty body; sending the same bytes again returns
  * the existing link (it dedupes by content), so empty replies are retried.
  */
-/** Size of a just-uploaded file (HEAD), or null if it can't be checked. */
+/**
+ * Size of a just-uploaded file, or null if it can't be checked. Catbox
+ * answers HEAD with "content-length: 0" even for good files, so ask for one
+ * byte and read the total from Content-Range ("bytes 0-0/1024").
+ */
 async function storedSize(url) {
   try {
-    const res = await fetch(url, { method: "HEAD", headers: { "User-Agent": "EspalhaBrasas/0.1" } });
-    if (!res.ok) return null;
-    const len = res.headers.get("content-length");
-    return len == null ? null : Number(len);
+    const res = await fetch(url, {
+      headers: { "User-Agent": "EspalhaBrasas/0.1", Range: "bytes=0-0" },
+    });
+    const range = res.headers.get("content-range");
+    void res.body?.cancel();
+    const total = range && /\/(\d+)\s*$/.exec(range);
+    if (total) return Number(total[1]);
+    // 416 with no usable range = nothing stored; anything else: can't tell.
+    return res.status === 416 ? 0 : null;
   } catch {
     return null;
   }
@@ -1333,11 +1342,17 @@ function registerIpc() {
         /^https:\/\/files\.catbox\.moe\/[a-z0-9]+\.[a-z0-9]+$/i,
       );
       return { url, size: buf.length, temporary: false };
-    } catch {
+    } catch (catboxErr) {
+      console.warn("[upload] Catbox failed:", catboxErr?.message);
       // Catbox down: keep it on Litterbox for 72 h; the server moves it to
       // Catbox as soon as Catbox works again.
-      const url = await litterboxUpload(buf, "file.dat", "application/octet-stream");
-      return { url, size: buf.length, temporary: true };
+      try {
+        const url = await litterboxUpload(buf, "file.dat", "application/octet-stream");
+        return { url, size: buf.length, temporary: true };
+      } catch {
+        // Show why Catbox failed; that's the useful part.
+        throw catboxErr;
+      }
     }
   });
 

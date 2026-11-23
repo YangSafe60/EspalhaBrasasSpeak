@@ -111,12 +111,18 @@ async fn upload_to_catbox(http: &reqwest::Client, bytes: &[u8]) -> Result<String
         };
         let text = res.text().await.unwrap_or_default().trim().to_string();
         if text.starts_with("https://files.catbox.moe/") {
+            // Catbox's HEAD says "content-length: 0" even for good files, so
+            // ask for one byte and read the total from Content-Range.
             let stored = http
-                .head(&text)
+                .get(&text)
+                .header("Range", "bytes=0-0")
                 .send()
                 .await
                 .ok()
-                .and_then(|r| r.headers().get("content-length")?.to_str().ok()?.parse::<usize>().ok());
+                .and_then(|r| {
+                    let range = r.headers().get("content-range")?.to_str().ok()?;
+                    range.rsplit('/').next()?.trim().parse::<usize>().ok()
+                });
             if stored == Some(bytes.len()) {
                 return Ok(text);
             }
