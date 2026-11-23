@@ -2,6 +2,48 @@ import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } fr
 
 const BARS = 44;
 
+/* One volume for every player, remembered between sessions. */
+const VOL_KEY = "voicePlayerVolume";
+const VOL_EVENT = "voice-player-volume";
+type Vol = { level: number; muted: boolean };
+
+function loadVol(): Vol {
+  try {
+    const v = JSON.parse(localStorage.getItem(VOL_KEY) || "null");
+    if (v && typeof v.level === "number") return { level: Math.min(1, Math.max(0, v.level)), muted: Boolean(v.muted) };
+  } catch {
+    /* ignore */
+  }
+  return { level: 1, muted: false };
+}
+
+function saveVol(v: Vol) {
+  try {
+    localStorage.setItem(VOL_KEY, JSON.stringify(v));
+  } catch {
+    /* ignore */
+  }
+  window.dispatchEvent(new CustomEvent<Vol>(VOL_EVENT, { detail: v }));
+}
+
+function VolumeIcon({ level }: { level: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden>
+      <path d="M4 9.5v5a1 1 0 0 0 1 1h3l4.3 3.6a.8.8 0 0 0 1.3-.6V5.5a.8.8 0 0 0-1.3-.6L8 8.5H5a1 1 0 0 0-1 1z" />
+      {level === 0 ? (
+        <path d="M16.3 9.3a.9.9 0 0 1 1.3 0l1.4 1.4 1.4-1.4a.9.9 0 1 1 1.3 1.3L20.3 12l1.4 1.4a.9.9 0 1 1-1.3 1.3L19 13.3l-1.4 1.4a.9.9 0 1 1-1.3-1.3l1.4-1.4-1.4-1.4a.9.9 0 0 1 0-1.3z" />
+      ) : (
+        <>
+          <path d="M15.6 9.2a.9.9 0 0 1 1.27.05 4 4 0 0 1 0 5.5.9.9 0 1 1-1.32-1.22 2.2 2.2 0 0 0 0-3.06.9.9 0 0 1 .05-1.27z" />
+          {level > 0.5 && (
+            <path d="M18.2 6.6a.9.9 0 0 1 1.27.02 7.8 7.8 0 0 1 0 10.76.9.9 0 1 1-1.3-1.25 6 6 0 0 0 0-8.26.9.9 0 0 1 .03-1.27z" />
+          )}
+        </>
+      )}
+    </svg>
+  );
+}
+
 /** Bar heights (0..1) from the audio itself; a stable pattern if it can't be read. */
 async function readPeaks(src: string): Promise<{ peaks: number[]; duration: number }> {
   const buf = await (await fetch(src)).arrayBuffer();
@@ -50,6 +92,28 @@ export function VoicePlayer({ src }: { src: string }) {
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [vol, setVol] = useState<Vol>(loadVol);
+
+  // Same volume in every player: follow changes made in another one.
+  useEffect(() => {
+    const on = (e: Event) => setVol((e as CustomEvent<Vol>).detail);
+    window.addEventListener(VOL_EVENT, on);
+    return () => window.removeEventListener(VOL_EVENT, on);
+  }, []);
+
+  useEffect(() => {
+    const a = audioRef.current;
+    if (!a) return;
+    a.volume = vol.level;
+    a.muted = vol.muted;
+  }, [vol]);
+
+  function changeVol(next: Vol) {
+    setVol(next);
+    saveVol(next);
+  }
+
+  const shownLevel = vol.muted ? 0 : vol.level;
 
   useEffect(() => {
     let alive = true;
@@ -188,6 +252,33 @@ export function VoicePlayer({ src }: { src: string }) {
         ))}
       </div>
       <span className="voice-player-time">{fmt(playing || time > 0 ? time : duration)}</span>
+      <div className="voice-player-vol">
+        <button
+          type="button"
+          className="voice-player-vol-btn"
+          onClick={() => changeVol({ level: vol.level || 1, muted: shownLevel > 0 })}
+          aria-label={shownLevel === 0 ? "Unmute" : "Mute"}
+          title={shownLevel === 0 ? "Unmute" : "Mute"}
+        >
+          <VolumeIcon level={shownLevel} />
+        </button>
+        <div className="voice-player-vol-pop">
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={1}
+            value={Math.round(shownLevel * 100)}
+            aria-label="Volume"
+            style={{ ["--vol" as string]: `${Math.round(shownLevel * 100)}%` }}
+            onChange={(e) => {
+              const level = Number(e.target.value) / 100;
+              changeVol({ level, muted: level === 0 });
+            }}
+          />
+          <span className="voice-player-vol-value">{Math.round(shownLevel * 100)}</span>
+        </div>
+      </div>
     </div>
   );
 }
