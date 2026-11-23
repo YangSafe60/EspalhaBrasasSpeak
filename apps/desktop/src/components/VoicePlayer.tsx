@@ -131,18 +131,21 @@ export function VoicePlayer({ src }: { src: string }) {
     };
   }, [src]);
 
-  // Smooth progress while playing.
+  // Progress while playing. Re-rendering 60 times a second was heavy on the
+  // CPU, so the time is rounded to the smallest step anything on screen can
+  // show (one bar, or one second); React skips the render when it's the same.
   useEffect(() => {
     if (!playing) return;
+    const step = duration > 0 ? Math.min(1, duration / BARS) : 1;
     let raf = 0;
     const tick = () => {
       const a = audioRef.current;
-      if (a) setTime(a.currentTime);
+      if (a) setTime(Math.floor(a.currentTime / step) * step);
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playing]);
+  }, [playing, duration]);
 
   function toggle() {
     const a = audioRef.current;
