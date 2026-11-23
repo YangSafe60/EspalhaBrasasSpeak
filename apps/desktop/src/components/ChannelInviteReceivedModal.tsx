@@ -6,8 +6,10 @@ export function ChannelInviteReceivedModal() {
   const clear = useAppStore((s) => s.clearPendingChannelInvite);
   const selectServer = useAppStore((s) => s.selectServer);
   const selectChannel = useAppStore((s) => s.selectChannel);
+  const requestVoiceJoin = useAppStore((s) => s.requestVoiceJoin);
 
   if (!invite) return null;
+  const isVoice = invite.channel.channel_type === "voice";
 
   const by =
     invite.invited_by.display_name || invite.invited_by.username || "a friend";
@@ -20,7 +22,9 @@ export function ChannelInviteReceivedModal() {
     const { server, channel } = invite!;
     clear();
     await selectServer(server.id);
-    if (channel.channel_type === "text") {
+    if (channel.channel_type === "voice") {
+      requestVoiceJoin(channel.id);
+    } else if (channel.channel_type === "text") {
       await selectChannel(channel.id);
     }
   }
@@ -47,7 +51,7 @@ export function ChannelInviteReceivedModal() {
           memberCount={invite.member_count}
           onlineCount={invite.online_count}
           createdAt={invite.server.created_at}
-          ctaLabel="Join Channel"
+          ctaLabel={isVoice ? "Join Voice" : "Join Channel"}
           onCta={() => void onJoin()}
           footer={`Invited by ${by} · ${invite.server.name}`}
         />

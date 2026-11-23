@@ -42,6 +42,7 @@ export function DmInviteCard({ invite, authorName, mine }: { invite: DmInvite; a
   );
   const selectServer = useAppStore((s) => s.selectServer);
   const selectChannel = useAppStore((s) => s.selectChannel);
+  const requestVoiceJoin = useAppStore((s) => s.requestVoiceJoin);
   const [info, setInfo] = useState<Info | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -79,13 +80,25 @@ export function DmInviteCard({ invite, authorName, mine }: { invite: DmInvite; a
     setBusy(true);
     try {
       await selectServer(invite.serverId);
-      if (invite.kind === "channel" && (channel?.channel_type ?? "text") === "text") {
-        await selectChannel(invite.channelId);
+      if (invite.kind === "channel") {
+        // After selectServer the channel list is loaded, so the type is known.
+        const ch =
+          (useAppStore.getState().channelsByServer[invite.serverId] || []).find((c) => c.id === invite.channelId) ??
+          channel;
+        if (ch?.channel_type === "voice") {
+          // Same path as clicking the channel in the sidebar (asks for the
+          // mic the first time, then joins).
+          requestVoiceJoin(invite.channelId);
+        } else {
+          await selectChannel(invite.channelId);
+        }
       }
     } finally {
       setBusy(false);
     }
   }
+
+  const isVoice = invite.kind === "channel" && channel?.channel_type === "voice";
 
   return (
     <div className="dm-invite">
@@ -106,7 +119,7 @@ export function DmInviteCard({ invite, authorName, mine }: { invite: DmInvite; a
         memberCount={info?.members ?? 0}
         onlineCount={info?.online ?? 0}
         createdAt={server.created_at}
-        ctaLabel={invite.kind === "server" ? "Go to Server" : "Go to Channel"}
+        ctaLabel={invite.kind === "server" ? "Go to Server" : isVoice ? "Join Voice" : "Go to Channel"}
         onCta={() => void go()}
         ctaBusy={busy}
         footer={invite.kind === "channel" ? `${server.name} · invited by ${mine ? "you" : authorName}` : `Invited by ${mine ? "you" : authorName}`}
