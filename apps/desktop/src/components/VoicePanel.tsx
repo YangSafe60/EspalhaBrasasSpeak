@@ -6,6 +6,8 @@ import { sameId } from "../lib/serverPerms";
 import { useAppStore } from "../store/appStore";
 import { ScreenSharePicker } from "./ScreenSharePicker";
 import { StatusPicker } from "./StatusPicker";
+import { ActivitiesButton } from "./VoiceActivities";
+import { openActivity, setOpenActivity } from "../lib/voiceActivity";
 import {
   IconCamera,
   IconDeaf,
@@ -37,6 +39,7 @@ export function VoicePanel({ voice }: Props) {
   const servers = useAppStore((s) => s.servers);
   const user = useAppStore((s) => s.user);
   const activeServerId = useAppStore((s) => s.activeServerId);
+  const selectServer = useAppStore((s) => s.selectServer);
   const streaming = useAppStore((s) => s.streaming);
   const selectChannel = useAppStore((s) => s.selectChannel);
   const setModal = useAppStore((s) => s.setModal);
@@ -124,6 +127,12 @@ export function VoicePanel({ voice }: Props) {
     };
   }, []);
 
+  // Leaving (or switching) voice closes the activity I had open there.
+  useEffect(() => {
+    const open = openActivity.get();
+    if (open && open.channelId !== voice.voiceChannelId) openActivity.set(null);
+  }, [voice.voiceChannelId]);
+
   function openSharePicker(mode: ShareMode) {
     setLiveMenuOpen(false);
     setShareMode(mode);
@@ -209,6 +218,19 @@ export function VoicePanel({ voice }: Props) {
             >
               <IconScreen />
             </button>
+            {channel && voice.connected && (
+              <ActivitiesButton
+                variant="dock"
+                onPick={(id) => {
+                  // Open it and go to the voice channel, wherever I am now.
+                  setOpenActivity(channel.id, id);
+                  void (async () => {
+                    if (!sameId(activeServerId, channel.server_id)) await selectServer(channel.server_id);
+                    await selectChannel(channel.id);
+                  })();
+                }}
+              />
+            )}
             <button
               type="button"
               className="voice-icon-btn disconnect"

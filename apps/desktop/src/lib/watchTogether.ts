@@ -24,6 +24,17 @@ export async function loadWatch(channelId: string, kind: PlayKind = "watch") {
   }
 }
 
+/** Fetch again every activity this app has state for (after a reconnect). */
+export async function reloadWatchStates() {
+  const keys = Object.keys(watchStates.get());
+  await Promise.all(
+    keys.map((key) => {
+      const [channelId, kind] = key.split(":");
+      return loadWatch(channelId, kind === "listen" ? "listen" : "watch");
+    }),
+  );
+}
+
 export type WatchAction =
   | { action: "add"; url: string }
   | { action: "remove" | "select"; item_id: string }

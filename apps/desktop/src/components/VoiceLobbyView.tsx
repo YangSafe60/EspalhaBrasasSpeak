@@ -1,5 +1,7 @@
 import { WatchTogether } from "./WatchTogether";
-import { ActivitiesButton, RunningActivityCard, type ActivityId } from "./VoiceActivities";
+import { RunningActivityCard } from "./VoiceActivities";
+import { openActivity, setOpenActivity, type ActivityId } from "../lib/voiceActivity";
+import { useMini } from "../lib/miniStore";
 import { loadWatch } from "../lib/watchTogether";
 import { useEffect, useMemo, useState } from "react";
 import type { useVoice } from "../hooks/useVoice";
@@ -44,13 +46,18 @@ export function VoiceLobbyView({ voice }: Props) {
   const [popoutBusy, setPopoutBusy] = useState<string | null>(null);
   const [popoutError, setPopoutError] = useState<string | null>(null);
   // The activity I have open in this channel (Discord-style "Activities").
-  const [activity, setActivityState] = useState<ActivityId | null>(null);
+  // The activity I have open (it can be started from the voice bar too).
+  const open = useMini(openActivity, (a) => a);
+  const activity: ActivityId | null = open && open.channelId === activeChannelId ? open.id : null;
   // With a live and an activity at once: which one is big (the other is small on the side).
   const [focus, setFocus] = useState<"stage" | "activity">("activity");
   const setActivity = (id: ActivityId | null) => {
-    setActivityState(id);
-    if (id) setFocus("activity");
+    if (activeChannelId) setOpenActivity(activeChannelId, id);
   };
+  // A newly opened activity comes to the front.
+  useEffect(() => {
+    if (activity) setFocus("activity");
+  }, [activity]);
   const { openForUserId, menuPortal } = useMemberContextMenu({
     applyUserMic: voice.applyUserMic,
     applyUserVideoHide: voice.applyUserVideoHide,
@@ -99,7 +106,6 @@ export function VoiceLobbyView({ voice }: Props) {
     voice.connected && channel && voice.voiceChannelId === channel.id ? channel.id : null;
   // A different channel: close the activity; load what this one is watching.
   useEffect(() => {
-    setActivityState(null);
     if (connectedChannelId) {
       void loadWatch(connectedChannelId, "watch");
       void loadWatch(connectedChannelId, "listen");
@@ -154,7 +160,6 @@ export function VoiceLobbyView({ voice }: Props) {
           </p>
         </div>
         <div className="voice-lobby-header-actions">
-          {selfConnected && <ActivitiesButton onPick={setActivity} />}
           {channel.user_limit > 0 && (
             <span className="voice-lobby-limit">
               {lobbyUsers.length}/{channel.user_limit}

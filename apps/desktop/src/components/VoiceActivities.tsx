@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import type { ActivityId } from "../lib/voiceActivity";
 import { useMini } from "../lib/miniStore";
 import { watchKey, watchStates } from "../lib/watchTogether";
 import type { WatchState } from "../types";
 
-export type ActivityId = "watch" | "listen";
+export type { ActivityId };
 
 type Activity = {
   id: ActivityId;
@@ -59,15 +61,25 @@ function RocketIcon() {
   );
 }
 
-/** "Activities" button for the voice channel header, with the picker. */
-export function ActivitiesButton({ onPick }: { onPick: (id: ActivityId) => void }) {
+/**
+ * "Activities" button with the picker. `dock` = an icon button in the voice
+ * bar (bottom left); its list opens upward, drawn over everything.
+ */
+export function ActivitiesButton({ onPick, variant = "header" }: { onPick: (id: ActivityId) => void; variant?: "header" | "dock" }) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
+  const pop = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; bottom: number } | null>(null);
 
   useEffect(() => {
     if (!open) return;
+    if (variant === "dock" && wrap.current) {
+      const r = wrap.current.getBoundingClientRect();
+      setPos({ left: Math.max(8, Math.min(r.left, window.innerWidth - 336)), bottom: window.innerHeight - r.top + 8 });
+    }
     const onDown = (e: MouseEvent) => {
-      if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (!wrap.current?.contains(t) && !pop.current?.contains(t)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
     window.addEventListener("mousedown", onDown);
@@ -76,39 +88,59 @@ export function ActivitiesButton({ onPick }: { onPick: (id: ActivityId) => void 
       window.removeEventListener("mousedown", onDown);
       window.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, variant]);
+
+  const list = (
+    <div
+      ref={pop}
+      className={`activities-pop${variant === "dock" ? " is-dock" : ""}`}
+      role="menu"
+      style={variant === "dock" && pos ? { left: pos.left, bottom: pos.bottom } : undefined}
+    >
+      <p className="activities-pop-title">Choose an activity</p>
+      {ACTIVITIES.map((a) => (
+        <button
+          key={a.id}
+          type="button"
+          role="menuitem"
+          className="activity-card"
+          onClick={() => {
+            setOpen(false);
+            onPick(a.id);
+          }}
+        >
+          <span className="activity-card-art" style={{ background: a.art }}>
+            {a.icon}
+          </span>
+          <span className="activity-card-text">
+            <strong>{a.name}</strong>
+            <span>{a.description}</span>
+          </span>
+        </button>
+      ))}
+    </div>
+  );
 
   return (
     <div className="activities" ref={wrap}>
-      <button type="button" className={`activities-btn${open ? " is-open" : ""}`} onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-        <RocketIcon />
-        Activities
-      </button>
-      {open && (
-        <div className="activities-pop" role="menu">
-          <p className="activities-pop-title">Choose an activity</p>
-          {ACTIVITIES.map((a) => (
-            <button
-              key={a.id}
-              type="button"
-              role="menuitem"
-              className="activity-card"
-              onClick={() => {
-                setOpen(false);
-                onPick(a.id);
-              }}
-            >
-              <span className="activity-card-art" style={{ background: a.art }}>
-                {a.icon}
-              </span>
-              <span className="activity-card-text">
-                <strong>{a.name}</strong>
-                <span>{a.description}</span>
-              </span>
-            </button>
-          ))}
-        </div>
+      {variant === "dock" ? (
+        <button
+          type="button"
+          className={`voice-icon-btn${open ? " menu-open" : ""}`}
+          title="Activities"
+          aria-label="Activities"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+        >
+          <RocketIcon />
+        </button>
+      ) : (
+        <button type="button" className={`activities-btn${open ? " is-open" : ""}`} onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+          <RocketIcon />
+          Activities
+        </button>
       )}
+      {open && (variant === "dock" ? (pos ? createPortal(list, document.body) : null) : list)}
     </div>
   );
 }

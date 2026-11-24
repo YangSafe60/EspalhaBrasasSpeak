@@ -11970,3 +11970,11 @@ html[data-underline-links="1"] .a11y-preview-msg a {
 .watch.is-compact .listen-controls {
   margin-top: 0.4rem;
 }
+
+/* Activities list opened from the voice bar: above it, over everything. */
+.activities-pop.is-dock {
+  position: fixed;
+  top: auto;
+  right: auto;
+  z-index: 1000;
+}

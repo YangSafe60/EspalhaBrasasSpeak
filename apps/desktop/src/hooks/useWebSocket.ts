@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { getAccessToken, refreshAccessToken, wsProtocols, wsUrl } from "../api/client";
 import { useAppStore } from "../store/appStore";
 import type { WsEvent } from "../types";
+import { reloadWatchStates } from "../lib/watchTogether";
 
 /** True when a JWT expires within `marginMs` (or can't be read). */
 function expiresSoon(token: string, marginMs = 60_000): boolean {
@@ -24,6 +25,8 @@ export function useWebSocket(enabled: boolean) {
     if (!enabled || !userId) return;
 
     let cancelled = false;
+    // Set after the first connection: later opens are reconnects.
+    let connectedBefore = false;
 
     const connect = async () => {
       let token = getAccessToken();
@@ -40,6 +43,10 @@ export function useWebSocket(enabled: boolean) {
       ws.onopen = () => {
         opened = true;
         retryRef.current = 0;
+        // Events sent while we were offline are lost: fetch what changed in
+        // the meantime (activities' play/pause/position/queue).
+        if (connectedBefore) void reloadWatchStates();
+        connectedBefore = true;
       };
 
       ws.onmessage = (ev) => {
