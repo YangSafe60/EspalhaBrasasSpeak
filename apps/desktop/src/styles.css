@@ -10547,8 +10547,10 @@ html[data-underline-links="1"] .a11y-preview-msg a {
 }
 
 .image-viewer-img {
-  max-width: 100%;
-  max-height: 100%;
+  /* Fit the screen (a % height doesn't resolve inside the grid stage, so big
+     photos showed at full size). Bar ~56px + the stage's bottom padding. */
+  max-width: calc(100vw - 4rem);
+  max-height: calc(100vh - var(--titlebar-height, 0px) - 56px - 2rem);
   object-fit: contain;
   border-radius: 6px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
