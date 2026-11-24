@@ -572,6 +572,9 @@ pub enum WsEvent {
     /// A voice channel's watch-together queue / playback changed.
     WatchUpdate {
         channel_id: Uuid,
+        /// "watch" (video) or "listen" (audio only); each has its own queue.
+        #[serde(default)]
+        kind: String,
         state: WatchState,
     },
     /// Peer joined or left a private DM voice call.

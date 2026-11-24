@@ -38,7 +38,10 @@ export function UserNoteField({ userId }: { userId: string }) {
     const el = ref.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 96)}px`;
+    // + the 2px of border, or a one-line note gets a scrollbar.
+    const full = el.scrollHeight + 2;
+    el.style.height = `${Math.min(full, 96)}px`;
+    el.style.overflowY = full > 96 ? "auto" : "hidden";
   }, [note]);
 
   async function save() {

@@ -2,16 +2,23 @@ import { api } from "../api/client";
 import type { WatchState } from "../types";
 import { miniStore } from "./miniStore";
 
-/** Watch-together state per voice channel (from the server, live over WS). */
+/** "watch" = YouTube with video; "listen" = audio only. Each has its own queue. */
+export type PlayKind = "watch" | "listen";
+
+/** State per voice channel and kind (from the server, live over WS). */
 export const watchStates = miniStore<Record<string, WatchState>>({});
 
-export function applyWatch(channelId: string, state: WatchState) {
-  watchStates.set((all) => ({ ...all, [channelId]: state }));
+export function watchKey(channelId: string, kind: PlayKind): string {
+  return kind === "watch" ? channelId : `${channelId}:listen`;
 }
 
-export async function loadWatch(channelId: string) {
+export function applyWatch(channelId: string, state: WatchState, kind: PlayKind = "watch") {
+  watchStates.set((all) => ({ ...all, [watchKey(channelId, kind)]: state }));
+}
+
+export async function loadWatch(channelId: string, kind: PlayKind = "watch") {
   try {
-    applyWatch(channelId, await api<WatchState>(`/api/channels/${channelId}/watch`));
+    applyWatch(channelId, await api<WatchState>(`/api/channels/${channelId}/watch`, { query: { kind } }), kind);
   } catch {
     /* not allowed / offline */
   }
@@ -24,9 +31,9 @@ export type WatchAction =
   | { action: "next"; item_id?: string }
   | { action: "clear" };
 
-export async function watchAction(channelId: string, body: WatchAction): Promise<WatchState> {
-  const state = await api<WatchState>(`/api/channels/${channelId}/watch`, { method: "POST", body });
-  applyWatch(channelId, state);
+export async function watchAction(channelId: string, body: WatchAction, kind: PlayKind = "watch"): Promise<WatchState> {
+  const state = await api<WatchState>(`/api/channels/${channelId}/watch`, { method: "POST", body, query: { kind } });
+  applyWatch(channelId, state, kind);
   return state;
 }
 

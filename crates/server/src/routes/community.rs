@@ -6,7 +6,7 @@ use crate::db;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     Json,
 };
 use chrono::{DateTime, Duration, Utc};
@@ -502,20 +502,37 @@ async fn require_in_voice(state: &AppState, channel_id: Uuid, user_id: Uuid) -> 
     Ok(channel)
 }
 
-fn watch_snapshot(state: &AppState, channel_id: Uuid) -> WatchState {
+#[derive(Deserialize)]
+pub struct KindQuery {
+    /// "watch" (default, video) or "listen" (audio only).
+    pub kind: Option<String>,
+}
+
+fn activity_kind(q: &KindQuery) -> AppResult<String> {
+    match q.kind.as_deref().unwrap_or("watch") {
+        k @ ("watch" | "listen") => Ok(k.to_string()),
+        _ => Err(AppError::BadRequest("unknown activity".into())),
+    }
+}
+
+fn watch_snapshot(state: &AppState, channel_id: Uuid, kind: &str) -> WatchState {
     let map = state.watch.lock().unwrap();
-    map.get(&channel_id).cloned().unwrap_or_else(|| WatchState { updated_at: Utc::now(), ..Default::default() })
+    map.get(&(channel_id, kind.to_string()))
+        .cloned()
+        .unwrap_or_else(|| WatchState { updated_at: Utc::now(), ..Default::default() })
 }
 
 pub async fn get_watch(
     State(state): State<AppState>,
     user: AuthUser,
     Path(channel_id): Path<Uuid>,
+    Query(q): Query<KindQuery>,
 ) -> AppResult<Json<WatchState>> {
+    let kind = activity_kind(&q)?;
     let channel = db::get_channel(&state.db, channel_id).await?;
     let server = db::get_server(&state.db, channel.server_id).await?;
     db::require_perm(&state.db, &server, Some(channel_id), user.id, Permissions::VIEW_CHANNEL).await?;
-    Ok(Json(watch_snapshot(&state, channel_id)))
+    Ok(Json(watch_snapshot(&state, channel_id, &kind)))
 }
 
 #[derive(Deserialize)]
@@ -533,8 +550,10 @@ pub async fn watch_action(
     State(state): State<AppState>,
     user: AuthUser,
     Path(channel_id): Path<Uuid>,
+    Query(q): Query<KindQuery>,
     Json(body): Json<WatchReq>,
 ) -> AppResult<Json<WatchState>> {
+    let kind = activity_kind(&q)?;
     let channel = require_in_voice(&state, channel_id, user.id).await?;
     let position = body.position.filter(|p| p.is_finite() && *p >= 0.0).unwrap_or(0.0);
 
@@ -550,7 +569,9 @@ pub async fn watch_action(
 
     let snapshot = {
         let mut map = state.watch.lock().unwrap();
-        let w = map.entry(channel_id).or_insert_with(|| WatchState { updated_at: Utc::now(), ..Default::default() });
+        let w = map
+            .entry((channel_id, kind.clone()))
+            .or_insert_with(|| WatchState { updated_at: Utc::now(), ..Default::default() });
         let now = Utc::now();
         // Where playback is right now (so pausing/adding keeps the place).
         let live_position = if w.playing {
@@ -635,7 +656,7 @@ pub async fn watch_action(
     };
     state.hub.broadcast_server(
         channel.server_id,
-        &WsEvent::WatchUpdate { channel_id, state: snapshot.clone() },
+        &WsEvent::WatchUpdate { channel_id, kind, state: snapshot.clone() },
     );
     Ok(Json(snapshot))
 }

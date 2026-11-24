@@ -463,7 +463,7 @@ export type WsEvent =
   | { type: "dm_read"; dm_channel_id: string; user_id: string; message_id: string; read_at: string }
   | { type: "event_upsert"; event: ServerEvent }
   | { type: "event_delete"; server_id: string; event_id: string }
-  | { type: "watch_update"; channel_id: string; state: WatchState }
+  | { type: "watch_update"; channel_id: string; kind?: string; state: WatchState }
   | {
       type: "dm_call_update";
       dm_channel_id: string;

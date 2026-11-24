@@ -1631,4 +1631,18 @@ async fn watch_together_queue() {
     assert_eq!(r.body["queue"][0]["video_id"], "9bZkp7q19f0");
     assert_eq!(r.body["playing"], true);
     assert_eq!(r.body["position"], 0.0);
+
+    // Listen together has its own queue in the same channel.
+    let listen = format!("{path}?kind=listen");
+    let r = app.call(Method::GET, &listen, Some(&owner), None).await;
+    assert_eq!(r.body["queue"].as_array().unwrap().len(), 0);
+    let r = app
+        .call(Method::POST, &listen, Some(&member), Some(json!({ "action": "add", "url": "https://youtu.be/dQw4w9WgXcQ" })))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["queue"].as_array().unwrap().len(), 1);
+    let r = app.call(Method::GET, &path, Some(&owner), None).await;
+    assert_eq!(r.body["queue"][0]["video_id"], "9bZkp7q19f0", "watch queue untouched");
+    let r = app.call(Method::GET, &format!("{path}?kind=karaoke"), Some(&owner), None).await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
 }

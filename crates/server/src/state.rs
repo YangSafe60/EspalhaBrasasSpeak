@@ -14,7 +14,8 @@ pub struct AppState {
     pub limits: Arc<RateLimiter>,
     pub trusted_proxies: Arc<TrustedProxies>,
     /// Watch-together queue + playback per voice channel (in memory only).
-    pub watch: Arc<std::sync::Mutex<std::collections::HashMap<uuid::Uuid, speakapp_shared::WatchState>>>,
+    /// Keyed by (voice channel, "watch" | "listen").
+    pub watch: Arc<std::sync::Mutex<std::collections::HashMap<(uuid::Uuid, String), speakapp_shared::WatchState>>>,
 }
 
 impl AppState {

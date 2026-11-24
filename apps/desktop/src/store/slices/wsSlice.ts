@@ -797,7 +797,7 @@ export const createWsSlice: AppStoreSlice = (set, get) => ({
         removeEvent(event.server_id, event.event_id);
         break;
       case "watch_update":
-        applyWatch(event.channel_id, event.state);
+        applyWatch(event.channel_id, event.state, event.kind === "listen" ? "listen" : "watch");
         break;
       case "dm_typing_start": {
         const expires = Date.now() + 4000;

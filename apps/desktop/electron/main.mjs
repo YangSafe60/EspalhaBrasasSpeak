@@ -901,12 +901,31 @@ function installSessionHandlers() {
     "notifications",
   ]);
 
+  // Fullscreen: the app itself and the "watch together" YouTube player.
+  const fullscreenHosts = new Set(["www.youtube-nocookie.com", "www.youtube.com"]);
+  const isYouTubeUrl = (raw) => {
+    try {
+      const u = new URL(raw);
+      return u.protocol === "https:" && fullscreenHosts.has(u.hostname);
+    } catch {
+      return false;
+    }
+  };
+
   ses.setPermissionRequestHandler((wc, permission, callback, details) => {
     const url = details?.requestingUrl || wc?.getURL?.() || "";
+    if (permission === "fullscreen") {
+      callback(isAppUrl(url) || isYouTubeUrl(url));
+      return;
+    }
     callback(allowedPermissions.has(permission) && isAppUrl(url));
   });
 
   ses.setPermissionCheckHandler((wc, permission, requestingOrigin, details) => {
+    if (permission === "fullscreen") {
+      const url = details?.requestingUrl || "";
+      return isAppUrl(url || wc?.getURL?.() || "") || isYouTubeUrl(url) || isYouTubeUrl(requestingOrigin);
+    }
     if (!allowedPermissions.has(permission)) return false;
     // Judge by the full URL (an origin of "file://" would match any local file).
     const url = details?.requestingUrl || wc?.getURL?.() || "";

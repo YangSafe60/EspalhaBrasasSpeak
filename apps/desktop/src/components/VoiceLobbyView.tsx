@@ -1,5 +1,7 @@
 import { WatchTogether } from "./WatchTogether";
-import { useMemo, useState } from "react";
+import { ActivitiesButton, RunningActivityCard, type ActivityId } from "./VoiceActivities";
+import { loadWatch } from "../lib/watchTogether";
+import { useEffect, useMemo, useState } from "react";
 import type { useVoice } from "../hooks/useVoice";
 import { useLobbyPreview } from "../hooks/useLobbyPreview";
 import { openScreenPopout } from "../lib/popout";
@@ -41,6 +43,8 @@ export function VoiceLobbyView({ voice }: Props) {
   const openMiniProfile = useAppStore((s) => s.openMiniProfile);
   const [popoutBusy, setPopoutBusy] = useState<string | null>(null);
   const [popoutError, setPopoutError] = useState<string | null>(null);
+  // The activity I have open in this channel (Discord-style "Activities").
+  const [activity, setActivity] = useState<ActivityId | null>(null);
   const { openForUserId, menuPortal } = useMemberContextMenu({
     applyUserMic: voice.applyUserMic,
     applyUserVideoHide: voice.applyUserVideoHide,
@@ -84,6 +88,17 @@ export function VoiceLobbyView({ voice }: Props) {
         };
       });
   }, [activeChannelId, authors, membersByServer, user, voiceStates]);
+
+  const connectedChannelId =
+    voice.connected && channel && voice.voiceChannelId === channel.id ? channel.id : null;
+  // A different channel: close the activity; load what this one is watching.
+  useEffect(() => {
+    setActivity(null);
+    if (connectedChannelId) {
+      void loadWatch(connectedChannelId, "watch");
+      void loadWatch(connectedChannelId, "listen");
+    }
+  }, [connectedChannelId]);
 
   if (!channel || channel.channel_type !== "voice") return null;
 
@@ -129,11 +144,14 @@ export function VoiceLobbyView({ voice }: Props) {
               : "Join this lobby from the channel list to talk"}
           </p>
         </div>
-        {channel.user_limit > 0 && (
-          <span className="voice-lobby-limit">
-            {lobbyUsers.length}/{channel.user_limit}
-          </span>
-        )}
+        <div className="voice-lobby-header-actions">
+          {selfConnected && <ActivitiesButton onPick={setActivity} />}
+          {channel.user_limit > 0 && (
+            <span className="voice-lobby-limit">
+              {lobbyUsers.length}/{channel.user_limit}
+            </span>
+          )}
+        </div>
       </header>
 
       <div className="voice-lobby-body">
@@ -217,7 +235,12 @@ export function VoiceLobbyView({ voice }: Props) {
           </section>
         )}
 
-        {selfConnected && <WatchTogether channelId={channel.id} />}
+        {selfConnected &&
+          (activity ? (
+            <WatchTogether key={activity} kind={activity} channelId={channel.id} onClose={() => setActivity(null)} />
+          ) : (
+            <RunningActivityCard channelId={channel.id} onJoin={setActivity} />
+          ))}
 
         <section className="voice-lobby-people">
           <h3>In lobby</h3>
