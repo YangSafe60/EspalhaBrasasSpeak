@@ -1,4 +1,4 @@
-import { WatchTogether } from "./WatchTogether";
+import { ActivitySlotBox } from "./ActivityHost";
 import { RunningActivityCard } from "./VoiceActivities";
 import { openActivity, setOpenActivity, type ActivityId } from "../lib/voiceActivity";
 import { useMini } from "../lib/miniStore";
@@ -285,16 +285,13 @@ export function VoiceLobbyView({ voice }: Props) {
 
         {selfConnected &&
           (activity ? (
-            <div className={`voice-activity-slot${split ? (focus === "activity" ? " is-main" : " is-side") : ""}`}>
-              <WatchTogether
-                key={activity}
-                kind={activity}
-                channelId={channel.id}
-                compact={split && focus !== "activity"}
-                onExpand={() => setFocus("activity")}
-                onClose={() => setActivity(null)}
-              />
-            </div>
+            // The player itself lives in <ActivityHost> (so it keeps playing
+            // in other views); this just holds its place.
+            <ActivitySlotBox
+              className={`voice-activity-slot${split ? (focus === "activity" ? " is-main" : " is-side") : ""}`}
+              compact={split && focus !== "activity"}
+              onExpand={() => setFocus("activity")}
+            />
           ) : (
             <RunningActivityCard channelId={channel.id} onJoin={setActivity} />
           ))}

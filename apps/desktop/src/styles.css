@@ -11978,3 +11978,55 @@ html[data-underline-links="1"] .a11y-preview-msg a {
   right: auto;
   z-index: 1000;
 }
+
+/* ---------- activity player host (keeps playing in other views) ---------- */
+.activity-host {
+  position: fixed;
+}
+
+/* In the voice lobby: drawn exactly over the lobby's slot. */
+.activity-host.is-docked {
+  z-index: 20;
+}
+
+/* Anywhere else: a small player in the corner. */
+.activity-host.is-mini {
+  right: 20px;
+  bottom: 96px;
+  width: 340px;
+  z-index: 45;
+  border-radius: 16px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  animation: activity-mini-in 0.16s ease-out;
+}
+
+.activity-host.is-mini .watch {
+  background: #0d1215;
+}
+
+@keyframes activity-mini-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+/* Drag the mini player by its header. */
+.activity-host.is-mini .watch-header {
+  cursor: grab;
+  user-select: none;
+}
+
+.activity-host.is-dragging {
+  animation: none;
+  box-shadow: 0 22px 50px rgba(0, 0, 0, 0.65);
+}
+
+.activity-host.is-dragging .watch-header {
+  cursor: grabbing;
+}
+
+/* The video frame would swallow the pointer mid-drag. */
+.activity-host.is-dragging iframe {
+  pointer-events: none;
+}
