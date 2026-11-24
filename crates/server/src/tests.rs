@@ -39,6 +39,7 @@ async fn test_app() -> TestApp {
         max_upload_bytes: 25 * 1024 * 1024,
         imgbb_api_key: None,
         klipy_api_key: None,
+        youtube_api_key: None,
     };
     let state = AppState::new(config).await.expect("state");
     TestApp {
@@ -1645,4 +1646,24 @@ async fn watch_together_queue() {
     assert_eq!(r.body["queue"][0]["video_id"], "9bZkp7q19f0", "watch queue untouched");
     let r = app.call(Method::GET, &format!("{path}?kind=karaoke"), Some(&owner), None).await;
     assert_eq!(r.status, StatusCode::BAD_REQUEST);
+
+    // A playlist link adds every video (the test playlist has three);
+    // "watch?v=X&list=Y" starts at X.
+    let r = app
+        .call(Method::POST, &listen, Some(&member), Some(json!({ "action": "add", "url": "https://www.youtube.com/playlist?list=PLtesttesttest01" })))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["queue"].as_array().unwrap().len(), 4);
+    let r = app
+        .call(
+            Method::POST,
+            &listen,
+            Some(&member),
+            Some(json!({ "action": "add", "url": "https://www.youtube.com/watch?v=aaaaaaaaaa2&list=PLtesttesttest01" })),
+        )
+        .await;
+    let q = r.body["queue"].as_array().unwrap();
+    assert_eq!(q.len(), 6);
+    assert_eq!(q[4]["video_id"], "aaaaaaaaaa2");
+    assert_eq!(q[5]["title"], "Third");
 }

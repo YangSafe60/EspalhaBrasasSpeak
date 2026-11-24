@@ -15,6 +15,8 @@ pub struct Config {
     pub max_upload_bytes: u64,
     pub imgbb_api_key: Option<String>,
     pub klipy_api_key: Option<String>,
+    /// YouTube Data API key: whole playlists in Watch/Listen Together (without it, the first 15).
+    pub youtube_api_key: Option<String>,
 }
 
 impl Config {
@@ -81,6 +83,10 @@ impl Config {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty()),
             klipy_api_key: env::var("KLIPY_API_KEY")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            youtube_api_key: env::var("YOUTUBE_API_KEY")
                 .ok()
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty()),
@@ -159,6 +165,7 @@ mod tests {
             max_upload_bytes: 0,
             imgbb_api_key: None,
             klipy_api_key: None,
+            youtube_api_key: None,
         }
     }
 

@@ -64,9 +64,14 @@ export function WatchTogether({
   channelId,
   onClose,
   kind = "watch",
+  compact = false,
+  onExpand,
 }: {
   channelId: string;
   onClose: () => void;
+  /** Small, beside a live stream (keeps playing; queue hidden). */
+  compact?: boolean;
+  onExpand?: () => void;
   /** "listen" = audio only (Listen Together). */
   kind?: PlayKind;
 }) {
@@ -76,6 +81,13 @@ export function WatchTogether({
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!notice) return;
+    const t = window.setTimeout(() => setNotice(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [notice]);
 
   useEffect(() => {
     void loadWatch(channelId, kind);
@@ -95,8 +107,12 @@ export function WatchTogether({
     if (!url.trim()) return;
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
-      await watchAction(channelId, { action: "add", url: url.trim() }, kind);
+      const before = state?.queue.length ?? 0;
+      const next = await watchAction(channelId, { action: "add", url: url.trim() }, kind);
+      const added = next.queue.length - before;
+      if (added > 1) setNotice(`Added ${added} videos from the playlist`);
       setUrl("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't add that video");
@@ -118,15 +134,22 @@ export function WatchTogether({
     void act(state.playing ? { action: "pause", position: livePosition(state) } : { action: "play", position: livePosition(state) });
 
   return (
-    <section className={`watch kind-${kind}${current ? " has-video" : ""}`} data-channel={channelId}>
+    <section className={`watch kind-${kind}${current ? " has-video" : ""}${compact ? " is-compact" : ""}`} data-channel={channelId}>
       <header className="watch-header">
         <h3>
           <span className="watch-logo">{listen ? <HeadphonesIcon /> : <YouTubeIcon />}</span>
           {listen ? "Listen Together" : "Watch Together"}
         </h3>
-        <button type="button" className="watch-icon-btn" title="Leave (it keeps going for the others)" aria-label="Leave activity" onClick={onClose}>
-          <CloseIcon />
-        </button>
+        <div className="watch-header-actions">
+          {compact && onExpand && (
+            <button type="button" className="watch-icon-btn" title="Show big" aria-label="Show big" onClick={onExpand}>
+              <ExpandIcon />
+            </button>
+          )}
+          <button type="button" className="watch-icon-btn" title="Leave (it keeps going for the others)" aria-label="Leave activity" onClick={onClose}>
+            <CloseIcon />
+          </button>
+        </div>
       </header>
 
       <div className="watch-layout">
@@ -198,7 +221,7 @@ export function WatchTogether({
           <form className="watch-add" onSubmit={(e) => void add(e)}>
             <input
               value={url}
-              placeholder={current ? "Add a YouTube link" : "Paste a YouTube link"}
+              placeholder={current ? "Add a YouTube link or playlist" : "Paste a YouTube link or playlist"}
               onChange={(e) => setUrl(e.target.value)}
             />
             <button
@@ -212,6 +235,7 @@ export function WatchTogether({
             </button>
           </form>
           {error && <p className="form-error">{error}</p>}
+          {notice && <p className="watch-notice">{notice}</p>}
           <p className="watch-side-title">
             Up next <span>{upNext.length}</span>
           </p>
@@ -302,6 +326,14 @@ function FullscreenIcon() {
   return (
     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4" />
+    </svg>
+  );
+}
+
+function ExpandIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7" />
     </svg>
   );
 }

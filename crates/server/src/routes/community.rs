@@ -437,7 +437,126 @@ pub async fn rsvp_event(
 
 // ------------------------------------------------------------ watch together
 
-const MAX_QUEUE: usize = 50;
+const MAX_QUEUE: usize = 200;
+
+/// A playlist id from a link's `list=` (not YouTube "Mix" lists, which are
+/// generated per person and can't be read).
+pub fn youtube_playlist_id(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    let with_scheme = if raw.contains("://") { raw.to_string() } else { format!("https://{raw}") };
+    let url = reqwest::Url::parse(&with_scheme).ok()?;
+    let host = url.host_str()?.trim_start_matches("www.").trim_start_matches("m.").trim_start_matches("music.");
+    if !matches!(host, "youtube.com" | "youtu.be" | "youtube-nocookie.com") {
+        return None;
+    }
+    let list = url.query_pairs().find(|(k, _)| k == "list").map(|(_, v)| v.into_owned())?;
+    let ok = (10..=64).contains(&list.len())
+        && list.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        && !list.starts_with("RD");
+    ok.then_some(list)
+}
+
+fn xml_unescape(s: &str) -> String {
+    s.replace("&quot;", "\"").replace("&#39;", "'").replace("&apos;", "'").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+}
+
+/// (video id, title) of a playlist, in order. With YOUTUBE_API_KEY: the
+/// official API, up to 200; without it: YouTube's public feed (first 15).
+async fn playlist_videos(state: &AppState, list: &str) -> AppResult<Vec<(String, String)>> {
+    if cfg!(test) {
+        // No network in tests: a fixed three-video playlist.
+        return Ok(vec![
+            ("aaaaaaaaaa1".into(), "First".into()),
+            ("aaaaaaaaaa2".into(), "Second".into()),
+            ("aaaaaaaaaa3".into(), "Third".into()),
+        ]);
+    }
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| AppError::Internal(e.into()))?;
+    let unavailable = || AppError::BadRequest("couldn't read that playlist (is it private?)".into());
+    let mut out = Vec::new();
+    if let Some(key) = state.config.youtube_api_key.as_deref() {
+        #[derive(Deserialize)]
+        struct Page {
+            #[serde(default)]
+            items: Vec<Item>,
+            #[serde(rename = "nextPageToken")]
+            next: Option<String>,
+        }
+        #[derive(Deserialize)]
+        struct Item {
+            snippet: Snippet,
+        }
+        #[derive(Deserialize)]
+        struct Snippet {
+            title: String,
+            #[serde(rename = "resourceId")]
+            resource: Resource,
+        }
+        #[derive(Deserialize)]
+        struct Resource {
+            #[serde(rename = "videoId")]
+            video_id: Option<String>,
+        }
+        let mut token: Option<String> = None;
+        while out.len() < MAX_QUEUE {
+            let mut req = http.get("https://www.googleapis.com/youtube/v3/playlistItems").query(&[
+                ("part", "snippet"),
+                ("maxResults", "50"),
+                ("playlistId", list),
+                ("key", key),
+            ]);
+            if let Some(t) = &token {
+                req = req.query(&[("pageToken", t.as_str())]);
+            }
+            let res = req.send().await.map_err(|_| unavailable())?;
+            if !res.status().is_success() {
+                return Err(unavailable());
+            }
+            let page: Page = res.json().await.map_err(|_| unavailable())?;
+            for it in page.items {
+                // Deleted / private videos stay in playlists with these titles.
+                if matches!(it.snippet.title.as_str(), "Private video" | "Deleted video") {
+                    continue;
+                }
+                if let Some(id) = it.snippet.resource.video_id {
+                    out.push((id, it.snippet.title.chars().take(200).collect()));
+                }
+            }
+            match page.next {
+                Some(t) => token = Some(t),
+                None => break,
+            }
+        }
+    } else {
+        let res = http
+            .get("https://www.youtube.com/feeds/videos.xml")
+            .query(&[("playlist_id", list)])
+            .send()
+            .await
+            .map_err(|_| unavailable())?;
+        if !res.status().is_success() {
+            return Err(unavailable());
+        }
+        let xml = res.text().await.map_err(|_| unavailable())?;
+        for entry in xml.split("<entry>").skip(1) {
+            let field = |open: &str, close: &str| {
+                let start = entry.find(open)? + open.len();
+                let end = entry[start..].find(close)? + start;
+                Some(xml_unescape(&entry[start..end]))
+            };
+            if let (Some(id), Some(title)) = (field("<yt:videoId>", "</yt:videoId>"), field("<title>", "</title>")) {
+                out.push((id, title.chars().take(200).collect()));
+            }
+        }
+    }
+    if out.is_empty() {
+        return Err(AppError::BadRequest("that playlist is empty or private".into()));
+    }
+    Ok(out)
+}
 
 /// YouTube video id from a link (watch, youtu.be, shorts, embed, live) or a bare id.
 pub fn youtube_id(raw: &str) -> Option<String> {
@@ -557,14 +676,26 @@ pub async fn watch_action(
     let channel = require_in_voice(&state, channel_id, user.id).await?;
     let position = body.position.filter(|p| p.is_finite() && *p >= 0.0).unwrap_or(0.0);
 
-    // Network first (outside the lock): the title for a new video.
-    let new_item = if body.action == "add" {
+    // Network first (outside the lock): titles, or a whole playlist.
+    let new_items: Vec<WatchItem> = if body.action == "add" {
         let url = body.url.as_deref().unwrap_or_default();
-        let video_id = youtube_id(url).ok_or_else(|| AppError::BadRequest("that isn't a YouTube link".into()))?;
-        let title = youtube_title(&video_id).await.unwrap_or_else(|| "YouTube video".to_string());
-        Some(WatchItem { id: Uuid::new_v4(), video_id, title, added_by: user.id })
+        let item = |video_id: String, title: String| WatchItem { id: Uuid::new_v4(), video_id, title, added_by: user.id };
+        if let Some(list) = youtube_playlist_id(url) {
+            let mut videos = playlist_videos(&state, &list).await?;
+            // "watch?v=X&list=Y" starts the playlist at X, like YouTube.
+            if let Some(start) = youtube_id(url) {
+                if let Some(i) = videos.iter().position(|(id, _)| *id == start) {
+                    videos.drain(..i);
+                }
+            }
+            videos.into_iter().map(|(id, title)| item(id, title)).collect()
+        } else {
+            let video_id = youtube_id(url).ok_or_else(|| AppError::BadRequest("that isn't a YouTube link".into()))?;
+            let title = youtube_title(&video_id).await.unwrap_or_else(|| "YouTube video".to_string());
+            vec![item(video_id, title)]
+        }
     } else {
-        None
+        Vec::new()
     };
 
     let snapshot = {
@@ -581,17 +712,19 @@ pub async fn watch_action(
         };
         match body.action.as_str() {
             "add" => {
-                if w.queue.len() >= MAX_QUEUE {
-                    return Err(AppError::BadRequest("the queue is full (50 videos)".into()));
+                let room = MAX_QUEUE.saturating_sub(w.queue.len());
+                if room == 0 {
+                    return Err(AppError::BadRequest(format!("the queue is full ({MAX_QUEUE} videos)")));
                 }
-                let item = new_item.expect("built above");
+                // A long playlist fills what's left of the queue.
+                let items: Vec<WatchItem> = new_items.into_iter().take(room).collect();
                 if w.queue.is_empty() {
-                    w.current = Some(item.id);
+                    w.current = items.first().map(|i| i.id);
                     w.playing = true;
                     w.position = 0.0;
                     w.updated_at = now;
                 }
-                w.queue.push(item);
+                w.queue.extend(items);
             }
             "remove" => {
                 let id = body.item_id.ok_or_else(|| AppError::BadRequest("item_id required".into()))?;
@@ -664,6 +797,19 @@ pub async fn watch_action(
 #[cfg(test)]
 mod tests {
     use super::youtube_id;
+
+    #[test]
+    fn playlist_links() {
+        use super::youtube_playlist_id;
+        let list = Some("PLFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI".to_string());
+        assert_eq!(youtube_playlist_id("https://www.youtube.com/playlist?list=PLFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI"), list);
+        assert_eq!(youtube_playlist_id("https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI&index=3"), list);
+        assert_eq!(youtube_playlist_id("https://music.youtube.com/playlist?list=PLFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI"), list);
+        // Mixes are made per person: not a playlist we can read.
+        assert_eq!(youtube_playlist_id("https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=RDdQw4w9WgXcQ"), None);
+        assert_eq!(youtube_playlist_id("https://youtu.be/dQw4w9WgXcQ"), None);
+        assert_eq!(youtube_playlist_id("https://example.com/?list=PLFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI"), None);
+    }
 
     #[test]
     fn youtube_links() {

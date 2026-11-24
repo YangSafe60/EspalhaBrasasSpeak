@@ -60,6 +60,7 @@ Repo → **Settings → Secrets and variables → Actions**:
 | `MAX_UPLOAD_BYTES` | no | `26214400` |
 | `IMGBB_API_KEY` | recommended | ImgBB key, used **only by the server** as the fallback when the desktop app cannot upload an image to Catbox |
 | `KLIPY_API_KEY` | yes for GIFs | Klipy API key ([partner.klipy.com](https://partner.klipy.com)) |
+| `YOUTUBE_API_KEY` | no | YouTube Data API v3 key. Lets Watch/Listen Together add a whole playlist (up to 200 videos); without it only the first 15 are added |
 
 \*If these are missing or empty, the deploy script and Compose keep **localhost / local-dev defaults** (same as `.env.example`).
 

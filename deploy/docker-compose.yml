@@ -17,6 +17,7 @@ services:
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-26214400}
       IMGBB_API_KEY: ${IMGBB_API_KEY:-}
       KLIPY_API_KEY: ${KLIPY_API_KEY:-}
+      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
       # "production" makes the API refuse to start with weak/default secrets.
       SPEAKAPP_ENV: ${SPEAKAPP_ENV:-}
     volumes:

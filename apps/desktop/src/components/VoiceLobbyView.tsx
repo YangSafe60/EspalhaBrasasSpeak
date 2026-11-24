@@ -44,7 +44,13 @@ export function VoiceLobbyView({ voice }: Props) {
   const [popoutBusy, setPopoutBusy] = useState<string | null>(null);
   const [popoutError, setPopoutError] = useState<string | null>(null);
   // The activity I have open in this channel (Discord-style "Activities").
-  const [activity, setActivity] = useState<ActivityId | null>(null);
+  const [activity, setActivityState] = useState<ActivityId | null>(null);
+  // With a live and an activity at once: which one is big (the other is small on the side).
+  const [focus, setFocus] = useState<"stage" | "activity">("activity");
+  const setActivity = (id: ActivityId | null) => {
+    setActivityState(id);
+    if (id) setFocus("activity");
+  };
   const { openForUserId, menuPortal } = useMemberContextMenu({
     applyUserMic: voice.applyUserMic,
     applyUserVideoHide: voice.applyUserVideoHide,
@@ -93,7 +99,7 @@ export function VoiceLobbyView({ voice }: Props) {
     voice.connected && channel && voice.voiceChannelId === channel.id ? channel.id : null;
   // A different channel: close the activity; load what this one is watching.
   useEffect(() => {
-    setActivity(null);
+    setActivityState(null);
     if (connectedChannelId) {
       void loadWatch(connectedChannelId, "watch");
       void loadWatch(connectedChannelId, "listen");
@@ -112,6 +118,9 @@ export function VoiceLobbyView({ voice }: Props) {
   const hasStage =
     connectedHere &&
     (voice.localScreens.length > 0 || otherScreens.length > 0);
+  const streamCount = voice.localScreens.length + otherScreens.length;
+  // A live and an activity at the same time: one big, the other small beside it.
+  const split = hasStage && selfConnected && activity !== null;
 
   async function openPopout(trackSid: string, title: string) {
     setPopoutBusy(trackSid);
@@ -158,8 +167,42 @@ export function VoiceLobbyView({ voice }: Props) {
         {popoutError && (
           <p className="form-error voice-lobby-popout-error">{popoutError}</p>
         )}
+        <div className={`voice-stage-area${split ? ` is-split focus-${focus}` : ""}`}>
+        {split && (
+          <div className="stage-switch" role="tablist" aria-label="What to show big">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={focus === "stage"}
+              className={focus === "stage" ? "active" : ""}
+              onClick={() => setFocus("stage")}
+            >
+              <span className="stage-switch-live">LIVE</span>
+              {streamCount === 1 ? "Stream" : `Streams (${streamCount})`}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={focus === "activity"}
+              className={focus === "activity" ? "active" : ""}
+              onClick={() => setFocus("activity")}
+            >
+              {activity === "listen" ? "Listen Together" : "Watch Together"}
+            </button>
+          </div>
+        )}
         {hasStage && (
-          <section className="voice-lobby-stage">
+          <section
+            className={`voice-lobby-stage${split ? (focus === "stage" ? " is-main" : " is-side") : ""}`}
+            onClickCapture={(e) => {
+              // A click on the small side tiles brings the streams to the front.
+              if (split && focus !== "stage") {
+                e.stopPropagation();
+                e.preventDefault();
+                setFocus("stage");
+              }
+            }}
+          >
             {voice.localScreens.map((s, i) => (
               <LobbyScreenTile
                 voice={voice}
@@ -237,10 +280,20 @@ export function VoiceLobbyView({ voice }: Props) {
 
         {selfConnected &&
           (activity ? (
-            <WatchTogether key={activity} kind={activity} channelId={channel.id} onClose={() => setActivity(null)} />
+            <div className={`voice-activity-slot${split ? (focus === "activity" ? " is-main" : " is-side") : ""}`}>
+              <WatchTogether
+                key={activity}
+                kind={activity}
+                channelId={channel.id}
+                compact={split && focus !== "activity"}
+                onExpand={() => setFocus("activity")}
+                onClose={() => setActivity(null)}
+              />
+            </div>
           ) : (
             <RunningActivityCard channelId={channel.id} onJoin={setActivity} />
           ))}
+        </div>
 
         <section className="voice-lobby-people">
           <h3>In lobby</h3>
