@@ -12090,3 +12090,261 @@ a.message-embed-title:hover {
   height: 100%;
   border: 0;
 }
+
+/* ---------- our own YouTube player (chat videos, pop-out) ---------- */
+.yt-player {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  overflow: hidden;
+  outline: none;
+}
+
+.yt-player.is-fullscreen {
+  aspect-ratio: auto;
+  width: 100vw;
+  height: 100vh;
+}
+
+.yt-player iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  pointer-events: none;
+}
+
+.yt-click {
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+}
+
+.yt-player:not(.ui-visible) .yt-click {
+  cursor: none;
+}
+
+.yt-controls {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 1.6rem 0.6rem 0.35rem;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.8), transparent);
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  pointer-events: none;
+}
+
+.yt-player.ui-visible .yt-controls {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.yt-bar {
+  position: relative;
+  height: 4px;
+  margin: 0 0.35rem 0.35rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.25);
+  cursor: pointer;
+  transition: height 0.12s ease;
+}
+
+.yt-bar::before {
+  content: "";
+  position: absolute;
+  inset: -8px 0;
+}
+
+.yt-bar:hover {
+  height: 6px;
+}
+
+.yt-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.yt-bar-knob {
+  position: absolute;
+  top: 50%;
+  width: 13px;
+  height: 13px;
+  margin: -6.5px 0 0 -6.5px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9);
+  transform: scale(0);
+  transition: transform 0.12s ease;
+}
+
+.yt-bar:hover .yt-bar-knob {
+  transform: scale(1);
+}
+
+.yt-bar-tip {
+  position: absolute;
+  bottom: 14px;
+  transform: translateX(-50%);
+  padding: 0.1rem 0.4rem;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.yt-row {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.yt-row button {
+  width: 36px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: #fff;
+  cursor: pointer;
+}
+
+.yt-row button:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.yt-volume {
+  display: flex;
+  align-items: center;
+}
+
+.yt-volume input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 0;
+  height: 4px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  opacity: 0;
+  background: linear-gradient(90deg, #fff var(--vol, 100%), rgba(255, 255, 255, 0.3) var(--vol, 100%));
+  box-shadow: none;
+  transition: width 0.15s ease, opacity 0.15s ease, margin 0.15s ease;
+}
+
+.yt-volume:hover input[type="range"],
+.yt-volume input[type="range"]:focus {
+  width: 70px;
+  margin: 0 0.4rem 0 0.15rem;
+  opacity: 1;
+  outline: none;
+}
+
+.yt-volume input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.yt-time {
+  margin-left: 0.35rem;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+}
+
+.yt-time em {
+  font-style: normal;
+  opacity: 0.65;
+}
+
+.yt-spacer {
+  flex: 1;
+}
+
+.message-embed-media.is-playing .yt-player {
+  position: absolute;
+  inset: 0;
+}
+
+/* Popped-out video: floating, dragged by its header. */
+.video-pip {
+  position: fixed;
+  right: 20px;
+  bottom: 96px;
+  z-index: 46;
+  width: 420px;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: #0d1215;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+}
+
+.video-pip.is-dragging {
+  box-shadow: 0 22px 50px rgba(0, 0, 0, 0.65);
+}
+
+.video-pip-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.4rem 0.35rem 0.65rem;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.video-pip.is-dragging .video-pip-head {
+  cursor: grabbing;
+}
+
+.video-pip-head > svg {
+  flex-shrink: 0;
+  color: #ff0000;
+}
+
+.video-pip-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.video-pip-close {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.video-pip-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+}

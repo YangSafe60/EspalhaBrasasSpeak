@@ -12,6 +12,7 @@ import { MessageView } from "./components/MessageView";
 import { MiniProfileCard } from "./components/MiniProfileCard";
 import { ImageViewer } from "./components/ImageViewer";
 import { ActivityHost } from "./components/ActivityHost";
+import { VideoPip } from "./components/VideoPip";
 import { IncomingCallCard } from "./components/IncomingCallCard";
 import {
   MicConsentModal,
@@ -363,6 +364,7 @@ function MainApp() {
         <MiniProfileCard />
         <ImageViewer />
         <ActivityHost />
+        <VideoPip />
         <IncomingCallCard />
         <MicConsentModal
           open={pendingVoiceId != null || pendingDmCallId != null}

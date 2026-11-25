@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { YouTubePlayer } from "./YouTubePlayer";
+import { popOutVideo } from "./VideoPip";
 import {
   extractYouTubeUrls,
   parseYouTubeVideoId,
@@ -97,12 +99,13 @@ function YouTubeEmbedCard({ url }: { url: string }) {
         </a>
         {videoId && playing ? (
           <div className="message-embed-media is-playing">
-            <iframe
-              src={`https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0`}
-              title={meta?.title ?? "YouTube video"}
-              allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-              allowFullScreen
-              referrerPolicy="strict-origin-when-cross-origin"
+            <YouTubePlayer
+              videoId={videoId}
+              title={meta?.title}
+              onPopOut={(time) => {
+                popOutVideo(videoId, meta?.title ?? "YouTube video", time);
+                setPlaying(false);
+              }}
             />
           </div>
         ) : (
